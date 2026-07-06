@@ -1,0 +1,480 @@
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import {
+  getAgentRuns,
+  getAgentRun,
+  type AgentRun,
+  type AgentRunDetail,
+  type AgentRunListParams,
+  type AgentStep,
+} from '../api/audit'
+import type { ApiError } from '../api/auth'
+
+const runs = ref<AgentRun[]>([])
+const listLoading = ref(false)
+
+const filterRunType = ref<string>('')
+const filterStatus = ref<string>('')
+
+const drawerVisible = ref(false)
+const detailLoading = ref(false)
+const detail = ref<AgentRunDetail | null>(null)
+
+const runTypeOptions = [
+  { value: 'course_qa', label: 'course_qa' },
+  { value: 'outline', label: 'outline' },
+  { value: 'planner', label: 'planner' },
+  { value: 'quiz', label: 'quiz' },
+]
+
+const statusOptions = [
+  { value: 'started', label: '进行中' },
+  { value: 'succeeded', label: '成功' },
+  { value: 'failed', label: '失败' },
+]
+
+const statusTagType: Record<string, 'success' | 'danger' | 'warning' | 'info'> = {
+  succeeded: 'success',
+  failed: 'danger',
+  started: 'warning',
+}
+
+const statusLabel: Record<string, string> = {
+  succeeded: '成功',
+  failed: '失败',
+  started: '进行中',
+}
+
+function getErrorMessage(err: unknown, fallback: string): string {
+  const e = err as { response?: { data?: ApiError | { detail?: string } } }
+  const data = e?.response?.data
+  if (data) {
+    if ('message' in data && data.message) return data.message
+    if ('detail' in data && data.detail) return String(data.detail)
+  }
+  return fallback
+}
+
+function formatDuration(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined) return '-'
+  if (ms < 1000) return `${ms}ms`
+  return `${(ms / 1000).toFixed(2)}s`
+}
+
+function formatDateTime(dt: string | null | undefined): string {
+  if (!dt) return '-'
+  const d = new Date(dt)
+  if (isNaN(d.getTime())) return dt
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  const ss = String(d.getSeconds()).padStart(2, '0')
+  return `${y}-${m}-${day} ${hh}:${mm}:${ss}`
+}
+
+function formatData(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '-'
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function stepStatus(status: string): 'finish' | 'error' | 'process' | 'wait' {
+  if (status === 'succeeded') return 'finish'
+  if (status === 'failed') return 'error'
+  if (status === 'started') return 'process'
+  return 'wait'
+}
+
+const sortedSteps = computed<AgentStep[]>(() => {
+  if (!detail.value) return []
+  return [...detail.value.steps].sort((a, b) => a.step_index - b.step_index)
+})
+
+function buildListParams(): AgentRunListParams {
+  const params: AgentRunListParams = { limit: 50, offset: 0 }
+  if (filterRunType.value) params.run_type = filterRunType.value
+  if (filterStatus.value) params.status = filterStatus.value
+  return params
+}
+
+async function fetchRuns() {
+  listLoading.value = true
+  try {
+    const { data } = await getAgentRuns(buildListParams())
+    runs.value = data.items
+  } catch (err) {
+    ElMessage.error(getErrorMessage(err, '获取运行列表失败'))
+  } finally {
+    listLoading.value = false
+  }
+}
+
+async function openDetail(row: AgentRun) {
+  drawerVisible.value = true
+  detail.value = null
+  detailLoading.value = true
+  try {
+    const { data } = await getAgentRun(row.id)
+    detail.value = data
+  } catch (err) {
+    ElMessage.error(getErrorMessage(err, '获取运行详情失败'))
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+function handleRefresh() {
+  fetchRuns()
+}
+
+function handleRowClick(row: AgentRun) {
+  openDetail(row)
+}
+
+onMounted(() => {
+  fetchRuns()
+})
+</script>
+
+<template>
+  <div class="page">
+    <div class="toolbar">
+      <h2 class="title">Agent 审计</h2>
+      <div class="toolbar-actions">
+        <el-select
+          v-model="filterRunType"
+          placeholder="运行类型"
+          clearable
+          style="width: 160px"
+          @change="fetchRuns"
+        >
+          <el-option
+            v-for="opt in runTypeOptions"
+            :key="opt.value"
+            :label="opt.label"
+            :value="opt.value"
+          />
+        </el-select>
+        <el-select
+          v-model="filterStatus"
+          placeholder="状态"
+          clearable
+          style="width: 140px"
+          @change="fetchRuns"
+        >
+          <el-option
+            v-for="opt in statusOptions"
+            :key="opt.value"
+            :label="opt.label"
+            :value="opt.value"
+          />
+        </el-select>
+        <el-button type="primary" @click="handleRefresh">刷新</el-button>
+      </div>
+    </div>
+
+    <el-card class="section-card" shadow="never">
+      <el-table
+        :data="runs"
+        v-loading="listLoading"
+        stripe
+        empty-text="暂无运行记录"
+        @row-click="handleRowClick"
+        :row-style="{ cursor: 'pointer' }"
+      >
+        <el-table-column prop="run_type" label="运行类型" width="120" />
+        <el-table-column label="状态" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag :type="statusTagType[row.status] || 'info'" size="small">
+              {{ statusLabel[row.status] || row.status }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="耗时" width="110" align="center">
+          <template #default="{ row }">
+            {{ formatDuration(row.duration_ms) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="开始时间" min-width="170">
+          <template #default="{ row }">
+            {{ formatDateTime(row.started_at) }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="model_name" label="模型" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.model_name || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="prompt_version" label="Prompt 版本" width="130" align="center">
+          <template #default="{ row }">
+            {{ row.prompt_version || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" align="center">
+          <template #default="{ row }">
+            <el-button type="primary" link size="small" @click.stop="openDetail(row)">
+              详情
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-drawer
+      v-model="drawerVisible"
+      title="运行详情"
+      direction="rtl"
+      size="56%"
+      destroy-on-close
+    >
+      <div v-loading="detailLoading" class="drawer-body">
+        <template v-if="detail">
+          <div class="detail-header">
+            <span class="detail-id">#{{ detail.id }}</span>
+            <el-tag :type="statusTagType[detail.status] || 'info'" size="small">
+              {{ statusLabel[detail.status] || detail.status }}
+            </el-tag>
+            <el-tag type="info" size="small">{{ detail.run_type }}</el-tag>
+          </div>
+
+          <el-alert
+            v-if="detail.error_message"
+            class="detail-alert"
+            :title="detail.error_message"
+            type="error"
+            :closable="false"
+            show-icon
+          />
+
+          <el-descriptions :column="2" border size="small" class="detail-desc">
+            <el-descriptions-item label="开始时间">
+              {{ formatDateTime(detail.started_at) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="结束时间">
+              {{ formatDateTime(detail.finished_at) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="耗时">
+              {{ formatDuration(detail.duration_ms) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="模型">
+              {{ detail.model_name || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="Prompt 版本">
+              {{ detail.prompt_version || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="创建时间">
+              {{ formatDateTime(detail.created_at) }}
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <div class="detail-section">
+            <div class="section-subtitle">输入摘要</div>
+            <pre class="data-block">{{ formatData(detail.input_summary) }}</pre>
+          </div>
+
+          <div class="detail-section">
+            <div class="section-subtitle">输出摘要</div>
+            <pre class="data-block">{{ formatData(detail.output_summary) }}</pre>
+          </div>
+
+          <div v-if="sortedSteps.length > 0" class="detail-section">
+            <div class="section-subtitle">步骤进度</div>
+            <el-steps :active="sortedSteps.length" finish-status="success" align-center>
+              <el-step
+                v-for="step in sortedSteps"
+                :key="step.id"
+                :title="step.step_name"
+                :status="stepStatus(step.status)"
+              />
+            </el-steps>
+          </div>
+
+          <div v-if="sortedSteps.length > 0" class="detail-section">
+            <div class="section-subtitle">步骤明细</div>
+            <el-timeline>
+              <el-timeline-item
+                v-for="step in sortedSteps"
+                :key="step.id"
+                :timestamp="formatDuration(step.duration_ms)"
+                placement="top"
+                :type="
+                  step.status === 'succeeded'
+                    ? 'success'
+                    : step.status === 'failed'
+                    ? 'danger'
+                    : 'warning'
+                "
+              >
+                <div class="step-card">
+                  <div class="step-head">
+                    <span class="step-order">#{{ step.step_index }}</span>
+                    <span class="step-name">{{ step.step_name }}</span>
+                    <el-tag
+                      :type="statusTagType[step.status] || 'info'"
+                      size="small"
+                    >
+                      {{ statusLabel[step.status] || step.status }}
+                    </el-tag>
+                  </div>
+                  <el-alert
+                    v-if="step.error_message"
+                    class="step-alert"
+                    :title="step.error_message"
+                    type="error"
+                    :closable="false"
+                    show-icon
+                  />
+                  <div class="step-field">
+                    <span class="step-field-label">输入：</span>
+                    <pre class="data-block">{{ formatData(step.input_data) }}</pre>
+                  </div>
+                  <div class="step-field">
+                    <span class="step-field-label">输出：</span>
+                    <pre class="data-block">{{ formatData(step.output_data) }}</pre>
+                  </div>
+                </div>
+              </el-timeline-item>
+            </el-timeline>
+          </div>
+
+          <el-empty
+            v-else
+            description="暂无步骤记录"
+          />
+        </template>
+        <el-empty
+          v-else-if="!detailLoading"
+          description="暂无数据"
+        />
+      </div>
+    </el-drawer>
+  </div>
+</template>
+
+<style scoped>
+.page {
+  background: #fff;
+  padding: 24px;
+  border-radius: 4px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.title {
+  font-size: 20px;
+  margin: 0;
+  color: #303133;
+}
+
+.section-card {
+  margin-bottom: 20px;
+}
+
+.drawer-body {
+  padding: 0 4px;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.detail-id {
+  font-size: 18px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.detail-alert {
+  margin-bottom: 16px;
+}
+
+.detail-desc {
+  margin-bottom: 20px;
+}
+
+.detail-section {
+  margin-bottom: 24px;
+}
+
+.section-subtitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 12px;
+}
+
+.data-block {
+  background: #f5f7fa;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  padding: 12px;
+  margin: 0;
+  font-size: 13px;
+  color: #303133;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.step-card {
+  padding: 4px 0;
+}
+
+.step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.step-order {
+  font-size: 13px;
+  color: #909399;
+}
+
+.step-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.step-alert {
+  margin-bottom: 8px;
+}
+
+.step-field {
+  margin-bottom: 8px;
+}
+
+.step-field-label {
+  font-size: 13px;
+  color: #606266;
+  display: block;
+  margin-bottom: 4px;
+}
+</style>

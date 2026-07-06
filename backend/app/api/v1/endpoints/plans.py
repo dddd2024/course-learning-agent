@@ -1,0 +1,594 @@
+"""Study-plan and todo endpoints.
+
+``POST /api/v1/plans`` runs the ``PlannerAgent`` to decompose a goal,
+persists ``StudyGoal`` / ``StudyTask`` rows, then calls the
+``scheduler`` to expand tasks into per-day ``Todo`` rows.
+
+``GET /api/v1/todos`` lists the current user's todos with optional
+``date`` / ``status`` / ``course_id`` filters.
+
+``PATCH /api/v1/todos/{id}`` updates a todo's status
+(``completed`` / ``postponed``) or ``actual_minutes``.
+
+All queries are scoped by ``current_user.id`` so a todo owned by
+another user is invisible (returned as 404) so existence is never
+leaked.
+"""
+import logging
+import time
+from datetime import date, datetime
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
+
+from app.agents.audit import AgentAudit
+from app.agents.planner import generate as planner_generate
+from app.api.deps import get_current_user
+from app.core.database import get_db
+from app.core.exceptions import NotFoundException
+from app.models.course import Course
+from app.models.knowledge_point import KnowledgePoint
+from app.models.plan import StudyGoal, StudyTask, Todo
+from app.models.quiz import WeakPoint
+from app.models.user import User
+from app.schemas.multi_plan import (
+    MultiPlanCreate,
+    MultiPlanResponse,
+    MultiScheduleItem,
+)
+from app.schemas.plan import (
+    GoalResponse,
+    PlanCreate,
+    PlanResponse,
+    TaskResponse,
+    TodoListResponse,
+    TodoResponse,
+    TodoUpdate,
+)
+from app.services.multi_scheduler import schedule_multi_courses
+from app.services.scheduler import schedule_tasks
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+todos_router = APIRouter()
+
+_PROMPT_VERSION = "planner_v1"
+
+
+def _load_course_names(db: Session, course_ids: set[int]) -> dict[int, str]:
+    """Return ``{course_id: course_name}`` for the given course ids."""
+    if not course_ids:
+        return {}
+    rows = db.query(Course).filter(Course.id.in_(course_ids)).all()
+    return {r.id: r.name for r in rows}
+
+
+def _build_weak_point_review_tasks(
+    db: Session,
+    user_id: int,
+    course_map: dict[str, int],
+) -> list[dict]:
+    """Build review tasks for the user's weak points in the given courses.
+
+    Each weak point becomes a ``review`` task titled ``复习薄弱点：{kp}``
+    with boosted priority so the scheduler treats it as urgent. Returns
+    a list of task dicts in the same shape as ``PlannerAgent`` output so
+    they can be appended directly.
+    """
+    if not course_map:
+        return []
+    course_ids = list(course_map.values())
+    rows = (
+        db.query(WeakPoint, KnowledgePoint)
+        .join(
+            KnowledgePoint,
+            KnowledgePoint.id == WeakPoint.knowledge_point_id,
+        )
+        .filter(
+            WeakPoint.user_id == user_id,
+            WeakPoint.course_id.in_(course_ids),
+        )
+        .order_by(WeakPoint.wrong_count.desc(), WeakPoint.id.asc())
+        .all()
+    )
+    id_to_name = {cid: name for name, cid in course_map.items()}
+    tasks: list[dict] = []
+    for wp, kp in rows:
+        tasks.append(
+            {
+                "course_name": id_to_name.get(wp.course_id, ""),
+                "title": f"复习薄弱点：{kp.title}",
+                "task_type": "review",
+                "estimate_minutes": 30,
+                "priority": 5,  # boosted so the scheduler prioritises it
+                "acceptance": f"重做错题并确保掌握 {kp.title}",
+            }
+        )
+    return tasks
+
+
+def _task_to_response(task: StudyTask, course_name: str) -> TaskResponse:
+    return TaskResponse(
+        id=task.id,
+        goal_id=task.goal_id,
+        course_id=task.course_id,
+        course_name=course_name,
+        title=task.title,
+        task_type=task.task_type,
+        estimate_minutes=task.estimate_minutes,
+        priority=task.priority,
+        acceptance=task.acceptance,
+        status=task.status,
+    )
+
+
+def _todo_to_response(todo: Todo, course_name: str) -> TodoResponse:
+    return TodoResponse(
+        id=todo.id,
+        user_id=todo.user_id,
+        task_id=todo.task_id,
+        course_id=todo.course_id,
+        course_name=course_name,
+        title=todo.title,
+        scheduled_date=todo.scheduled_date,
+        scheduled_start=todo.scheduled_start,
+        scheduled_end=todo.scheduled_end,
+        estimate_minutes=todo.estimate_minutes,
+        status=todo.status,
+        actual_minutes=todo.actual_minutes,
+        completed_at=todo.completed_at,
+    )
+
+
+@router.post("", response_model=PlanResponse)
+def create_plan(
+    payload: PlanCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PlanResponse:
+    """Create a study plan: goal + tasks + per-day todos."""
+    # 1. Validate every requested course belongs to the user.
+    user_courses = (
+        db.query(Course)
+        .filter(
+            Course.user_id == current_user.id,
+            Course.name.in_(payload.courses),
+        )
+        .all()
+    )
+    found_names = {c.name for c in user_courses}
+    missing = [n for n in payload.courses if n not in found_names]
+    if missing:
+        raise NotFoundException(message="部分课程不存在或无权访问")
+
+    course_map = {c.name: c.id for c in user_courses}
+
+    # Open an audit run for this planner invocation. Audit failures are
+    # swallowed so they never break the main flow.
+    run_started_at = time.monotonic()
+    run_id: int | None = None
+    try:
+        run = AgentAudit.create_run(
+            db,
+            user_id=current_user.id,
+            run_type="planner",
+            input_summary={
+                "goal": payload.goal,
+                "courses": list(payload.courses),
+                "deadline": str(payload.deadline),
+                "daily_minutes": payload.daily_minutes,
+            },
+            prompt_version=_PROMPT_VERSION,
+            model_name="mock",
+        )
+        run_id = run.id
+        db.commit()
+    except Exception as exc:  # pragma: no cover - audit must not break flow
+        logger.warning("AgentAudit.create_run failed: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+    # 2. Run the PlannerAgent to decompose the goal into tasks.
+    generate_started = time.monotonic()
+    try:
+        plan_output = planner_generate(
+            db=db,
+            user_id=current_user.id,
+            goal=payload.goal,
+            courses=list(payload.courses),
+            deadline=payload.deadline,
+            daily_minutes=payload.daily_minutes,
+        )
+    except Exception as exc:
+        _safe_finish_run(
+            db,
+            run_id=run_id,
+            status="failed",
+            error_message=str(exc),
+            started_at=run_started_at,
+        )
+        raise
+    generate_duration = int((time.monotonic() - generate_started) * 1000)
+    _safe_add_step(
+        db,
+        run_id=run_id,
+        step_name="generate",
+        step_index=0,
+        input_data={"prompt_version": _PROMPT_VERSION},
+        output_data={"task_count": len(plan_output.get("tasks", []))},
+        duration_ms=generate_duration,
+    )
+
+    # 2b. Append weak-point review tasks for any course in the plan that
+    #     has recorded weak points. These get boosted priority so the
+    #     scheduler front-loads them.
+    weak_point_tasks = _build_weak_point_review_tasks(
+        db, current_user.id, course_map
+    )
+    if weak_point_tasks:
+        plan_output.setdefault("tasks", []).extend(weak_point_tasks)
+
+    # 3. Persist the StudyGoal.
+    goal = StudyGoal(
+        user_id=current_user.id,
+        title=plan_output.get("goal_title") or payload.goal,
+        deadline=payload.deadline,
+        daily_minutes=payload.daily_minutes,
+        status="active",
+    )
+    db.add(goal)
+    db.flush()
+
+    # 4. Persist StudyTask rows (preserve LLM order so scheduler indices
+    #    line up with the persisted list).
+    task_rows: list[StudyTask] = []
+    for task_data in plan_output.get("tasks", []):
+        course_name = task_data.get("course_name", "")
+        course_id = course_map.get(course_name)
+        if course_id is None:
+            # Defensive: skip any task whose course couldn't be resolved
+            # rather than failing the whole plan creation.
+            continue
+        task = StudyTask(
+            goal_id=goal.id,
+            course_id=course_id,
+            title=task_data.get("title", ""),
+            task_type=task_data.get("task_type", "review"),
+            estimate_minutes=int(task_data.get("estimate_minutes", 60) or 60),
+            priority=int(task_data.get("priority", 3) or 3),
+            acceptance=task_data.get("acceptance", ""),
+            status="pending",
+        )
+        db.add(task)
+        db.flush()
+        task_rows.append(task)
+
+    # 5. Run the scheduler from today to the deadline.
+    schedule_started = time.monotonic()
+    today = date.today()
+    task_dicts = [
+        {
+            "title": t.title,
+            "course_name": next(
+                (name for name, cid in course_map.items() if cid == t.course_id),
+                "",
+            ),
+            "estimate_minutes": t.estimate_minutes,
+            "priority": t.priority,
+        }
+        for t in task_rows
+    ]
+    scheduled = schedule_tasks(
+        tasks=task_dicts,
+        start_date=today,
+        deadline=payload.deadline,
+        daily_minutes=payload.daily_minutes,
+    )
+    schedule_duration = int((time.monotonic() - schedule_started) * 1000)
+    _safe_add_step(
+        db,
+        run_id=run_id,
+        step_name="schedule",
+        step_index=1,
+        input_data={"task_count": len(task_rows), "deadline": str(payload.deadline)},
+        output_data={"todo_count": len(scheduled)},
+        duration_ms=schedule_duration,
+    )
+
+    # 6. Persist Todo rows.
+    todo_rows: list[Todo] = []
+    for item in scheduled:
+        idx = item["task_index"]
+        if idx >= len(task_rows):
+            continue
+        task_obj = task_rows[idx]
+        todo = Todo(
+            user_id=current_user.id,
+            task_id=task_obj.id,
+            course_id=task_obj.course_id,
+            title=item["title"] or task_obj.title,
+            scheduled_date=item["scheduled_date"],
+            estimate_minutes=item["estimate_minutes"],
+            status="pending",
+        )
+        db.add(todo)
+        db.flush()
+        todo_rows.append(todo)
+
+    db.commit()
+
+    _safe_finish_run(
+        db,
+        run_id=run_id,
+        status="success",
+        output_summary={
+            "goal_id": goal.id,
+            "task_count": len(task_rows),
+            "todo_count": len(todo_rows),
+        },
+        duration_ms=int((time.monotonic() - run_started_at) * 1000),
+    )
+
+    # 7. Build the response with denormalised course_name.
+    course_name_by_id = {c.id: c.name for c in user_courses}
+    tasks_resp = [
+        _task_to_response(t, course_name_by_id.get(t.course_id, ""))
+        for t in task_rows
+    ]
+    todos_resp = [
+        _todo_to_response(t, course_name_by_id.get(t.course_id, ""))
+        for t in todo_rows
+    ]
+    return PlanResponse(
+        goal=GoalResponse.model_validate(goal),
+        tasks=tasks_resp,
+        todos=todos_resp,
+    )
+
+
+@router.post("/multi", response_model=MultiPlanResponse)
+def create_multi_plan(
+    payload: MultiPlanCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MultiPlanResponse:
+    """Create a coordinated study plan across multiple courses.
+
+    1. Validate every ``course_id`` belongs to the current user (a missing
+       or foreign course surfaces as 404 so existence is never leaked).
+    2. Run ``schedule_multi_courses`` to decompose each course and pack
+       tasks day-by-day honouring ``daily_minutes`` and the per-course
+       90-minute continuous-learning cap.
+    3. Persist one ``StudyGoal`` per course, one ``StudyTask`` per
+       schedule item, and one ``Todo`` per schedule item.
+    4. Return the schedule as ``MultiPlanResponse``.
+    """
+    requested_ids = [c.course_id for c in payload.courses]
+    user_courses = (
+        db.query(Course)
+        .filter(
+            Course.user_id == current_user.id,
+            Course.id.in_(requested_ids),
+        )
+        .all()
+    )
+    found_ids = {c.id for c in user_courses}
+    missing = [cid for cid in requested_ids if cid not in found_ids]
+    if missing:
+        raise NotFoundException(message="部分课程不存在或无权访问")
+
+    # Build the input list for the scheduler with course_id + deadline
+    # (and optional user_priority) for each requested course.
+    courses_input = [
+        {
+            "course_id": c.course_id,
+            "deadline": c.deadline,
+            "user_priority": c.user_priority,
+        }
+        for c in payload.courses
+    ]
+
+    schedule = schedule_multi_courses(
+        db=db,
+        user_id=current_user.id,
+        courses=courses_input,
+        daily_minutes=payload.daily_minutes,
+    )
+
+    # Persist: one StudyGoal per course so each course's plan can be
+    # managed independently, then one StudyTask + one Todo per schedule
+    # item.
+    course_name_by_id = {c.id: c.name for c in user_courses}
+    goal_by_course: dict[int, StudyGoal] = {}
+    items: list[MultiScheduleItem] = []
+
+    for item in schedule:
+        course_id = item["course_id"]
+        course_name = item.get("course_name") or course_name_by_id.get(course_id, "")
+
+        if course_id not in goal_by_course:
+            goal = StudyGoal(
+                user_id=current_user.id,
+                title=f"多课程学习计划 - {course_name}",
+                deadline=item["scheduled_date"],  # placeholder; per-course deadline
+                daily_minutes=payload.daily_minutes,
+                status="active",
+            )
+            # Patch the deadline to the user-requested one for this course.
+            requested = next(
+                (c for c in payload.courses if c.course_id == course_id), None
+            )
+            if requested is not None:
+                goal.deadline = requested.deadline
+            db.add(goal)
+            db.flush()
+            goal_by_course[course_id] = goal
+
+        task = StudyTask(
+            goal_id=goal_by_course[course_id].id,
+            course_id=course_id,
+            title=item["title"],
+            task_type=item.get("task_type", "review"),
+            estimate_minutes=item["estimate_minutes"],
+            priority=int(item.get("priority", 3) or 3),
+            acceptance=item.get("acceptance", ""),
+            status="pending",
+        )
+        db.add(task)
+        db.flush()
+
+        todo = Todo(
+            user_id=current_user.id,
+            task_id=task.id,
+            course_id=course_id,
+            title=item["title"],
+            scheduled_date=item["scheduled_date"],
+            scheduled_start=item.get("start_time"),
+            scheduled_end=item.get("end_time"),
+            estimate_minutes=item["estimate_minutes"],
+            status="pending",
+        )
+        db.add(todo)
+        db.flush()
+
+        items.append(
+            MultiScheduleItem(
+                scheduled_date=item["scheduled_date"],
+                course_name=course_name,
+                title=item["title"],
+                estimate_minutes=item["estimate_minutes"],
+                start_time=item.get("start_time"),
+                end_time=item.get("end_time"),
+            )
+        )
+
+    db.commit()
+
+    return MultiPlanResponse(schedule=items)
+
+
+@todos_router.get("", response_model=TodoListResponse)
+def list_todos(
+    date: date | None = Query(None),
+    status: str | None = Query(None),
+    course_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TodoListResponse:
+    """List the current user's todos with optional filters."""
+    query = db.query(Todo).filter(Todo.user_id == current_user.id)
+    if date is not None:
+        query = query.filter(Todo.scheduled_date == date)
+    if status is not None:
+        query = query.filter(Todo.status == status)
+    if course_id is not None:
+        query = query.filter(Todo.course_id == course_id)
+
+    rows = (
+        query.order_by(Todo.scheduled_date.asc(), Todo.id.asc()).all()
+    )
+    course_name_by_id = _load_course_names(db, {r.course_id for r in rows})
+    items = [
+        _todo_to_response(r, course_name_by_id.get(r.course_id, ""))
+        for r in rows
+    ]
+    return TodoListResponse(items=items, total=len(items))
+
+
+@todos_router.patch("/{todo_id}", response_model=TodoResponse)
+def update_todo(
+    todo_id: int,
+    payload: TodoUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TodoResponse:
+    """Update a todo's status / actual_minutes (404 if not owned)."""
+    todo = (
+        db.query(Todo)
+        .filter(Todo.id == todo_id, Todo.user_id == current_user.id)
+        .first()
+    )
+    if todo is None:
+        raise NotFoundException(message="待办不存在")
+
+    update_data = payload.model_dump(exclude_unset=True)
+    if "status" in update_data and update_data["status"] is not None:
+        todo.status = update_data["status"]
+        if update_data["status"] == "completed":
+            todo.completed_at = datetime.now()
+    if "actual_minutes" in update_data and update_data["actual_minutes"] is not None:
+        todo.actual_minutes = update_data["actual_minutes"]
+
+    db.commit()
+    db.refresh(todo)
+
+    course = db.query(Course).filter(Course.id == todo.course_id).first()
+    course_name = course.name if course else ""
+    return _todo_to_response(todo, course_name)
+
+
+def _safe_add_step(
+    db: Session,
+    run_id: int | None,
+    step_name: str,
+    step_index: int,
+    input_data=None,
+    output_data=None,
+    duration_ms: int | None = None,
+    status: str = "success",
+) -> None:
+    """Add an audit step, swallowing any error so the main flow runs on."""
+    if run_id is None:
+        return
+    try:
+        AgentAudit.add_step(
+            db,
+            run_id=run_id,
+            step_name=step_name,
+            step_index=step_index,
+            input_data=input_data,
+            output_data=output_data,
+            duration_ms=duration_ms,
+            status=status,
+        )
+        db.commit()
+    except Exception as exc:  # pragma: no cover - audit must not break flow
+        logger.warning("AgentAudit.add_step(%s) failed: %s", step_name, exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+def _safe_finish_run(
+    db: Session,
+    run_id: int | None,
+    status: str,
+    output_summary=None,
+    duration_ms: int | None = None,
+    error_message: str | None = None,
+    started_at: float | None = None,
+) -> None:
+    """Finish an audit run, swallowing any error so the main flow runs on."""
+    if run_id is None:
+        return
+    if duration_ms is None and started_at is not None:
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+    try:
+        AgentAudit.finish_run(
+            db,
+            run_id=run_id,
+            status=status,
+            output_summary=output_summary,
+            duration_ms=duration_ms,
+            error_message=error_message,
+        )
+        db.commit()
+    except Exception as exc:  # pragma: no cover - audit must not break flow
+        logger.warning("AgentAudit.finish_run failed: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass

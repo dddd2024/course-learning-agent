@@ -1,0 +1,669 @@
+<script setup lang="ts">
+import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { listCourses, type Course } from '../api/course'
+import { listKnowledgePoints, type KnowledgePoint } from '../api/knowledge'
+import {
+  createQuiz,
+  getQuizzes,
+  getQuiz,
+  submitQuiz,
+  getWeakPoints,
+  type Quiz,
+  type QuizResult,
+  type QuizResultItem,
+  type WeakPoint,
+} from '../api/quiz'
+import type { ApiError } from '../api/auth'
+
+const courses = ref<Course[]>([])
+const coursesLoading = ref(false)
+const selectedCourseId = ref<number | undefined>(undefined)
+
+const quizzes = ref<Quiz[]>([])
+const quizzesLoading = ref(false)
+
+const weakPoints = ref<WeakPoint[]>([])
+const weakPointsLoading = ref(false)
+
+const dialogVisible = ref(false)
+const dialogLoading = ref(false)
+const knowledgePoints = ref<KnowledgePoint[]>([])
+const knowledgePointsLoading = ref(false)
+const genForm = reactive({
+  question_count: 5,
+  knowledge_point_ids: [] as number[],
+})
+
+const activeQuiz = ref<Quiz | null>(null)
+const activeQuizLoading = ref(false)
+const answers = ref<Record<number, string>>({})
+const submitting = ref(false)
+const quizResult = ref<QuizResult | null>(null)
+
+const resultMap = computed<Record<number, QuizResultItem>>(() => {
+  const map: Record<number, QuizResultItem> = {}
+  if (quizResult.value) {
+    for (const r of quizResult.value.items) {
+      map[r.id] = r
+    }
+  }
+  return map
+})
+
+function getErrorMessage(err: unknown, fallback: string): string {
+  const e = err as { response?: { data?: ApiError | { detail?: string } } }
+  const data = e?.response?.data
+  if (data) {
+    if ('message' in data && data.message) return data.message
+    if ('detail' in data && data.detail) return String(data.detail)
+  }
+  return fallback
+}
+
+const statusLabel: Record<string, string> = {
+  pending: '待完成',
+  in_progress: '进行中',
+  completed: '已完成',
+}
+
+const statusTagType: Record<string, 'info' | 'warning' | 'success'> = {
+  pending: 'info',
+  in_progress: 'warning',
+  completed: 'success',
+}
+
+function questionTypeLabel(t: string): string {
+  const map: Record<string, string> = {
+    choice: '选择题',
+    true_false: '判断题',
+    short_answer: '简答题',
+  }
+  return map[t] || t
+}
+
+function formatDateTime(dt: string | null): string {
+  if (!dt) return ''
+  return dt.replace('T', ' ').slice(0, 19)
+}
+
+function weakPointLevel(wrongCount: number): 'info' | 'warning' | 'danger' {
+  if (wrongCount >= 5) return 'danger'
+  if (wrongCount >= 2) return 'warning'
+  return 'info'
+}
+
+function weakPointLabel(wrongCount: number): string {
+  if (wrongCount >= 5) return '严重'
+  if (wrongCount >= 2) return '一般'
+  return '轻微'
+}
+
+async function fetchCourses() {
+  coursesLoading.value = true
+  try {
+    const { data } = await listCourses({ page: 1, page_size: 200 })
+    courses.value = data.items
+    if (courses.value.length > 0 && selectedCourseId.value === undefined) {
+      selectedCourseId.value = courses.value[0].id
+      fetchQuizzes()
+      fetchWeakPoints()
+    }
+  } catch (err) {
+    ElMessage.error(getErrorMessage(err, '获取课程列表失败'))
+  } finally {
+    coursesLoading.value = false
+  }
+}
+
+async function fetchQuizzes() {
+  if (selectedCourseId.value === undefined) {
+    quizzes.value = []
+    return
+  }
+  quizzesLoading.value = true
+  try {
+    const { data } = await getQuizzes(selectedCourseId.value)
+    quizzes.value = data.items
+  } catch (err) {
+    ElMessage.error(getErrorMessage(err, '获取测验列表失败'))
+  } finally {
+    quizzesLoading.value = false
+  }
+}
+
+async function fetchWeakPoints() {
+  if (selectedCourseId.value === undefined) {
+    weakPoints.value = []
+    return
+  }
+  weakPointsLoading.value = true
+  try {
+    const { data } = await getWeakPoints(selectedCourseId.value)
+    weakPoints.value = data.items
+  } catch (err) {
+    ElMessage.error(getErrorMessage(err, '获取薄弱点失败'))
+  } finally {
+    weakPointsLoading.value = false
+  }
+}
+
+async function fetchKnowledgePoints() {
+  if (selectedCourseId.value === undefined) return
+  knowledgePointsLoading.value = true
+  try {
+    const { data } = await listKnowledgePoints(selectedCourseId.value)
+    knowledgePoints.value = data.items
+  } catch (err) {
+    ElMessage.error(getErrorMessage(err, '获取知识点列表失败'))
+  } finally {
+    knowledgePointsLoading.value = false
+  }
+}
+
+function handleCourseChange() {
+  activeQuiz.value = null
+  quizResult.value = null
+  answers.value = {}
+  fetchQuizzes()
+  fetchWeakPoints()
+}
+
+function openGenerateDialog() {
+  if (selectedCourseId.value === undefined) {
+    ElMessage.warning('请先选择课程')
+    return
+  }
+  genForm.question_count = 5
+  genForm.knowledge_point_ids = []
+  dialogVisible.value = true
+  fetchKnowledgePoints()
+}
+
+async function handleGenerate() {
+  if (selectedCourseId.value === undefined) return
+  dialogLoading.value = true
+  try {
+    const { data } = await createQuiz(
+      selectedCourseId.value,
+      genForm.knowledge_point_ids.length > 0 ? genForm.knowledge_point_ids : undefined,
+      genForm.question_count,
+    )
+    dialogVisible.value = false
+    ElMessage.success('测验已生成')
+    fetchQuizzes()
+    startQuiz(data)
+  } catch (err) {
+    ElMessage.error(getErrorMessage(err, '生成测验失败'))
+  } finally {
+    dialogLoading.value = false
+  }
+}
+
+async function startQuiz(quiz: Quiz) {
+  activeQuizLoading.value = true
+  try {
+    const { data } = await getQuiz(quiz.id)
+    activeQuiz.value = data
+    const ans: Record<number, string> = {}
+    for (const item of data.items) {
+      ans[item.id] = ''
+    }
+    answers.value = ans
+    quizResult.value = null
+  } catch (err) {
+    ElMessage.error(getErrorMessage(err, '加载测验详情失败'))
+  } finally {
+    activeQuizLoading.value = false
+  }
+}
+
+function exitQuiz() {
+  activeQuiz.value = null
+  quizResult.value = null
+  answers.value = {}
+}
+
+async function handleSubmit() {
+  if (!activeQuiz.value) return
+  const unanswered = activeQuiz.value.items.filter((item) => {
+    const ans = answers.value[item.id]
+    return ans === undefined || ans === ''
+  })
+  if (unanswered.length > 0) {
+    ElMessage.warning(`还有 ${unanswered.length} 道题未作答`)
+    return
+  }
+  submitting.value = true
+  try {
+    const payload = activeQuiz.value.items.map((item) => ({
+      item_id: item.id,
+      user_answer: answers.value[item.id] ?? '',
+    }))
+    const { data } = await submitQuiz(activeQuiz.value.id, payload)
+    quizResult.value = data
+    ElMessage.success('提交成功')
+    fetchQuizzes()
+    fetchWeakPoints()
+  } catch (err) {
+    ElMessage.error(getErrorMessage(err, '提交测验失败'))
+  } finally {
+    submitting.value = false
+  }
+}
+
+onMounted(() => {
+  fetchCourses()
+})
+</script>
+
+<template>
+  <div class="page">
+    <div class="toolbar">
+      <h2 class="title">测验</h2>
+      <div class="toolbar-actions">
+        <el-select
+          v-model="selectedCourseId"
+          placeholder="请选择课程"
+          style="width: 240px"
+          :loading="coursesLoading"
+          @change="handleCourseChange"
+        >
+          <el-option
+            v-for="c in courses"
+            :key="c.id"
+            :label="c.name"
+            :value="c.id"
+          />
+        </el-select>
+        <el-button
+          type="primary"
+          :disabled="selectedCourseId === undefined"
+          @click="openGenerateDialog"
+        >
+          生成测验
+        </el-button>
+      </div>
+    </div>
+
+    <div v-if="activeQuiz" v-loading="activeQuizLoading" class="quiz-active">
+      <div class="quiz-active-header">
+        <el-button @click="exitQuiz">返回列表</el-button>
+        <div class="quiz-active-title">{{ activeQuiz.title }}</div>
+      </div>
+
+      <el-alert
+        v-if="quizResult"
+        :title="`得分：${quizResult.score} / ${quizResult.total}`"
+        :type="quizResult.score === quizResult.total ? 'success' : 'warning'"
+        :closable="false"
+        show-icon
+        class="result-alert"
+      />
+
+      <el-card
+        v-for="(item, idx) in activeQuiz.items"
+        :key="item.id"
+        class="question-card"
+        shadow="never"
+      >
+        <template #header>
+          <div class="question-header">
+            <span class="question-index">第 {{ idx + 1 }} 题</span>
+            <el-tag size="small" type="info">
+              {{ questionTypeLabel(item.question_type) }}
+            </el-tag>
+            <el-tag
+              v-if="quizResult && resultMap[item.id]"
+              :type="resultMap[item.id].is_correct ? 'success' : 'danger'"
+              size="small"
+            >
+              {{ resultMap[item.id].is_correct ? '正确' : '错误' }}
+            </el-tag>
+          </div>
+        </template>
+        <div class="question-text">{{ item.question_text }}</div>
+
+        <div v-if="!quizResult" class="question-answer">
+          <el-radio-group
+            v-if="item.question_type === 'choice'"
+            v-model="answers[item.id]"
+            class="answer-radio-group"
+          >
+            <el-radio
+              v-for="(opt, i) in item.options"
+              :key="i"
+              :value="opt"
+              class="answer-option"
+            >
+              {{ opt }}
+            </el-radio>
+          </el-radio-group>
+          <el-radio-group
+            v-else-if="item.question_type === 'true_false'"
+            v-model="answers[item.id]"
+          >
+            <el-radio value="true">是</el-radio>
+            <el-radio value="false">否</el-radio>
+          </el-radio-group>
+          <el-input
+            v-else
+            v-model="answers[item.id]"
+            type="textarea"
+            :rows="3"
+            placeholder="请输入答案"
+          />
+        </div>
+
+        <div v-else class="question-result">
+          <div class="result-row">
+            <span class="result-label">你的答案：</span>
+            <span class="result-value">
+              {{ resultMap[item.id]?.user_answer || '（未作答）' }}
+            </span>
+          </div>
+          <div class="result-row">
+            <span class="result-label">解析：</span>
+            <span class="result-value">
+              {{ resultMap[item.id]?.explanation || '无' }}
+            </span>
+          </div>
+        </div>
+      </el-card>
+
+      <div v-if="!quizResult && activeQuiz.items.length > 0" class="quiz-actions">
+        <el-button type="primary" :loading="submitting" @click="handleSubmit">
+          提交测验
+        </el-button>
+      </div>
+    </div>
+
+    <template v-else>
+      <el-card class="section-card" shadow="never">
+        <template #header>
+          <div class="section-title">测验列表</div>
+        </template>
+        <el-table
+          v-loading="quizzesLoading"
+          :data="quizzes"
+          stripe
+          empty-text="暂无测验"
+        >
+          <el-table-column
+            prop="title"
+            label="标题"
+            min-width="180"
+            show-overflow-tooltip
+          />
+          <el-table-column
+            prop="question_count"
+            label="题数"
+            width="80"
+            align="center"
+          />
+          <el-table-column label="状态" width="100" align="center">
+            <template #default="{ row }">
+              <el-tag
+                :type="statusTagType[row.status] || 'info'"
+                size="small"
+              >
+                {{ statusLabel[row.status] || row.status }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="得分" width="100" align="center">
+            <template #default="{ row }">
+              <span v-if="row.score !== null && row.score !== undefined">
+                {{ row.score }}
+              </span>
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="创建时间" width="180" align="center">
+            <template #default="{ row }">
+              {{ formatDateTime(row.created_at) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="120" align="center" fixed="right">
+            <template #default="{ row }">
+              <el-button size="small" type="primary" @click="startQuiz(row)">
+                {{ row.status === 'completed' ? '查看' : '开始' }}
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+
+      <el-card class="section-card" shadow="never">
+        <template #header>
+          <div class="section-title">薄弱知识点</div>
+        </template>
+        <div v-loading="weakPointsLoading">
+          <el-empty
+            v-if="!weakPointsLoading && weakPoints.length === 0"
+            description="暂无薄弱点数据"
+          />
+          <div class="weak-points">
+            <div
+              v-for="wp in weakPoints"
+              :key="wp.id"
+              class="weak-point-item"
+            >
+              <div class="weak-point-main">
+                <div class="weak-point-title">{{ wp.knowledge_point_title }}</div>
+                <div class="weak-point-meta">
+                  <span>错误次数：{{ wp.wrong_count }}</span>
+                  <span v-if="wp.last_wrong_at">
+                    最近错误：{{ formatDateTime(wp.last_wrong_at) }}
+                  </span>
+                </div>
+              </div>
+              <el-tag :type="weakPointLevel(wp.wrong_count)" size="small">
+                {{ weakPointLabel(wp.wrong_count) }}
+              </el-tag>
+            </div>
+          </div>
+        </div>
+      </el-card>
+    </template>
+
+    <el-dialog v-model="dialogVisible" title="生成测验" width="520px">
+      <el-form label-position="top" v-loading="knowledgePointsLoading">
+        <el-form-item label="题目数量">
+          <el-input-number
+            v-model="genForm.question_count"
+            :min="1"
+            :max="20"
+            :step="1"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="知识点范围（可选，不选则覆盖全部）">
+          <el-select
+            v-model="genForm.knowledge_point_ids"
+            multiple
+            filterable
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="不选则覆盖全部知识点"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="kp in knowledgePoints"
+              :key="kp.id"
+              :label="kp.title"
+              :value="Number(kp.id)"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="dialogLoading" @click="handleGenerate">
+          生成
+        </el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<style scoped>
+.page {
+  background: #fff;
+  padding: 24px;
+  border-radius: 4px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.title {
+  font-size: 20px;
+  margin: 0;
+  color: #303133;
+}
+
+.section-card {
+  margin-bottom: 20px;
+}
+
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.quiz-active {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.quiz-active-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.quiz-active-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.result-alert {
+  margin-bottom: 4px;
+}
+
+.question-card {
+  margin-bottom: 4px;
+}
+
+.question-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.question-index {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.question-text {
+  font-size: 15px;
+  color: #303133;
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+
+.question-answer {
+  margin-top: 4px;
+}
+
+.answer-radio-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.answer-option {
+  margin-bottom: 8px;
+}
+
+.question-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.result-row {
+  font-size: 14px;
+  color: #303133;
+  line-height: 1.6;
+}
+
+.result-label {
+  font-weight: 600;
+  color: #606266;
+}
+
+.result-value {
+  color: #303133;
+}
+
+.quiz-actions {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0;
+}
+
+.weak-points {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 60px;
+}
+
+.weak-point-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+}
+
+.weak-point-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.weak-point-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.weak-point-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 13px;
+  color: #909399;
+}
+</style>
