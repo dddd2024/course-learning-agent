@@ -9,7 +9,7 @@ import {
   type AgentRunListParams,
   type AgentStep,
 } from '../api/audit'
-import type { ApiError } from '../api/auth'
+import { parseApiError } from '../utils/error'
 
 const runs = ref<AgentRun[]>([])
 const listLoading = ref(false)
@@ -46,14 +46,36 @@ const statusLabel: Record<string, string> = {
   started: '进行中',
 }
 
-function getErrorMessage(err: unknown, fallback: string): string {
-  const e = err as { response?: { data?: ApiError | { detail?: string } } }
-  const data = e?.response?.data
-  if (data) {
-    if ('message' in data && data.message) return data.message
-    if ('detail' in data && data.detail) return String(data.detail)
+const providerLabel: Record<string, string> = {
+  mock: 'Mock',
+  real: '真实模型',
+  user: '用户配置',
+}
+
+const providerTagType: Record<string, 'success' | 'warning' | 'info'> = {
+  real: 'success',
+  user: 'warning',
+  mock: 'info',
+}
+
+interface RetrievedChunk {
+  chunk_id?: number
+  score?: number
+  snippet?: string
+  text?: string
+  is_cited?: boolean
+  title?: string
+  page_no?: number | null
+}
+
+function extractChunks(step: AgentStep): RetrievedChunk[] {
+  const out = step.output_data
+  if (!out) return []
+  if (Array.isArray(out)) return out as RetrievedChunk[]
+  if (typeof out === 'object' && Array.isArray((out as Record<string, unknown>).chunks)) {
+    return (out as Record<string, unknown>).chunks as RetrievedChunk[]
   }
-  return fallback
+  return []
 }
 
 function formatDuration(ms: number | null | undefined): string {
@@ -111,7 +133,7 @@ async function fetchRuns() {
     const { data } = await getAgentRuns(buildListParams())
     runs.value = data.items
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取运行列表失败'))
+    ElMessage.error(parseApiError(err, '获取运行列表失败'))
   } finally {
     listLoading.value = false
   }
@@ -125,7 +147,7 @@ async function openDetail(row: AgentRun) {
     const { data } = await getAgentRun(row.id)
     detail.value = data
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取运行详情失败'))
+    ElMessage.error(parseApiError(err, '获取运行详情失败'))
   } finally {
     detailLoading.value = false
   }
@@ -211,6 +233,18 @@ onMounted(() => {
         <el-table-column prop="model_name" label="模型" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">
             {{ row.model_name || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="来源" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag
+              v-if="row.provider"
+              :type="providerTagType[row.provider] || 'info'"
+              size="small"
+            >
+              {{ providerLabel[row.provider] || row.provider }}
+            </el-tag>
+            <span v-else>-</span>
           </template>
         </el-table-column>
         <el-table-column prop="prompt_version" label="Prompt 版本" width="130" align="center">
@@ -339,6 +373,39 @@ onMounted(() => {
                   <div class="step-field">
                     <span class="step-field-label">输出：</span>
                     <pre class="data-block">{{ formatData(step.output_data) }}</pre>
+                  </div>
+                  <div v-if="extractChunks(step).length > 0" class="step-field">
+                    <span class="step-field-label">检索证据：</span>
+                    <div class="chunks-list">
+                      <div
+                        v-for="(c, i) in extractChunks(step)"
+                        :key="i"
+                        class="chunk-card"
+                      >
+                        <div class="chunk-head">
+                          <span class="chunk-id">#{{ c.chunk_id ?? i + 1 }}</span>
+                          <span v-if="c.score !== undefined" class="chunk-score">
+                            score: {{ Number(c.score).toFixed(2) }}
+                          </span>
+                          <span v-if="c.title" class="chunk-title" :title="c.title">
+                            {{ c.title }}
+                          </span>
+                          <span v-if="c.page_no !== undefined && c.page_no !== null" class="chunk-page">
+                            P{{ c.page_no }}
+                          </span>
+                          <el-tag
+                            v-if="c.is_cited !== undefined"
+                            size="small"
+                            :type="c.is_cited ? 'success' : 'info'"
+                          >
+                            {{ c.is_cited ? '已引用' : '未引用' }}
+                          </el-tag>
+                        </div>
+                        <div class="chunk-snippet">
+                          {{ c.snippet || c.text || '-' }}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </el-timeline-item>
@@ -476,5 +543,60 @@ onMounted(() => {
   color: #606266;
   display: block;
   margin-bottom: 4px;
+}
+
+.chunks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chunk-card {
+  background: #f5f7fa;
+  border: 1px solid #ebeef5;
+  border-left: 3px solid #409eff;
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+
+.chunk-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.chunk-id {
+  font-weight: 600;
+  color: #303133;
+}
+
+.chunk-score {
+  color: #e6a23c;
+}
+
+.chunk-title {
+  color: #606266;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chunk-page {
+  color: #909399;
+}
+
+.chunk-snippet {
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.5;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 </style>

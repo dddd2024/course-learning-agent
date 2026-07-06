@@ -4,23 +4,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Document, ChatDotRound, Collection } from '@element-plus/icons-vue'
 import { getCourse, type Course } from '../api/course'
-import type { ApiError } from '../api/auth'
+import { parseApiError } from '../utils/error'
 
 const route = useRoute()
 const router = useRouter()
 
 const course = ref<Course | null>(null)
 const loading = ref(false)
-
-function getErrorMessage(err: unknown, fallback: string): string {
-  const e = err as { response?: { data?: ApiError | { detail?: string } } }
-  const data = e?.response?.data
-  if (data) {
-    if ('message' in data && data.message) return data.message
-    if ('detail' in data && data.detail) return String(data.detail)
-  }
-  return fallback
-}
 
 async function fetchCourse() {
   const id = Number(route.params.id)
@@ -34,7 +24,7 @@ async function fetchCourse() {
     const { data } = await getCourse(id)
     course.value = data
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取课程详情失败'))
+    ElMessage.error(parseApiError(err, '获取课程详情失败'))
     router.push('/courses')
   } finally {
     loading.value = false

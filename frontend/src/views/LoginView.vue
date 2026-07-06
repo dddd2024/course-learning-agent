@@ -3,7 +3,8 @@ import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
-import { login, register, type ApiError } from '../api/auth'
+import { login, register } from '../api/auth'
+import { parseApiError } from '../utils/error'
 
 type TabName = 'login' | 'register'
 
@@ -43,16 +44,6 @@ const registerRules: FormRules<typeof registerForm> = {
   email: [{ type: 'email', message: '邮箱格式不正确', trigger: 'blur' }],
 }
 
-function getErrorMessage(err: unknown, fallback: string): string {
-  const e = err as { response?: { data?: ApiError | { detail?: string } } }
-  const data = e?.response?.data
-  if (data) {
-    if ('message' in data && data.message) return data.message
-    if ('detail' in data && data.detail) return String(data.detail)
-  }
-  return fallback
-}
-
 async function handleLogin() {
   if (!loginFormRef.value) return
   try {
@@ -70,7 +61,7 @@ async function handleLogin() {
     ElMessage.success('登录成功')
     router.push('/dashboard')
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '登录失败，请重试'))
+    ElMessage.error(parseApiError(err, '登录失败，请重试'))
   } finally {
     loading.value = false
   }
@@ -99,7 +90,7 @@ async function handleRegister() {
     auth.setToken(data.access_token, registerForm.username)
     router.push('/dashboard')
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '注册失败，请重试'))
+    ElMessage.error(parseApiError(err, '注册失败，请重试'))
   } finally {
     loading.value = false
   }

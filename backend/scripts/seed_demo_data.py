@@ -17,11 +17,19 @@ Demo content created:
   the project's own :func:`chunker.chunk_text`.
 * Three ``KnowledgePoint`` rows for the 操作系统 course
   (进程调度 / 页面置换 / 死锁) with varying ``importance``.
+* One ``StudyGoal`` (7天复习操作系统) with two ``StudyTask`` rows and
+  three ``Todo`` rows (today pending / today completed / yesterday
+  pending) so the Plans and Todos pages have content.
+* One ``Quiz`` (操作系统第一章自测) with two choice ``QuizItem`` rows.
+* One ``Conversation`` (关于死锁的提问) with one user ``Message``.
+* Two ``AgentRun`` rows (course_qa / outline, both success), each with
+  three ``AgentStep`` rows (retrieve / generate / validate).
 """
 from __future__ import annotations
 
 import json
 import sys
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Tuple
 
@@ -40,16 +48,26 @@ def _ensure_backend_on_path() -> None:
 
 _ensure_backend_on_path()
 
+from sqlalchemy import inspect, text  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.core.database import SessionLocal, engine  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
 from app.models import (  # noqa: E402
+    AgentRun,
+    AgentStep,
     Base,
+    Conversation,
     Course,
     KnowledgePoint,
     Material,
     MaterialChunk,
+    Message,
+    Quiz,
+    QuizItem,
+    StudyGoal,
+    StudyTask,
+    Todo,
     User,
 )
 from app.retrieval.chunker import chunk_text, clean_keyword_text  # noqa: E402
@@ -308,9 +326,417 @@ def _create_knowledge_points(
     return created
 
 
+def _create_todos_and_plan(
+    db: Session, user: User, course: Course
+) -> dict:
+    """Create one StudyGoal, two StudyTasks and three Todos.
+
+    Layout: today-pending, today-completed, yesterday-pending. All
+    natural-keyed (``StudyGoal.title``, ``StudyTask.title`` per goal,
+    ``Todo`` by task + title + scheduled_date) so re-runs are no-ops.
+    """
+    goal_title = "7天复习操作系统"
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+
+    goal = (
+        db.query(StudyGoal)
+        .filter(
+            StudyGoal.user_id == user.id,
+            StudyGoal.title == goal_title,
+        )
+        .first()
+    )
+    goal_created = goal is None
+    if goal is None:
+        goal = StudyGoal(
+            user_id=user.id,
+            title=goal_title,
+            deadline=today + timedelta(days=7),
+            daily_minutes=120,
+            status="active",
+        )
+        db.add(goal)
+        db.flush()
+
+    task_specs = [
+        {
+            "title": "复习进程管理与死锁",
+            "task_type": "review",
+            "estimate_minutes": 120,
+            "priority": 5,
+            "acceptance": "能讲清进程三态转换与死锁四个必要条件",
+        },
+        {
+            "title": "练习页面置换算法计算题",
+            "task_type": "practice",
+            "estimate_minutes": 90,
+            "priority": 4,
+            "acceptance": "能手算 FIFO/LRU 在给定引用串下的缺页次数",
+        },
+    ]
+
+    tasks: list[StudyTask] = []
+    tasks_created = 0
+    for spec in task_specs:
+        task = (
+            db.query(StudyTask)
+            .filter(
+                StudyTask.goal_id == goal.id,
+                StudyTask.title == spec["title"],
+            )
+            .first()
+        )
+        if task is None:
+            task = StudyTask(
+                goal_id=goal.id,
+                course_id=course.id,
+                title=spec["title"],
+                task_type=spec["task_type"],
+                estimate_minutes=spec["estimate_minutes"],
+                priority=spec["priority"],
+                acceptance=spec["acceptance"],
+                status="pending",
+            )
+            db.add(task)
+            db.flush()
+            tasks_created += 1
+        tasks.append(task)
+
+    todo_specs = [
+        {
+            "task": tasks[0],
+            "title": "复习进程管理章节",
+            "scheduled_date": today,
+            "status": "pending",
+            "completed_at": None,
+        },
+        {
+            "task": tasks[0],
+            "title": "整理死锁四个必要条件笔记",
+            "scheduled_date": today,
+            "status": "completed",
+            "completed_at": datetime(
+                today.year, today.month, today.day, 14, 30, 0
+            ),
+        },
+        {
+            "task": tasks[1],
+            "title": "完成页面置换练习题",
+            "scheduled_date": yesterday,
+            "status": "pending",
+            "completed_at": None,
+        },
+    ]
+
+    todos_created = 0
+    for spec in todo_specs:
+        existing = (
+            db.query(Todo)
+            .filter(
+                Todo.task_id == spec["task"].id,
+                Todo.title == spec["title"],
+                Todo.scheduled_date == spec["scheduled_date"],
+            )
+            .first()
+        )
+        if existing is not None:
+            continue
+        db.add(
+            Todo(
+                user_id=user.id,
+                task_id=spec["task"].id,
+                course_id=course.id,
+                title=spec["title"],
+                scheduled_date=spec["scheduled_date"],
+                status=spec["status"],
+                completed_at=spec["completed_at"],
+                estimate_minutes=spec["task"].estimate_minutes,
+            )
+        )
+        todos_created += 1
+    db.flush()
+    return {
+        "goal_created": goal_created,
+        "tasks_created": tasks_created,
+        "todos_created": todos_created,
+    }
+
+
+def _create_quiz(db: Session, user: User, course: Course) -> dict:
+    """Create one Quiz with two choice QuizItems for the OS course."""
+    quiz_title = "操作系统第一章自测"
+    existing = (
+        db.query(Quiz)
+        .filter(
+            Quiz.user_id == user.id,
+            Quiz.course_id == course.id,
+            Quiz.title == quiz_title,
+        )
+        .first()
+    )
+    if existing is not None:
+        return {"quiz_created": False, "items_created": 0}
+
+    quiz = Quiz(
+        user_id=user.id,
+        course_id=course.id,
+        title=quiz_title,
+        question_count=2,
+        status="draft",
+    )
+    db.add(quiz)
+    db.flush()
+
+    items = [
+        {
+            "question_type": "choice",
+            "question_text": "产生死锁的四个必要条件中，不包含以下哪一项？",
+            "options": [
+                "A. 互斥",
+                "B. 占有并等待",
+                "C. 先来先服务",
+                "D. 循环等待",
+            ],
+            "answer": "C",
+            "explanation": (
+                "死锁的四个必要条件是互斥、占有并等待、不剥夺和循环等待；"
+                "先来先服务是进程调度算法，与死锁条件无关。"
+            ),
+            "order_index": 0,
+        },
+        {
+            "question_type": "choice",
+            "question_text": "下列页面置换算法中，可能产生 Belady 异常的是？",
+            "options": ["A. LRU", "B. FIFO", "C. OPT", "D. LFU"],
+            "answer": "B",
+            "explanation": (
+                "FIFO 在增加物理页框时可能出现缺页率上升的 Belady 异常，"
+                "LRU 和 OPT 不会出现该异常。"
+            ),
+            "order_index": 1,
+        },
+    ]
+
+    for it in items:
+        db.add(
+            QuizItem(
+                quiz_id=quiz.id,
+                question_type=it["question_type"],
+                question_text=it["question_text"],
+                options=json.dumps(it["options"], ensure_ascii=False),
+                answer=it["answer"],
+                explanation=it["explanation"],
+                order_index=it["order_index"],
+            )
+        )
+    db.flush()
+    return {"quiz_created": True, "items_created": len(items)}
+
+
+def _create_conversation(db: Session, user: User, course: Course) -> dict:
+    """Create one Conversation with a single user Message for the OS course."""
+    conv_title = "关于死锁的提问"
+    existing = (
+        db.query(Conversation)
+        .filter(
+            Conversation.user_id == user.id,
+            Conversation.course_id == course.id,
+            Conversation.title == conv_title,
+        )
+        .first()
+    )
+    if existing is not None:
+        return {"conv_created": False, "messages_created": 0}
+
+    conv = Conversation(
+        user_id=user.id,
+        course_id=course.id,
+        title=conv_title,
+    )
+    db.add(conv)
+    db.flush()
+
+    db.add(
+        Message(
+            conversation_id=conv.id,
+            role="user",
+            content="什么是死锁？",
+            answer_json=None,
+        )
+    )
+    db.flush()
+    return {"conv_created": True, "messages_created": 1}
+
+
+def _create_agent_runs(db: Session, user: User, course: Course) -> dict:
+    """Create two AgentRuns (course_qa / outline) with three steps each.
+
+    Idempotency: skip a run_type once the user already has at least one
+    run of that type (count-based natural key on user_id + run_type).
+    """
+    now = datetime.now()
+    started_at = now - timedelta(minutes=10)
+    finished_at = now - timedelta(minutes=9)
+
+    run_specs = [
+        {
+            "run_type": "course_qa",
+            "input_summary": {
+                "question": "什么是死锁？",
+                "course_id": course.id,
+            },
+            "output_summary": {
+                "answer": "死锁是多个进程因竞争资源而互相等待的僵局……",
+            },
+            "steps": [
+                {
+                    "step_name": "retrieve",
+                    "step_index": 0,
+                    "input_data": {"query": "什么是死锁？", "top_k": 4},
+                    "output_data": {
+                        "chunks": ["第一章 进程管理……死锁四个必要条件……"]
+                    },
+                    "duration_ms": 120,
+                },
+                {
+                    "step_name": "generate",
+                    "step_index": 1,
+                    "input_data": {
+                        "question": "什么是死锁？",
+                        "context": "死锁是多个进程……",
+                    },
+                    "output_data": {
+                        "answer": "死锁是多个进程因竞争资源而互相等待的僵局……"
+                    },
+                    "duration_ms": 850,
+                },
+                {
+                    "step_name": "validate",
+                    "step_index": 2,
+                    "input_data": {"answer": "死锁是……"},
+                    "output_data": {"valid": True, "issues": []},
+                    "duration_ms": 30,
+                },
+            ],
+        },
+        {
+            "run_type": "outline",
+            "input_summary": {"course_id": course.id, "material": "demo"},
+            "output_summary": {"knowledge_points": 3},
+            "steps": [
+                {
+                    "step_name": "retrieve",
+                    "step_index": 0,
+                    "input_data": {"material": "demo", "scope": "all"},
+                    "output_data": {
+                        "chunks": ["进程管理", "内存管理", "文件系统"]
+                    },
+                    "duration_ms": 90,
+                },
+                {
+                    "step_name": "generate",
+                    "step_index": 1,
+                    "input_data": {
+                        "chunks": ["进程管理", "内存管理", "文件系统"]
+                    },
+                    "output_data": {
+                        "points": ["进程调度", "页面置换", "死锁"]
+                    },
+                    "duration_ms": 1200,
+                },
+                {
+                    "step_name": "validate",
+                    "step_index": 2,
+                    "input_data": {
+                        "points": ["进程调度", "页面置换", "死锁"]
+                    },
+                    "output_data": {"valid": True, "issues": []},
+                    "duration_ms": 40,
+                },
+            ],
+        },
+    ]
+
+    runs_created = 0
+    steps_created = 0
+    for spec in run_specs:
+        existing_count = (
+            db.query(AgentRun)
+            .filter(
+                AgentRun.user_id == user.id,
+                AgentRun.run_type == spec["run_type"],
+            )
+            .count()
+        )
+        if existing_count > 0:
+            continue
+        run = AgentRun(
+            user_id=user.id,
+            run_type=spec["run_type"],
+            status="success",
+            input_summary=json.dumps(
+                spec["input_summary"], ensure_ascii=False
+            ),
+            output_summary=json.dumps(
+                spec["output_summary"], ensure_ascii=False
+            ),
+            prompt_version="v1",
+            model_name="mock",
+            provider="mock",
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=1000,
+        )
+        db.add(run)
+        db.flush()
+        runs_created += 1
+        for step in spec["steps"]:
+            db.add(
+                AgentStep(
+                    run_id=run.id,
+                    step_name=step["step_name"],
+                    step_index=step["step_index"],
+                    input_data=json.dumps(
+                        step["input_data"], ensure_ascii=False
+                    ),
+                    output_data=json.dumps(
+                        step["output_data"], ensure_ascii=False
+                    ),
+                    duration_ms=step["duration_ms"],
+                    status="success",
+                )
+            )
+            steps_created += 1
+    db.flush()
+    return {"runs_created": runs_created, "steps_created": steps_created}
+
+
+def _ensure_agent_runs_schema() -> None:
+    """Back-fill missing columns on a legacy ``agent_runs`` table.
+
+    ``Base.metadata.create_all`` only creates missing tables — it does
+    not add new columns to existing ones. Older databases created the
+    ``agent_runs`` table before the ``provider`` / ``config_id`` columns
+    were introduced, so we ALTER them in here to keep the seed runnable
+    on a legacy DB without wiping data.
+    """
+    inspector = inspect(engine)
+    if "agent_runs" not in inspector.get_table_names():
+        return
+    existing = {c["name"] for c in inspector.get_columns("agent_runs")}
+    with engine.begin() as conn:
+        if "provider" not in existing:
+            conn.execute(text("ALTER TABLE agent_runs ADD COLUMN provider VARCHAR(50)"))
+        if "config_id" not in existing:
+            conn.execute(text("ALTER TABLE agent_runs ADD COLUMN config_id INTEGER"))
+
+
 def main() -> None:
     # Ensure tables exist (idempotent) so the seed can run on a fresh DB.
     Base.metadata.create_all(bind=engine)
+    # Back-fill any missing columns on legacy tables (no-op on fresh DBs).
+    _ensure_agent_runs_schema()
 
     db = SessionLocal()
     try:
@@ -355,6 +781,11 @@ def main() -> None:
             material=os_material,
         )
 
+        plan_result = _create_todos_and_plan(db, user, os_course)
+        quiz_result = _create_quiz(db, user, os_course)
+        conv_result = _create_conversation(db, user, os_course)
+        runs_result = _create_agent_runs(db, user, os_course)
+
         db.commit()
     except Exception:
         db.rollback()
@@ -381,6 +812,37 @@ def main() -> None:
         f"课程 2: {DS_COURSE_NAME}（李老师，2026春，#67C23A）{ds_state}"
     )
     print(f"  资料: {DS_MATERIAL_FILENAME}（新增 {ds_chunks} 个切块）")
+    print()
+    plan_state = "新建" if plan_result["goal_created"] else "已存在"
+    print(f"学习目标: 7天复习操作系统（{plan_state}，daily 120 分钟）")
+    print(
+        f"  任务: 新增 {plan_result['tasks_created']} 个"
+        f"（复习进程管理与死锁 / 练习页面置换算法计算题）"
+    )
+    print(
+        f"  待办: 新增 {plan_result['todos_created']} 个"
+        f"（今日待办 / 今日已完成 / 昨日待办）"
+    )
+    print()
+    quiz_state = "新建" if quiz_result["quiz_created"] else "已存在"
+    print(
+        f"测验: 操作系统第一章自测（{quiz_state}，"
+        f"新增 {quiz_result['items_created']} 道选择题）"
+    )
+    print()
+    conv_state = "新建" if conv_result["conv_created"] else "已存在"
+    print(
+        f"对话: 关于死锁的提问（{conv_state}，"
+        f"新增 {conv_result['messages_created']} 条用户消息）"
+    )
+    print()
+    runs_state = "新建" if runs_result["runs_created"] else "已存在"
+    print(
+        f"Agent 运行: {runs_state}，"
+        f"新增 {runs_result['runs_created']} 条 run / "
+        f"{runs_result['steps_created']} 条 step"
+        f"（course_qa + outline，各 3 步：retrieve/generate/validate）"
+    )
     print()
     print("提示: 可使用 demo 账号登录 http://localhost:5173 体验全部功能。")
 

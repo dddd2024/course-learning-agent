@@ -10,6 +10,7 @@ import {
   Refresh,
 } from '@element-plus/icons-vue'
 import { getCourse, type Course } from '../api/course'
+import { MAX_PAGE_SIZE } from '../constants/pagination'
 import {
   generateKnowledgePoints,
   listKnowledgePoints,
@@ -21,7 +22,7 @@ import {
   type Chunk,
   type Material,
 } from '../api/material'
-import type { ApiError } from '../api/auth'
+import { parseApiError } from '../utils/error'
 
 interface ChunkWithSource {
   chunk: Chunk
@@ -47,16 +48,6 @@ const currentChunk = ref<Chunk | null>(null)
 const currentChunkMaterialName = ref<string>('')
 
 const materialChunksCache = ref<Map<number, Chunk[]>>(new Map())
-
-function getErrorMessage(err: unknown, fallback: string): string {
-  const e = err as { response?: { data?: ApiError | { detail?: string } } }
-  const data = e?.response?.data
-  if (data) {
-    if ('message' in data && data.message) return data.message
-    if ('detail' in data && data.detail) return String(data.detail)
-  }
-  return fallback
-}
 
 function normalizeImportance(value: number | undefined | null): number {
   if (value === undefined || value === null || Number.isNaN(value)) return 0
@@ -97,7 +88,7 @@ async function fetchCourse() {
     const { data } = await getCourse(courseId.value)
     course.value = data
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取课程详情失败'))
+    ElMessage.error(parseApiError(err, '获取课程详情失败'))
     router.push('/courses')
   } finally {
     courseLoading.value = false
@@ -111,7 +102,7 @@ async function fetchKnowledgePoints() {
     const { data } = await listKnowledgePoints(courseId.value)
     knowledgePoints.value = data.items
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取知识点列表失败'))
+    ElMessage.error(parseApiError(err, '获取知识点列表失败'))
     knowledgePoints.value = []
   } finally {
     listLoading.value = false
@@ -136,7 +127,7 @@ async function handleGenerate() {
     materialChunksCache.value.clear()
     ElMessage.success(`已生成 ${data.count} 个知识点`)
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '生成知识点失败'))
+    ElMessage.error(parseApiError(err, '生成知识点失败'))
   } finally {
     generating.value = false
   }
@@ -152,7 +143,7 @@ async function fetchAllChunks(): Promise<ChunkWithSource[]> {
     let chunks = materialChunksCache.value.get(m.id)
     if (!chunks) {
       try {
-        const { data } = await getChunks(m.id, { page: 1, page_size: 200 })
+        const { data } = await getChunks(m.id, { page: 1, page_size: MAX_PAGE_SIZE })
         chunks = data.items
         materialChunksCache.value.set(m.id, chunks)
       } catch {

@@ -8,7 +8,8 @@ import {
   type Todo,
   type TodoStatus,
 } from '../api/plan'
-import type { ApiError } from '../api/auth'
+import { MAX_PAGE_SIZE } from '../constants/pagination'
+import { parseApiError } from '../utils/error'
 
 const courses = ref<Course[]>([])
 const coursesLoading = ref(false)
@@ -72,16 +73,6 @@ const recordForm = reactive({
   actual_minutes: 0,
 })
 
-function getErrorMessage(err: unknown, fallback: string): string {
-  const e = err as { response?: { data?: ApiError | { detail?: string } } }
-  const data = e?.response?.data
-  if (data) {
-    if ('message' in data && data.message) return data.message
-    if ('detail' in data && data.detail) return String(data.detail)
-  }
-  return fallback
-}
-
 function toDateString(d: Date): string {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -110,10 +101,10 @@ function formatDateTime(dt: string | null): string {
 async function fetchCourses() {
   coursesLoading.value = true
   try {
-    const { data } = await listCourses({ page: 1, page_size: 200 })
+    const { data } = await listCourses({ page: 1, page_size: MAX_PAGE_SIZE })
     courses.value = data.items
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取课程列表失败'))
+    ElMessage.error(parseApiError(err, '获取课程列表失败'))
   } finally {
     coursesLoading.value = false
   }
@@ -125,7 +116,7 @@ async function fetchTodayTodos() {
     const { data } = await listTodos({ date: todayString() })
     todayTodos.value = data.items
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取今日待办失败'))
+    ElMessage.error(parseApiError(err, '获取今日待办失败'))
   } finally {
     todayLoading.value = false
   }
@@ -144,7 +135,7 @@ async function fetchAllTodos() {
     allTodos.value = data.items
     allTotal.value = data.total
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取待办列表失败'))
+    ElMessage.error(parseApiError(err, '获取待办列表失败'))
   } finally {
     allLoading.value = false
   }
@@ -181,7 +172,7 @@ async function handleComplete(todo: Todo) {
     applyTodoUpdate(data)
     ElMessage.success('已完成')
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '完成待办失败'))
+    ElMessage.error(parseApiError(err, '完成待办失败'))
   }
 }
 
@@ -200,7 +191,7 @@ async function handlePostpone(todo: Todo) {
     applyTodoUpdate(data)
     ElMessage.success('已延期')
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '延期待办失败'))
+    ElMessage.error(parseApiError(err, '延期待办失败'))
   }
 }
 
@@ -221,7 +212,7 @@ async function handleRecordSubmit() {
     ElMessage.success('已记录实际时长')
     recordDialogVisible.value = false
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '记录失败'))
+    ElMessage.error(parseApiError(err, '记录失败'))
   } finally {
     recordLoading.value = false
   }

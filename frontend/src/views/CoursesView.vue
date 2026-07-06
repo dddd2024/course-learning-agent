@@ -15,7 +15,7 @@ import {
   type Course,
   type CoursePayload,
 } from '../api/course'
-import type { ApiError } from '../api/auth'
+import { parseApiError } from '../utils/error'
 
 const router = useRouter()
 
@@ -54,16 +54,6 @@ const formRules: FormRules<typeof form> = {
   ],
 }
 
-function getErrorMessage(err: unknown, fallback: string): string {
-  const e = err as { response?: { data?: ApiError | { detail?: string } } }
-  const data = e?.response?.data
-  if (data) {
-    if ('message' in data && data.message) return data.message
-    if ('detail' in data && data.detail) return String(data.detail)
-  }
-  return fallback
-}
-
 async function fetchCourses() {
   loading.value = true
   try {
@@ -75,7 +65,7 @@ async function fetchCourses() {
     courses.value = data.items
     total.value = data.total
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取课程列表失败'))
+    ElMessage.error(parseApiError(err, '获取课程列表失败'))
   } finally {
     loading.value = false
   }
@@ -151,7 +141,7 @@ async function handleSubmit() {
     dialogVisible.value = false
     fetchCourses()
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '保存失败'))
+    ElMessage.error(parseApiError(err, '保存失败'))
   } finally {
     dialogLoading.value = false
   }
@@ -179,7 +169,7 @@ async function handleDelete(course: Course) {
     }
     fetchCourses()
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '删除失败'))
+    ElMessage.error(parseApiError(err, '删除失败'))
   }
 }
 

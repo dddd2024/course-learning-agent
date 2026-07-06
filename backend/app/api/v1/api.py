@@ -8,6 +8,7 @@ from app.api.v1.endpoints import (
     citations,
     conversations,
     courses,
+    dashboard,
     health,
     knowledge_points,
     llm_configs,
@@ -42,6 +43,9 @@ api_router.include_router(quizzes.router, prefix="/quizzes", tags=["quizzes"])
 api_router.include_router(agent_runs.router, prefix="/agent-runs", tags=["agent_runs"])
 api_router.include_router(
     llm_configs.router, prefix="/llm-configs", tags=["llm_configs"]
+)
+api_router.include_router(
+    dashboard.router, prefix="/dashboard", tags=["dashboard"]
 )
 
 __all__ = ["api_router"]

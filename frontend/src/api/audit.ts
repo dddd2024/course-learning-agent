@@ -30,6 +30,8 @@ export interface AgentRun {
   output_summary: unknown
   prompt_version: string | null
   model_name: string | null
+  provider: string | null
+  config_id: number | null
   duration_ms: number | null
   error_message: string | null
   started_at: string | null

@@ -16,7 +16,7 @@ import {
   type MaterialStatus,
   type SearchItem,
 } from '../api/material'
-import type { ApiError } from '../api/auth'
+import { parseApiError } from '../utils/error'
 
 const route = useRoute()
 const router = useRouter()
@@ -73,16 +73,6 @@ const expandedSearchIds = ref<Set<number>>(new Set())
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
-function getErrorMessage(err: unknown, fallback: string): string {
-  const e = err as { response?: { data?: ApiError | { detail?: string } } }
-  const data = e?.response?.data
-  if (data) {
-    if ('message' in data && data.message) return data.message
-    if ('detail' in data && data.detail) return String(data.detail)
-  }
-  return fallback
-}
-
 function getFileExtension(filename: string): string {
   const idx = filename.lastIndexOf('.')
   return idx >= 0 ? filename.slice(idx + 1).toLowerCase() : ''
@@ -99,7 +89,7 @@ async function fetchCourse() {
     const { data } = await getCourse(courseId.value)
     course.value = data
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取课程详情失败'))
+    ElMessage.error(parseApiError(err, '获取课程详情失败'))
     router.push('/courses')
   } finally {
     courseLoading.value = false
@@ -116,7 +106,7 @@ async function fetchMaterials() {
     materials.value = data.items
     ensurePolling()
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取资料列表失败'))
+    ElMessage.error(parseApiError(err, '获取资料列表失败'))
   } finally {
     tableLoading.value = false
   }
@@ -198,7 +188,7 @@ function customUpload(options: UploadRequestOptions): Promise<unknown> {
     })
     .catch((err) => {
       task.status = 'error'
-      task.error = getErrorMessage(err, '上传失败')
+      task.error = parseApiError(err, '上传失败')
       ElMessage.error(`「${file.name}」上传失败：${task.error}`)
       throw err
     })
@@ -236,7 +226,7 @@ async function handleParse(material: Material) {
     ElMessage.success(`已提交解析，预计生成 ${data.chunk_count} 个片段`)
     ensurePolling()
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '解析请求失败'))
+    ElMessage.error(parseApiError(err, '解析请求失败'))
   }
 }
 
@@ -258,7 +248,7 @@ async function fetchChunks() {
     chunks.value = data.items
     chunksTotal.value = data.total
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取片段列表失败'))
+    ElMessage.error(parseApiError(err, '获取片段列表失败'))
     chunks.value = []
     chunksTotal.value = 0
   } finally {
@@ -299,7 +289,7 @@ async function handleSearch() {
       ElMessage.info('未找到相关片段')
     }
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '检索失败'))
+    ElMessage.error(parseApiError(err, '检索失败'))
     searchResults.value = []
     searchTotal.value = 0
   } finally {

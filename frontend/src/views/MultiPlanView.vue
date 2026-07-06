@@ -10,7 +10,8 @@ import {
   type MultiPlanResult,
   type MultiPlanScheduleItem,
 } from '../api/plan'
-import type { ApiError } from '../api/auth'
+import { MAX_PAGE_SIZE } from '../constants/pagination'
+import { parseApiError } from '../utils/error'
 
 const router = useRouter()
 
@@ -31,16 +32,6 @@ const constraints = ref<MultiPlanConstraints>({})
 
 const result = ref<MultiPlanResult | null>(null)
 const schedule = ref<MultiPlanScheduleItem[]>([])
-
-function getErrorMessage(err: unknown, fallback: string): string {
-  const e = err as { response?: { data?: ApiError | { detail?: string } } }
-  const data = e?.response?.data
-  if (data) {
-    if ('message' in data && data.message) return data.message
-    if ('detail' in data && data.detail) return String(data.detail)
-  }
-  return fallback
-}
 
 function toDateString(d: Date): string {
   const y = d.getFullYear()
@@ -63,10 +54,10 @@ function formatTime(time: string | null): string {
 async function fetchCourses() {
   coursesLoading.value = true
   try {
-    const { data } = await listCourses({ page: 1, page_size: 200 })
+    const { data } = await listCourses({ page: 1, page_size: MAX_PAGE_SIZE })
     courses.value = data.items
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取课程列表失败'))
+    ElMessage.error(parseApiError(err, '获取课程列表失败'))
   } finally {
     coursesLoading.value = false
   }
@@ -260,7 +251,7 @@ async function handleGenerate() {
       ElMessage.success(`已生成综合计划，共 ${data.schedule.length} 条日程`)
     }
   } catch (e) {
-    ElMessage.error(getErrorMessage(e, '生成综合计划失败'))
+    ElMessage.error(parseApiError(e, '生成综合计划失败'))
   } finally {
     submitting.value = false
   }

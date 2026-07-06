@@ -23,7 +23,7 @@ import {
   type RetrievedChunk,
   type ReliabilityLevel,
 } from '../api/chat'
-import type { ApiError } from '../api/auth'
+import { parseApiError } from '../utils/error'
 
 interface ChatMessage {
   role: 'user' | 'agent'
@@ -62,16 +62,6 @@ const drawerVisible = ref(false)
 const drawerCitation = ref<Citation | null>(null)
 const drawerMessage = ref<ChatMessage | null>(null)
 const drawerLoading = ref(false)
-
-function getErrorMessage(err: unknown, fallback: string): string {
-  const e = err as { response?: { data?: ApiError | { detail?: string } } }
-  const data = e?.response?.data
-  if (data) {
-    if ('message' in data && data.message) return data.message
-    if ('detail' in data && data.detail) return String(data.detail)
-  }
-  return fallback
-}
 
 function confidencePercent(confidence: number): number {
   if (confidence > 1) return Math.min(100, Math.round(confidence))
@@ -163,7 +153,7 @@ async function fetchCourse() {
     const { data } = await getCourse(courseId.value)
     course.value = data
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取课程详情失败'))
+    ElMessage.error(parseApiError(err, '获取课程详情失败'))
     router.push('/courses')
   } finally {
     courseLoading.value = false
@@ -177,7 +167,7 @@ async function fetchConversations() {
     const { data } = await listConversations(courseId.value)
     conversations.value = data.items
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取对话列表失败'))
+    ElMessage.error(parseApiError(err, '获取对话列表失败'))
   } finally {
     conversationsLoading.value = false
   }
@@ -201,7 +191,7 @@ async function handleCreateConversation() {
     conversations.value.unshift(data)
     await selectConversation(data)
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '创建对话失败'))
+    ElMessage.error(parseApiError(err, '创建对话失败'))
   } finally {
     creating.value = false
   }
@@ -248,7 +238,7 @@ async function handleSend() {
     applyChatResult(pendingIndex, data)
   } catch (err) {
     messages.value.splice(pendingIndex, 1)
-    ElMessage.error(getErrorMessage(err, '发送问题失败'))
+    ElMessage.error(parseApiError(err, '发送问题失败'))
   } finally {
     sending.value = false
     await nextTick()

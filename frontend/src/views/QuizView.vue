@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listCourses, type Course } from '../api/course'
+import { MAX_PAGE_SIZE } from '../constants/pagination'
 import { listKnowledgePoints, type KnowledgePoint } from '../api/knowledge'
 import {
   createQuiz,
@@ -14,7 +15,7 @@ import {
   type QuizResultItem,
   type WeakPoint,
 } from '../api/quiz'
-import type { ApiError } from '../api/auth'
+import { parseApiError } from '../utils/error'
 
 const courses = ref<Course[]>([])
 const coursesLoading = ref(false)
@@ -50,16 +51,6 @@ const resultMap = computed<Record<number, QuizResultItem>>(() => {
   }
   return map
 })
-
-function getErrorMessage(err: unknown, fallback: string): string {
-  const e = err as { response?: { data?: ApiError | { detail?: string } } }
-  const data = e?.response?.data
-  if (data) {
-    if ('message' in data && data.message) return data.message
-    if ('detail' in data && data.detail) return String(data.detail)
-  }
-  return fallback
-}
 
 const statusLabel: Record<string, string> = {
   pending: '待完成',
@@ -102,7 +93,7 @@ function weakPointLabel(wrongCount: number): string {
 async function fetchCourses() {
   coursesLoading.value = true
   try {
-    const { data } = await listCourses({ page: 1, page_size: 200 })
+    const { data } = await listCourses({ page: 1, page_size: MAX_PAGE_SIZE })
     courses.value = data.items
     if (courses.value.length > 0 && selectedCourseId.value === undefined) {
       selectedCourseId.value = courses.value[0].id
@@ -110,7 +101,7 @@ async function fetchCourses() {
       fetchWeakPoints()
     }
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取课程列表失败'))
+    ElMessage.error(parseApiError(err, '获取课程列表失败'))
   } finally {
     coursesLoading.value = false
   }
@@ -126,7 +117,7 @@ async function fetchQuizzes() {
     const { data } = await getQuizzes(selectedCourseId.value)
     quizzes.value = data.items
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取测验列表失败'))
+    ElMessage.error(parseApiError(err, '获取测验列表失败'))
   } finally {
     quizzesLoading.value = false
   }
@@ -142,7 +133,7 @@ async function fetchWeakPoints() {
     const { data } = await getWeakPoints(selectedCourseId.value)
     weakPoints.value = data.items
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取薄弱点失败'))
+    ElMessage.error(parseApiError(err, '获取薄弱点失败'))
   } finally {
     weakPointsLoading.value = false
   }
@@ -155,7 +146,7 @@ async function fetchKnowledgePoints() {
     const { data } = await listKnowledgePoints(selectedCourseId.value)
     knowledgePoints.value = data.items
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取知识点列表失败'))
+    ElMessage.error(parseApiError(err, '获取知识点列表失败'))
   } finally {
     knowledgePointsLoading.value = false
   }
@@ -194,7 +185,7 @@ async function handleGenerate() {
     fetchQuizzes()
     startQuiz(data)
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '生成测验失败'))
+    ElMessage.error(parseApiError(err, '生成测验失败'))
   } finally {
     dialogLoading.value = false
   }
@@ -212,7 +203,7 @@ async function startQuiz(quiz: Quiz) {
     answers.value = ans
     quizResult.value = null
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '加载测验详情失败'))
+    ElMessage.error(parseApiError(err, '加载测验详情失败'))
   } finally {
     activeQuizLoading.value = false
   }
@@ -246,7 +237,7 @@ async function handleSubmit() {
     fetchQuizzes()
     fetchWeakPoints()
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '提交测验失败'))
+    ElMessage.error(parseApiError(err, '提交测验失败'))
   } finally {
     submitting.value = false
   }

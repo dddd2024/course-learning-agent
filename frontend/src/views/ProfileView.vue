@@ -19,7 +19,7 @@ import {
   type LLMConfigCreate,
   type LLMConfigUpdate,
 } from '../api/llmConfig'
-import type { ApiError } from '../api/auth'
+import { parseApiError } from '../utils/error'
 
 const auth = useAuthStore()
 
@@ -108,16 +108,6 @@ const rules = computed<FormRules>(() => ({
 
 const testingIds = ref<Set<number>>(new Set())
 
-function getErrorMessage(err: unknown, fallback: string): string {
-  const e = err as { response?: { data?: ApiError | { detail?: string } } }
-  const data = e?.response?.data
-  if (data) {
-    if ('message' in data && data.message) return data.message
-    if ('detail' in data && data.detail) return String(data.detail)
-  }
-  return fallback
-}
-
 function testStatusTagType(
   status: string,
 ): 'success' | 'danger' | 'info' {
@@ -143,7 +133,7 @@ async function fetchConfigs() {
     const { data } = await listConfigs()
     configs.value = data.items
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取配置列表失败'))
+    ElMessage.error(parseApiError(err, '获取配置列表失败'))
   } finally {
     listLoading.value = false
   }
@@ -155,7 +145,7 @@ async function fetchActiveConfig() {
     const { data } = await getActiveConfig()
     activeConfig.value = data.config
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取当前启用配置失败'))
+    ElMessage.error(parseApiError(err, '获取当前启用配置失败'))
   } finally {
     activeLoading.value = false
   }
@@ -237,7 +227,7 @@ async function handleSubmit() {
     fetchActiveConfig()
   } catch (err) {
     ElMessage.error(
-      getErrorMessage(
+      parseApiError(
         err,
         dialogMode.value === 'create' ? '创建配置失败' : '更新配置失败',
       ),
@@ -254,7 +244,7 @@ async function handleEnable(row: LLMConfig) {
     fetchConfigs()
     fetchActiveConfig()
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '启用配置失败'))
+    ElMessage.error(parseApiError(err, '启用配置失败'))
   }
 }
 
@@ -269,7 +259,7 @@ async function handleTest(row: LLMConfig) {
     }
     fetchConfigs()
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '测试连接失败'))
+    ElMessage.error(parseApiError(err, '测试连接失败'))
   } finally {
     testingIds.value.delete(row.id)
   }
@@ -291,7 +281,7 @@ async function handleDelete(row: LLMConfig) {
     fetchConfigs()
     fetchActiveConfig()
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '删除配置失败'))
+    ElMessage.error(parseApiError(err, '删除配置失败'))
   }
 }
 

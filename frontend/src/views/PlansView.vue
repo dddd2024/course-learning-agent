@@ -11,7 +11,8 @@ import {
   type PlanTask,
   type Todo,
 } from '../api/plan'
-import type { ApiError } from '../api/auth'
+import { MAX_PAGE_SIZE } from '../constants/pagination'
+import { parseApiError } from '../utils/error'
 
 const router = useRouter()
 
@@ -80,16 +81,6 @@ const sortedDates = computed<string[]>(() => {
   return Object.keys(todosByDate.value).sort()
 })
 
-function getErrorMessage(err: unknown, fallback: string): string {
-  const e = err as { response?: { data?: ApiError | { detail?: string } } }
-  const data = e?.response?.data
-  if (data) {
-    if ('message' in data && data.message) return data.message
-    if ('detail' in data && data.detail) return String(data.detail)
-  }
-  return fallback
-}
-
 function toDateString(d: Date): string {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -129,10 +120,10 @@ const statusLabel: Record<string, string> = {
 async function fetchCourses() {
   coursesLoading.value = true
   try {
-    const { data } = await listCourses({ page: 1, page_size: 200 })
+    const { data } = await listCourses({ page: 1, page_size: MAX_PAGE_SIZE })
     courses.value = data.items
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '获取课程列表失败'))
+    ElMessage.error(parseApiError(err, '获取课程列表失败'))
   } finally {
     coursesLoading.value = false
   }
@@ -163,7 +154,7 @@ async function handleSubmit() {
     }
     ElMessage.success('学习计划已生成')
   } catch (err) {
-    ElMessage.error(getErrorMessage(err, '生成计划失败'))
+    ElMessage.error(parseApiError(err, '生成计划失败'))
   } finally {
     submitting.value = false
   }
