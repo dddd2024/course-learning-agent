@@ -5,18 +5,38 @@ two providers:
 
 - ``mock``: returns deterministic structured JSON per ``agent_type``,
   so the full agent pipeline can be demoed without an API key.
-- ``real``: calls an OpenAI-compatible API via httpx. The real-path is
-  intentionally left as a ``NotImplementedError`` placeholder for now;
-  the mock path is fully functional.
+- ``real``: calls an OpenAI-compatible API via httpx, parsing
+  ``choices[0].message.content`` as JSON.
+
+``call_llm`` implements a three-layer fallback so the platform stays
+demoable even when the real provider is unavailable:
+
+1. ``user_config``: a per-user OpenAI-compatible config supplied by the
+   caller. If it fails, fall through to the system provider.
+2. System ``real`` provider (``LLM_PROVIDER=real``): calls the API via
+   :func:`_real_response`. On any exception, fall back to mock.
+3. ``mock`` provider (``LLM_PROVIDER=mock``, the default): returns the
+   deterministic payload for ``agent_type``.
 """
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any
+
+import httpx
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
 
-def call_llm(prompt: str, agent_type: str, schema: dict | None = None) -> dict:
+
+def call_llm(
+    prompt: str,
+    agent_type: str,
+    schema: dict | None = None,
+    user_config: dict | None = None,
+) -> dict:
     """Call the LLM and return a parsed JSON dict.
 
     Parameters
@@ -31,18 +51,45 @@ def call_llm(prompt: str, agent_type: str, schema: dict | None = None) -> dict:
         Optional JSON-schema-like dict describing required fields. Used
         by the real provider for response shaping; the mock provider
         ignores it and returns its own structurally-valid payload.
+    user_config:
+        Optional per-user OpenAI-compatible config. When supplied, the
+        real provider is called with these credentials regardless of
+        ``LLM_PROVIDER``. On any failure, the call falls back to the
+        mock provider so the demo never breaks.
 
     Returns
     -------
     dict
         Parsed JSON response matching the agent's schema.
+
+    Notes
+    -----
+    Three-layer fallback: ``user_config`` > system real provider > mock.
+    Real-path failures (timeouts, HTTP errors, invalid JSON) are logged
+    and swallowed so callers always receive a structurally-valid dict.
     """
+    # 1. Prefer the per-user config when supplied.
+    if user_config is not None:
+        try:
+            return _real_response(prompt, agent_type, schema, user_config)
+        except Exception as exc:  # noqa: BLE001 - demo must stay up
+            logger.warning(
+                "User LLM config failed, falling back to mock: %s", exc
+            )
+            return _mock_response(agent_type)
+
+    # 2. Otherwise defer to the system provider setting.
     provider = (settings.LLM_PROVIDER or "mock").lower()
-    if provider == "mock":
-        return _mock_response(agent_type)
     if provider == "real":
-        return _real_response(prompt, agent_type, schema)
-    # Unknown provider falls back to mock so the platform stays demoable.
+        try:
+            return _real_response(prompt, agent_type, schema, None)
+        except Exception as exc:  # noqa: BLE001 - demo must stay up
+            logger.warning(
+                "System real LLM failed, falling back to mock: %s", exc
+            )
+            return _mock_response(agent_type)
+
+    # 3. Mock provider (default, or unknown provider) keeps the demo alive.
     return _mock_response(agent_type)
 
 
@@ -243,18 +290,87 @@ _MOCK_BUILDERS = {
 }
 
 
-def _real_response(prompt: str, agent_type: str, schema: dict | None) -> dict[str, Any]:
-    """Call an OpenAI-compatible API via httpx.
+def _real_response(
+    prompt: str,
+    agent_type: str,
+    schema: dict | None,
+    user_config: dict | None,
+) -> dict[str, Any]:
+    """Call an OpenAI-compatible ``/chat/completions`` API via httpx.
 
-    Placeholder implementation. The real adapter will:
-    1. POST ``{settings.LLM_BASE_URL}/chat/completions`` with the prompt.
-    2. Parse the ``choices[0].message.content`` field as JSON.
-    3. Validate against ``schema`` if provided.
+    The request body always carries ``response_format={"type":
+    "json_object"}`` so the model returns parseable JSON. If the server
+    rejects this field with a 400, the call is retried once without it
+    to stay compatible with providers that do not support JSON mode.
+
+    Parameters
+    ----------
+    prompt:
+        The fully-rendered prompt string to send to the model.
+    agent_type:
+        Which agent is calling. Currently unused by the real path but
+        kept for symmetry with :func:`call_llm` and future telemetry.
+    schema:
+        Optional JSON-schema-like dict. Reserved for response shaping;
+        not yet enforced here.
+    user_config:
+        Optional per-user config dict (``base_url``, ``model``,
+        ``api_key``, ``temperature``, ``max_tokens``,
+        ``timeout_seconds``). When ``None``, falls back to the system
+        ``settings`` values.
+
+    Returns
+    -------
+    dict
+        The parsed ``choices[0].message.content`` JSON.
+
+    Raises
+    ------
+    Exception
+        Any httpx/JSON error propagates to :func:`call_llm`, which is
+        responsible for falling back to the mock provider.
     """
-    raise NotImplementedError(
-        "Real LLM provider is not implemented yet. "
-        "Set LLM_PROVIDER=mock to use the mock provider."
-    )
+    if user_config is not None:
+        base_url = user_config["base_url"]
+        model = user_config["model"]
+        api_key = user_config["api_key"]
+        temperature = user_config.get("temperature", settings.LLM_TEMPERATURE)
+        max_tokens = user_config.get("max_tokens", settings.LLM_MAX_TOKENS)
+        timeout = user_config.get("timeout_seconds", settings.LLM_TIMEOUT_SECONDS)
+    else:
+        base_url = settings.LLM_BASE_URL
+        model = settings.LLM_MODEL
+        api_key = settings.LLM_API_KEY
+        temperature = settings.LLM_TEMPERATURE
+        max_tokens = settings.LLM_MAX_TOKENS
+        timeout = settings.LLM_TIMEOUT_SECONDS
+
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "response_format": {"type": "json_object"},
+    }
+
+    with httpx.Client(timeout=timeout) as client:
+        # First attempt asks for JSON-mode output.
+        resp = client.post(url, headers=headers, json=body)
+        if resp.status_code == 400:
+            # Some OpenAI-compatible backends reject response_format;
+            # retry once without it so we still get a usable answer.
+            body.pop("response_format", None)
+            resp = client.post(url, headers=headers, json=body)
+        resp.raise_for_status()
+
+    data = resp.json()
+    content = data["choices"][0]["message"]["content"]
+    return json.loads(content)
 
 
 __all__ = ["call_llm"]

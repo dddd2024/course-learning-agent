@@ -46,6 +46,10 @@ from app.schemas.quiz import (
     WeakPointListResponse,
     WeakPointOut,
 )
+from app.services.llm_config_service import (
+    build_user_config,
+    get_active_config,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -183,6 +187,9 @@ def create_quiz(
     if not rows:
         raise BusinessException(message="课程暂无知识点，请先生成知识点")
 
+    active_config = get_active_config(db, current_user.id)
+    user_config = build_user_config(active_config) if active_config else None
+
     quiz_output = generate_quiz(
         db=db,
         user_id=current_user.id,
@@ -190,6 +197,7 @@ def create_quiz(
         knowledge_points=rows,
         course_name=course.name,
         question_count=payload.question_count,
+        user_config=user_config,
     )
 
     quiz = Quiz(
@@ -280,6 +288,8 @@ def submit_quiz(
             },
             prompt_version=_PROMPT_VERSION,
             model_name="mock",
+            provider="mock",
+            config_id=None,
         )
         run_id = run.id
     except Exception as exc:  # pragma: no cover - audit must not break flow

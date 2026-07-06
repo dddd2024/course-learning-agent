@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.agents.audit import AgentAudit
 from app.agents.course_qa import answer_question
 from app.api.deps import get_current_user
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.exceptions import NotFoundException
 from app.models.citation import Citation
@@ -34,6 +35,10 @@ from app.models.course import Course
 from app.models.user import User
 from app.retrieval.search import keyword_search, rerank
 from app.schemas.chat import ChatRequest, ChatResponse, CitationItem
+from app.services.llm_config_service import (
+    build_user_config,
+    get_active_config,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -77,6 +82,19 @@ def chat(
         db, payload.conversation_id, payload.course_id, current_user.id
     )
 
+    # Read the user's active LLM config so the agent prefers it over the
+    # system provider. ``provider`` / ``config_id`` / ``model_name``
+    # trace which LLM backed the call in the audit record.
+    active_config = get_active_config(db, current_user.id)
+    user_config = build_user_config(active_config) if active_config else None
+    provider = (
+        "user"
+        if active_config
+        else ("real" if settings.LLM_PROVIDER == "real" else "mock")
+    )
+    config_id = active_config.id if active_config else None
+    model_name = active_config.model if active_config else settings.LLM_MODEL
+
     # Open an audit run for this course_qa invocation. The audit is
     # observability only — every audit call is wrapped in try/except so
     # an audit failure never breaks the chat flow.
@@ -89,7 +107,9 @@ def chat(
             run_type="course_qa",
             input_summary={"question": _summarise(payload.question, 200)},
             prompt_version=_PROMPT_VERSION,
-            model_name="mock",
+            model_name=model_name,
+            provider=provider,
+            config_id=config_id,
         )
         run_id = run.id
         db.commit()
@@ -156,7 +176,12 @@ def chat(
     generate_started = time.monotonic()
     try:
         result = answer_question(
-            db, payload.course_id, payload.question, ranked, course_name
+            db,
+            payload.course_id,
+            payload.question,
+            ranked,
+            course_name,
+            user_config=user_config,
         )
     except Exception as exc:
         _safe_finish_run(

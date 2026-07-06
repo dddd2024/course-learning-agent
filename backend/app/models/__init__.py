@@ -9,6 +9,7 @@ from app.models.citation import Citation
 from app.models.conversation import Conversation, Message
 from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
+from app.models.llm_config import UserLLMConfig
 from app.models.material import Material
 from app.models.material_chunk import MaterialChunk
 from app.models.plan import StudyGoal, StudyTask, Todo
@@ -34,4 +35,5 @@ __all__ = [
     "QuizItem",
     "WeakPoint",
     "User",
+    "UserLLMConfig",
 ]

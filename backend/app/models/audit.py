@@ -42,6 +42,15 @@ class AgentRun(Base, TimestampMixin):
     output_summary = Column(Text)
     prompt_version = Column(String(50))
     model_name = Column(String(50))
+    # mock / real / user — invocation source for the LLM call.
+    # - mock:  mock mode (no real LLM)
+    # - real:  system-configured LLM
+    # - user:  user-supplied LLM config (see ``config_id``)
+    provider = Column(String(50), nullable=True)
+    # FK to ``user_llm_configs.id`` — only set when ``provider='user'``.
+    config_id = Column(
+        Integer, ForeignKey("user_llm_configs.id"), nullable=True
+    )
     duration_ms = Column(Integer, nullable=True)
     error_message = Column(Text)
     started_at = Column(DateTime, nullable=True)

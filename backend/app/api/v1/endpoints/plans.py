@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.agents.audit import AgentAudit
 from app.agents.planner import generate as planner_generate
 from app.api.deps import get_current_user
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.exceptions import NotFoundException
 from app.models.course import Course
@@ -44,6 +45,10 @@ from app.schemas.plan import (
     TodoListResponse,
     TodoResponse,
     TodoUpdate,
+)
+from app.services.llm_config_service import (
+    build_user_config,
+    get_active_config,
 )
 from app.services.multi_scheduler import schedule_multi_courses
 from app.services.scheduler import schedule_tasks
@@ -163,6 +168,16 @@ def create_plan(
 
     course_map = {c.name: c.id for c in user_courses}
 
+    active_config = get_active_config(db, current_user.id)
+    user_config = build_user_config(active_config) if active_config else None
+    provider = (
+        "user"
+        if active_config
+        else ("real" if settings.LLM_PROVIDER == "real" else "mock")
+    )
+    config_id = active_config.id if active_config else None
+    model_name = active_config.model if active_config else settings.LLM_MODEL
+
     # Open an audit run for this planner invocation. Audit failures are
     # swallowed so they never break the main flow.
     run_started_at = time.monotonic()
@@ -179,7 +194,9 @@ def create_plan(
                 "daily_minutes": payload.daily_minutes,
             },
             prompt_version=_PROMPT_VERSION,
-            model_name="mock",
+            model_name=model_name,
+            provider=provider,
+            config_id=config_id,
         )
         run_id = run.id
         db.commit()
@@ -200,6 +217,7 @@ def create_plan(
             courses=list(payload.courses),
             deadline=payload.deadline,
             daily_minutes=payload.daily_minutes,
+            user_config=user_config,
         )
     except Exception as exc:
         _safe_finish_run(

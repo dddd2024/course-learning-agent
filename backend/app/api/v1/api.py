@@ -10,6 +10,7 @@ from app.api.v1.endpoints import (
     courses,
     health,
     knowledge_points,
+    llm_configs,
     materials,
     parse,
     plans,
@@ -39,5 +40,8 @@ api_router.include_router(plans.router, prefix="/plans", tags=["plans"])
 api_router.include_router(plans.todos_router, prefix="/todos", tags=["todos"])
 api_router.include_router(quizzes.router, prefix="/quizzes", tags=["quizzes"])
 api_router.include_router(agent_runs.router, prefix="/agent-runs", tags=["agent_runs"])
+api_router.include_router(
+    llm_configs.router, prefix="/llm-configs", tags=["llm_configs"]
+)
 
 __all__ = ["api_router"]

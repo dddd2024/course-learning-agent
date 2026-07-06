@@ -151,7 +151,7 @@ def test_reliability_level_high(client, tmp_path, monkeypatch) -> None:
     chunk_ids = _get_chunk_ids(course_id, limit=2)
     assert len(chunk_ids) >= 2, "test requires at least 2 chunks"
 
-    def mock_call_llm(prompt, agent_type, schema=None):
+    def mock_call_llm(prompt, agent_type, schema=None, user_config=None):
         return {
             "answer": "快表是页表的高速缓存，加速地址转换。",
             "key_points": ["加速地址转换"],

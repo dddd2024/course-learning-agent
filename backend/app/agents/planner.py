@@ -69,6 +69,7 @@ def generate(
     courses: list[str],
     deadline: date,
     daily_minutes: int,
+    user_config: dict | None = None,
 ) -> dict[str, Any]:
     """Decompose ``goal`` into stage tasks ready for persistence.
 
@@ -80,6 +81,9 @@ def generate(
             task's ``course_name`` is reconciled to one of these.
         deadline: The user's chosen deadline.
         daily_minutes: The user's daily study budget.
+        user_config: Optional per-user LLM config dict. When supplied,
+            it is forwarded to :func:`call_llm` so the call uses the
+            user's enabled provider config.
 
     Returns:
         A dict with ``goal_title`` / ``deadline`` / ``daily_minutes``
@@ -95,7 +99,9 @@ def generate(
         daily_minutes=daily_minutes,
     )
 
-    output = call_llm(prompt, agent_type="planner")
+    output = call_llm(
+        prompt, agent_type="planner", user_config=user_config
+    )
 
     # Normalise scalar fields to the user's input so the persisted goal
     # matches what the user actually requested (the mock LLM returns

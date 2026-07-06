@@ -53,6 +53,8 @@ class AgentRunResponse(BaseModel):
     output_summary: Optional[Any] = None
     prompt_version: Optional[str] = None
     model_name: Optional[str] = None
+    provider: Optional[str] = None
+    config_id: Optional[int] = None
     duration_ms: Optional[int] = None
     error_message: Optional[str] = None
     started_at: Optional[datetime] = None

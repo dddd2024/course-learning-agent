@@ -130,6 +130,7 @@ def answer_question(
     question: str,
     retrieved_chunks: list[dict],
     course_name: str,
+    user_config: dict | None = None,
 ) -> dict[str, Any]:
     """Generate a structured, citation-grounded answer for ``question``.
 
@@ -140,6 +141,9 @@ def answer_question(
         retrieved_chunks: Chunks returned by retrieval, each a dict
             with at least ``chunk_id`` and ``text``.
         course_name: Display name of the course.
+        user_config: Optional per-user LLM config dict. When supplied,
+            it is forwarded to :func:`call_llm` so the call uses the
+            user's enabled provider config.
 
     Returns:
         A dict with ``answer`` / ``key_points`` / ``citations`` /
@@ -154,7 +158,9 @@ def answer_question(
         retrieved_chunks=_format_chunks(retrieved_chunks),
     )
 
-    output = call_llm(prompt, agent_type="course_qa")
+    output = call_llm(
+        prompt, agent_type="course_qa", user_config=user_config
+    )
     _validate_schema(output)
 
     # No retrieved chunks ⇒ we cannot answer; force not_found.

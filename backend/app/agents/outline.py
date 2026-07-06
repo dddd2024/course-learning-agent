@@ -136,6 +136,7 @@ def generate(
     course_id: int,
     course_name: str | None = None,
     chunks: list[dict] | None = None,
+    user_config: dict | None = None,
 ) -> list[dict]:
     """Extract structured knowledge points for a course.
 
@@ -144,6 +145,9 @@ def generate(
         course_id: Course to extract points for.
         course_name: Display name of the course. Fetched from DB if None.
         chunks: Pre-fetched chunk dicts. Loaded from DB if None.
+        user_config: Optional per-user LLM config dict. When supplied,
+            it is forwarded to :func:`call_llm` so the call uses the
+            user's enabled provider config.
 
     Returns:
         A list of dicts, each with ``title``, ``summary``,
@@ -164,7 +168,9 @@ def generate(
         retrieved_chunks=_format_chunks(chunks),
     )
 
-    output = call_llm(prompt, agent_type="outline")
+    output = call_llm(
+        prompt, agent_type="outline", user_config=user_config
+    )
     raw_points = output.get("knowledge_points", [])
 
     valid_chunk_ids = [c["chunk_id"] for c in chunks]

@@ -15,12 +15,13 @@ import io
 
 import pytest
 
+from app.core.exceptions import BusinessException
 from app.retrieval.chunker import (
     build_chunks,
     chunk_text,
     clean_keyword_text,
 )
-from app.retrieval.parsers import parse_pdf, parse_txt
+from app.retrieval.parsers import parse_file, parse_pdf, parse_txt
 from app.tests.conftest import auth_headers, create_course, upload_material
 
 
@@ -269,3 +270,102 @@ def test_clean_keyword_text_basic() -> None:
     assert "\t" not in cleaned
     assert "  " not in cleaned
     assert "操作系统" in cleaned
+
+
+def test_parse_md_file(tmp_path) -> None:
+    """parse_file on a .md file returns [(None, text)] with full content."""
+    content = (
+        "# 操作系统笔记\n"
+        "\n"
+        "## 进程管理\n"
+        "\n"
+        "- 进程调度\n"
+        "- 内存分配\n"
+        "\n"
+        "```python\n"
+        "def hello():\n"
+        "    print('hi')\n"
+        "```\n"
+    )
+    path = tmp_path / "notes.md"
+    path.write_text(content, encoding="utf-8")
+
+    pages = parse_file(str(path), "md")
+    assert pages == [(None, content)]
+
+
+def test_parse_pptx_file(tmp_path) -> None:
+    """parse_file on a .pptx returns [(page_no, text)] per slide."""
+    try:
+        from pptx import Presentation
+        from pptx.util import Inches, Pt
+    except ImportError:
+        pytest.skip("python-pptx not available")
+
+    prs = Presentation()
+    # Slide 1: title + body text box
+    slide1_layout = prs.slide_layouts[0]
+    slide1 = prs.slides.add_slide(slide1_layout)
+    slide1.shapes.title.text = "操作系统"
+    slide1.shapes.placeholders[1].text = "进程管理"
+
+    # Slide 2: blank layout with a text box
+    slide2_layout = prs.slide_layouts[5]
+    slide2 = prs.slides.add_slide(slide2_layout)
+    slide2.shapes.title.text = "内存管理"
+    textbox = slide2.shapes.add_textbox(
+        Inches(1), Inches(1), Inches(4), Inches(2)
+    )
+    textbox.text_frame.text = "虚拟内存"
+
+    path = tmp_path / "slides.pptx"
+    prs.save(str(path))
+
+    pages = parse_file(str(path), "pptx")
+    assert len(pages) == 2
+    assert pages[0][0] == 1
+    assert "操作系统" in pages[0][1]
+    assert "进程管理" in pages[0][1]
+    assert pages[1][0] == 2
+    assert "内存管理" in pages[1][1]
+    assert "虚拟内存" in pages[1][1]
+
+
+def test_parse_file_md_dispatch(tmp_path) -> None:
+    """parse_file dispatches by file_type='md' and returns [(None, text)]."""
+    path = tmp_path / "notes.md"
+    path.write_text("# 标题\n正文", encoding="utf-8")
+
+    pages = parse_file(str(path), "md")
+    assert pages == [(None, "# 标题\n正文")]
+
+
+def test_parse_file_pptx_dispatch(tmp_path) -> None:
+    """parse_file dispatches by file_type='pptx' and returns paginated list."""
+    try:
+        from pptx import Presentation
+    except ImportError:
+        pytest.skip("python-pptx not available")
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[0])
+    slide.shapes.title.text = "封面"
+
+    path = tmp_path / "slides.pptx"
+    prs.save(str(path))
+
+    pages = parse_file(str(path), "pptx")
+    assert isinstance(pages, list)
+    assert len(pages) == 1
+    page_no, text = pages[0]
+    assert page_no == 1
+    assert "封面" in text
+
+
+def test_parse_file_unsupported_still_raises(tmp_path) -> None:
+    """parse_file raises BusinessException for unsupported file types."""
+    path = tmp_path / "data.xlsx"
+    path.write_bytes(b"fake xlsx bytes")
+
+    with pytest.raises(BusinessException):
+        parse_file(str(path), "xlsx")

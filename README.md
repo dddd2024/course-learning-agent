@@ -12,13 +12,13 @@
 - RAG Agent：自研 Agent 编排（OutlineAgent / CourseQAAgent /
   PlannerAgent / QuizAgent / CitationVerifyAgent），通过统一的
   `call_llm` 适配层接入大模型，无 API Key 时自动降级为 mock 模式
-- 文件解析：txt / pdf / docx（pypdf、python-docx）
+- 文件解析：txt / pdf / docx / md / pptx（pypdf、python-docx、python-pptx）
 
 ## 功能特性
 
 - 用户认证：注册、登录、JWT 鉴权，所有数据按用户隔离
 - 课程管理：多课程创建与维护（教师、学期、颜色标识）
-- 资料上传与解析：支持 txt / pdf / docx，自动切块（带章节标题识别）
+- 资料上传与解析：支持 txt / pdf / docx / md / pptx，自动切块（带章节标题识别）
 - 检索：基于关键词的切块检索，支持检索结果可视化（命中切块与得分）
 - RAG 问答：基于课程资料的多轮对话式问答，答案附带引用
 - 引用追溯：每条引用记录来源切块、引用原文、支撑理由与置信度
@@ -29,6 +29,10 @@
 - Agent 审计：每次 Agent 运行记录输入、输出、步骤与耗时，便于复盘
 - 检索可视化：直观展示命中的资料切块及其匹配信息
 - 可靠性等级：基于引用验证与置信度给出回答可靠性评级
+- 用户级大模型配置中心：个人中心支持 OpenAI / DeepSeek / 通义千问 / 智谱 / 自定义等 OpenAI 兼容模型，API Key 加密存储
+- 真实 OpenAI-compatible LLM 调用：三层 fallback（用户配置 > 系统配置 > mock）
+- 资料解析支持 TXT / PDF / DOCX / MD / PPTX 五种格式
+- Agent 审计增强：每次运行记录 provider / model / config_id，便于追溯具体模型来源
 
 ## 快速开始
 
@@ -74,6 +78,22 @@ npm run dev
 
 前端默认运行在 <http://localhost:5173>，已通过 Vite 代理将
 `/api` 请求转发到后端 8000 端口。
+
+### 个人中心配置大模型（可选）
+
+登录后点击右上角用户头像进入「个人中心」（`ProfileView`），可在
+「大模型配置」区域填写自己的模型信息：
+
+1. 选择 provider（OpenAI / DeepSeek / 通义千问 / 智谱 / 自定义）
+2. 填写 API Key、Base URL、模型名称（如 `gpt-4o-mini`、
+   `deepseek-chat`、`qwen-plus`、`glm-4` 等）
+3. 可按需调整 temperature、max_tokens、timeout
+4. 保存后即可在该用户的所有 Agent 调用中生效；API Key 经
+   Fernet 对称加密后写入数据库，明文不会落库
+
+个人中心配置仅对当前用户生效，不影响其他用户与系统默认配置。
+若不配置，平台将按系统 `.env` 配置或 mock 模式运行（详见下文
+「LLM 配置策略」）。
 
 ### 一键启动（Windows PowerShell）
 
@@ -161,6 +181,39 @@ course-learning-agent/
 └── README.md
 ```
 
+## LLM 配置策略
+
+平台通过统一的 `call_llm` 适配层接入大模型，采用三层 fallback
+机制决定本次调用使用哪一份配置，优先级从高到低为：
+
+1. **用户配置（最高优先级）**：用户在「个人中心」配置并启用的
+   模型。若该用户存在启用中的配置，Agent 调用将优先使用其
+   provider / base_url / model / api_key 等参数。
+2. **系统 `.env` 配置**：当用户未配置个人模型时，回退到后端
+   `backend/.env` 中的系统级配置，相关变量包括：
+   - `LLM_PROVIDER`：`mock` 或 `real`
+   - `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`：真实模型接入参数
+   - `LLM_TIMEOUT_SECONDS`、`LLM_TEMPERATURE`、`LLM_MAX_TOKENS`：
+     调用超时、采样温度与最大 token 数
+   - `LLM_CONFIG_SECRET_KEY`：Fernet 密钥，用于加密存储用户级 API Key
+3. **mock 兜底（最低优先级）**：当以上两层均不可用时（无用户配置且
+   `LLM_PROVIDER=mock` 或真实调用失败），`call_llm` 返回结构化、
+   确定性的 mock 响应，确保所有 Agent 流程可完整演示。
+
+### 用户如何配置自己的模型
+
+登录后进入「个人中心」，在「大模型配置」区域填写 provider、
+API Key、Base URL、模型名称等信息并保存。保存后该配置立即对
+当前用户的所有 Agent 调用生效。API Key 使用 `LLM_CONFIG_SECRET_KEY`
+派生的 Fernet 密钥加密后写入数据库，调用时再解密传入模型 SDK。
+
+### mock 模式无需 API Key 即可演示
+
+若只想体验平台功能，无需申请任何大模型 API Key：保持 `.env` 中
+`LLM_PROVIDER=mock`（默认值）即可，所有 Agent 流程（问答、知识点
+提取、学习计划、测验、引用验证等）均会以确定性 mock 响应运行，
+前端功能完整可演示。
+
 ## Mock 模式说明
 
 当未配置真实的 LLM API Key（即 `LLM_PROVIDER=mock`）时，平台的
@@ -178,3 +231,19 @@ course-learning-agent/
 前端全部功能均可体验。如需接入真实大模型，将 `LLM_PROVIDER` 设为
 `real` 并填写 `LLM_API_KEY` 等配置即可（真实适配层按 OpenAI 兼容接口
 实现）。
+
+## CI 持续集成
+
+项目通过 GitHub Actions（配置见 `.github/workflows/ci.yml`）在
+每次 push 到 `main` 分支或提交 pull request 时自动执行以下两个
+并行 job：
+
+- **backend-test**：在 Ubuntu + Python 3.11 环境下安装
+  `backend/requirements.txt`，以 `LLM_PROVIDER=mock` 运行
+  `python -m pytest app/tests/ -v`，确保后端全部测试用例通过。
+- **frontend-build**：在 Ubuntu + Node 20 环境下执行
+  `npm ci` 与 `npm run build`（`vue-tsc` 类型检查 + Vite 生产构建），
+  确保前端类型正确且可成功构建。
+
+任一 job 失败都会在 PR / commit 上显示红色状态标记，便于在合入
+前发现回归问题。

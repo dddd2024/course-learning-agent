@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.agents.audit import AgentAudit
 from app.agents.outline import generate as outline_generate
 from app.api.deps import get_current_user
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.exceptions import NotFoundException
 from app.models.course import Course
@@ -31,6 +32,10 @@ from app.schemas.knowledge_point import (
     GenerateKnowledgePointsResponse,
     KnowledgePointListResponse,
     KnowledgePointResponse,
+)
+from app.services.llm_config_service import (
+    build_user_config,
+    get_active_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,6 +68,16 @@ def generate_knowledge_points(
     """Generate and persist knowledge points for a course's materials."""
     course = _get_owned_course(db, course_id, current_user.id)
 
+    active_config = get_active_config(db, current_user.id)
+    user_config = build_user_config(active_config) if active_config else None
+    provider = (
+        "user"
+        if active_config
+        else ("real" if settings.LLM_PROVIDER == "real" else "mock")
+    )
+    config_id = active_config.id if active_config else None
+    model_name = active_config.model if active_config else settings.LLM_MODEL
+
     run_started_at = time.monotonic()
     run_id: int | None = None
     try:
@@ -72,7 +87,9 @@ def generate_knowledge_points(
             run_type="outline",
             input_summary={"course_id": course_id, "course_name": course.name},
             prompt_version=_PROMPT_VERSION,
-            model_name="mock",
+            model_name=model_name,
+            provider=provider,
+            config_id=config_id,
         )
         run_id = run.id
         db.commit()
@@ -85,7 +102,9 @@ def generate_knowledge_points(
 
     generate_started = time.monotonic()
     try:
-        points = outline_generate(db, course_id, course.name)
+        points = outline_generate(
+            db, course_id, course.name, user_config=user_config
+        )
     except Exception as exc:
         _safe_finish_run(
             db,

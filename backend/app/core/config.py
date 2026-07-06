@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     PARSED_DIR: str = "../storage/parsed"
     LLM_PROVIDER: str = "mock"
     LLM_API_KEY: str = ""
+    LLM_BASE_URL: str = ""
+    LLM_MODEL: str = ""
+    LLM_TIMEOUT_SECONDS: int = 60
+    LLM_TEMPERATURE: float = 0.2
+    LLM_MAX_TOKENS: int = 2000
+    LLM_CONFIG_SECRET_KEY: str = "change-me-please"
     EMBEDDING_PROVIDER: str = "mock"
     MAX_UPLOAD_MB: int = 30
 

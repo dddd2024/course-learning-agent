@@ -59,6 +59,10 @@ function handleLogout() {
           <el-icon><Monitor /></el-icon>
           <span>Agent 审计</span>
         </el-menu-item>
+        <el-menu-item index="/profile">
+          <el-icon><User /></el-icon>
+          <span>个人中心</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>

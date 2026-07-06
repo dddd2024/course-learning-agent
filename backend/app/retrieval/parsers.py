@@ -56,14 +56,48 @@ def parse_docx(file_path: str) -> str:
     return "\n".join(paragraphs)
 
 
+def parse_md(file_path: str) -> str:
+    """Read a Markdown file as UTF-8 text (no structure parsing needed)."""
+    with open(file_path, "r", encoding="utf-8") as fh:
+        return fh.read()
+
+
+def parse_pptx(file_path: str) -> List[Tuple[int, str]]:
+    """Read a .pptx file with python-pptx, returning ``[(slide_no, text), ...]``.
+
+    Slide numbers are 1-indexed (slide_index + 1). Extracts text from all
+    shapes (title, text boxes, tables) on each slide.
+    """
+    from pptx import Presentation
+
+    prs = Presentation(file_path)
+    pages: List[Tuple[int, str]] = []
+    for index, slide in enumerate(prs.slides):
+        texts: List[str] = []
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for para in shape.text_frame.paragraphs:
+                    text = para.text
+                    if text:
+                        texts.append(text)
+            if shape.has_table:
+                for row in shape.table.rows:
+                    for cell in row.cells:
+                        text = cell.text
+                        if text:
+                            texts.append(text)
+        pages.append((index + 1, "\n".join(texts)))
+    return pages
+
+
 def parse_file(
     file_path: str, file_type: str
 ) -> List[Tuple[Optional[int], str]]:
     """Dispatch to the right parser by ``file_type`` (extension).
 
     Returns a list of ``(page_no, text)`` tuples. For non-paginated
-    formats (txt, docx) ``page_no`` is ``None`` and the list has a single
-    entry. Raises :class:`BusinessException` for unsupported types.
+    formats (txt, docx, md) ``page_no`` is ``None`` and the list has a
+    single entry. Raises :class:`BusinessException` for unsupported types.
     """
     normalised = (file_type or "").lower().lstrip(".")
     if normalised == "txt":
@@ -72,4 +106,8 @@ def parse_file(
         return parse_pdf(file_path)
     if normalised == "docx":
         return [(None, parse_docx(file_path))]
+    if normalised == "md":
+        return [(None, parse_md(file_path))]
+    if normalised == "pptx":
+        return parse_pptx(file_path)
     raise BusinessException(message=f"不支持的文件类型: {normalised}")

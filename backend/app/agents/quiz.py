@@ -152,6 +152,7 @@ def generate_quiz(
     knowledge_points: list[KnowledgePoint],
     course_name: str,
     question_count: int = 5,
+    user_config: dict | None = None,
 ) -> dict[str, Any]:
     """Generate a quiz for a course's knowledge points.
 
@@ -165,6 +166,9 @@ def generate_quiz(
             prompt).
         question_count: Hint for the number of questions. The mock LLM
             ignores this; the real LLM will honour it.
+        user_config: Optional per-user LLM config dict. When supplied,
+            it is forwarded to :func:`call_llm` so the call uses the
+            user's enabled provider config.
 
     Returns:
         A dict with ``title`` and ``items`` (each item carrying
@@ -205,7 +209,11 @@ def generate_quiz(
 
     generate_started = time.monotonic()
     try:
-        output = call_llm(prompt, agent_type="quiz_generate")
+        output = call_llm(
+            prompt,
+            agent_type="quiz_generate",
+            user_config=user_config,
+        )
         _validate_schema(output)
     except Exception:
         _safe_finish_run(

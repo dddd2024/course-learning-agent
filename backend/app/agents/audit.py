@@ -57,8 +57,18 @@ class AgentAudit:
         input_summary: Any = None,
         prompt_version: str | None = None,
         model_name: str = "mock",
+        provider: str | None = None,
+        config_id: int | None = None,
     ) -> AgentRun:
-        """Create a run record with ``status='running'`` and ``started_at=now``."""
+        """Create a run record with ``status='running'`` and ``started_at=now``.
+
+        ``provider`` / ``config_id`` trace which LLM backed the call:
+        ``provider='mock'`` for mock mode, ``'real'`` for a system-configured
+        LLM, ``'user'`` for a user-supplied config (in which case
+        ``config_id`` points at the ``UserLLMConfig`` row). Both default to
+        ``None`` so existing callers keep working untouched. The api_key is
+        never recorded — only the config id reference is.
+        """
         run = AgentRun(
             user_id=user_id,
             run_type=run_type,
@@ -66,6 +76,8 @@ class AgentAudit:
             input_summary=_to_json(input_summary),
             prompt_version=prompt_version,
             model_name=model_name,
+            provider=provider,
+            config_id=config_id,
             started_at=datetime.now(),
         )
         db.add(run)
