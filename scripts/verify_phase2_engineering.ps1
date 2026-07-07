@@ -199,6 +199,41 @@ $kgViewContent = Get-Content $kgView -Raw
 if ($kgViewContent -match '<svg') { Write-Ok "KnowledgeGraphView uses SVG graph" } else { Write-Bad "KnowledgeGraphView missing SVG graph" }
 if ($kgViewContent -match 'compareDrawerVisible') { Write-Ok "KnowledgeGraphView has compare drawer" } else { Write-Bad "KnowledgeGraphView missing compare drawer" }
 
+# 11. P3: Evidence binding and unified error checks (audit remediation)
+Write-Step 'Concept graph evidence binding check'
+$kgServiceContent = Get-Content "$root\backend\app\services\concept_graph_service.py" -Raw
+if ($kgServiceContent -match '_merge_evidence_ids') {
+  Write-Ok 'concept_graph_service binds evidence_chunk_ids'
+} else {
+  Write-Bad 'concept_graph_service missing evidence binding'
+}
+
+Write-Step 'Concept graph unified error check'
+$kgEndpointContent = Get-Content "$root\backend\app\api\v1\endpoints\concept_graph.py" -Raw
+if ($kgEndpointContent -match 'NotFoundException') {
+  Write-Ok 'concept_graph endpoint uses unified exceptions'
+} else {
+  Write-Bad 'concept_graph endpoint still uses HTTPException'
+}
+if ($kgEndpointContent -match 'HTTPException') {
+  Write-Bad 'concept_graph endpoint still references HTTPException'
+} else {
+  Write-Ok 'concept_graph endpoint has no HTTPException references'
+}
+
+Write-Step 'Concept compare evidence loading check'
+$kgCompareContent = Get-Content "$root\backend\app\services\concept_compare_service.py" -Raw
+if ($kgCompareContent -match '_load_evidence_chunks') {
+  Write-Ok 'concept_compare_service loads evidence chunks'
+} else {
+  Write-Bad 'concept_compare_service missing evidence loading'
+}
+if ($kgCompareContent -match 'user_config') {
+  Write-Ok 'concept_compare_service supports user_config'
+} else {
+  Write-Bad 'concept_compare_service missing user_config support'
+}
+
 Write-Host ''
 if ($failed) {
   Write-Host 'ACCEPTANCE FAILED' -ForegroundColor Red

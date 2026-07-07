@@ -111,5 +111,37 @@ grep -q '/knowledge-graph' "$kg_layout" && ok "MainLayout has knowledge-graph me
 grep -q '<svg' "$kg_view" && ok "KnowledgeGraphView uses SVG graph" || bad "KnowledgeGraphView missing SVG graph"
 grep -q 'compareDrawerVisible' "$kg_view" && ok "KnowledgeGraphView has compare drawer" || bad "KnowledgeGraphView missing compare drawer"
 
+# 11. P3: Evidence binding and unified error checks (audit remediation)
+step "Concept graph evidence binding check"
+if grep -q '_merge_evidence_ids' "$kg_service"; then
+  ok "concept_graph_service binds evidence_chunk_ids"
+else
+  bad "concept_graph_service missing evidence binding"
+fi
+
+step "Concept graph unified error check"
+if grep -q 'NotFoundException' "$kg_endpoint"; then
+  ok "concept_graph endpoint uses unified exceptions"
+else
+  bad "concept_graph endpoint still uses HTTPException"
+fi
+if grep -q 'HTTPException' "$kg_endpoint"; then
+  bad "concept_graph endpoint still references HTTPException"
+else
+  ok "concept_graph endpoint has no HTTPException references"
+fi
+
+step "Concept compare evidence loading check"
+if grep -q '_load_evidence_chunks' "$kg_compare_service"; then
+  ok "concept_compare_service loads evidence chunks"
+else
+  bad "concept_compare_service missing evidence loading"
+fi
+if grep -q 'user_config' "$kg_compare_service"; then
+  ok "concept_compare_service supports user_config"
+else
+  bad "concept_compare_service missing user_config support"
+fi
+
 echo ""
 if [ "$failed" -eq 0 ]; then echo "ACCEPTANCE PASSED"; exit 0; else echo "ACCEPTANCE FAILED"; exit 1; fi
