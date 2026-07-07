@@ -1,4 +1,6 @@
 """Concept graph service tests: node sync, candidate edges, confirm/reject."""
+import json
+
 from app.models import (
     Course,
     ConceptEdge,
@@ -150,3 +152,50 @@ def test_get_graph_returns_nodes_and_edges(db_session):
     assert "nodes" in graph and "edges" in graph
     assert len(graph["nodes"]) == 4
     assert len(graph["edges"]) >= 1
+
+
+def test_candidate_edge_carries_evidence_chunk_ids(db_session):
+    """当两侧 KP 有 source_chunk_ids 时，生成的边必须携带 evidence_chunk_ids。"""
+    from app.models import MaterialChunk
+
+    user = User(username="alice", email="a@x.com", password_hash="x")
+    db_session.add(user)
+    db_session.commit()
+    c1 = Course(name="操作系统", user_id=user.id)
+    c2 = Course(name="数据库", user_id=user.id)
+    db_session.add_all([c1, c2])
+    db_session.commit()
+
+    ch1 = MaterialChunk(
+        material_id=1, course_id=c1.id, chunk_index=0,
+        title="OS死锁", page_no=1, text="资源循环等待",
+    )
+    ch2 = MaterialChunk(
+        material_id=1, course_id=c2.id, chunk_index=0,
+        title="DB死锁", page_no=1, text="事务锁冲突",
+    )
+    db_session.add_all([ch1, ch2])
+    db_session.commit()
+
+    kp1 = KnowledgePoint(
+        user_id=user.id, course_id=c1.id, title="死锁",
+        summary="资源循环等待", importance=5,
+        source_chunk_ids=json.dumps([ch1.id]),
+    )
+    kp2 = KnowledgePoint(
+        user_id=user.id, course_id=c2.id, title="死锁",
+        summary="事务锁冲突", importance=5,
+        source_chunk_ids=json.dumps([ch2.id]),
+    )
+    db_session.add_all([kp1, kp2])
+    db_session.commit()
+
+    sync_nodes_for_user(db_session, user.id)
+    generate_candidate_edges(db_session, user.id)
+
+    edges = db_session.query(ConceptEdge).filter_by(user_id=user.id).all()
+    assert len(edges) >= 1
+    for edge in edges:
+        ids = json.loads(edge.evidence_chunk_ids or "[]")
+        assert len(ids) >= 1, f"edge {edge.id} evidence_chunk_ids 不应为空"
+        assert ch1.id in ids or ch2.id in ids

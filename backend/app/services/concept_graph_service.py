@@ -56,6 +56,34 @@ def _jaccard(a: set, b: set) -> float:
     return len(a & b) / len(a | b)
 
 
+def _load_json_ids(value: str | None) -> list[int]:
+    """Parse a JSON string of int ids, tolerating bad input."""
+    try:
+        raw = json.loads(value or "[]")
+    except (json.JSONDecodeError, TypeError):
+        return []
+    ids = []
+    for x in raw:
+        try:
+            ids.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def _merge_evidence_ids(a: ConceptNode, b: ConceptNode) -> list[int]:
+    """Merge source_chunk_ids from two nodes, de-duplicating."""
+    seen: set[int] = set()
+    merged: list[int] = []
+    for cid in _load_json_ids(a.source_chunk_ids) + _load_json_ids(
+        b.source_chunk_ids
+    ):
+        if cid not in seen:
+            seen.add(cid)
+            merged.append(cid)
+    return merged
+
+
 # ---------------------------------------------------------------------------
 # Node sync
 # ---------------------------------------------------------------------------
@@ -165,6 +193,14 @@ def _try_make_edge(a: ConceptNode, b: ConceptNode) -> ConceptEdge | None:
         or (b.title and b.title in (a.summary or ""))
     )
 
+    evidence_ids = _merge_evidence_ids(a, b)
+    evidence_json = json.dumps(evidence_ids)
+    no_evidence_suffix = (
+        "（缺少来源 chunk，仅基于知识点摘要生成）"
+        if not evidence_ids
+        else ""
+    )
+
     # Rule 1: same normalized title, different course
     if same_title and diff_course:
         if kw_overlap < 0.6:
@@ -173,8 +209,8 @@ def _try_make_edge(a: ConceptNode, b: ConceptNode) -> ConceptEdge | None:
                 target_node_id=b.id,
                 relation_type="same_name_different_meaning",
                 confidence=0.7,
-                reason=f"同名概念「{a.title}」在两门课中含义不同",
-                evidence_chunk_ids="[]",
+                reason=f"同名概念「{a.title}」在两门课中含义不同{no_evidence_suffix}",
+                evidence_chunk_ids=evidence_json,
                 status="candidate",
             )
         else:
@@ -183,8 +219,8 @@ def _try_make_edge(a: ConceptNode, b: ConceptNode) -> ConceptEdge | None:
                 target_node_id=b.id,
                 relation_type="similar_to",
                 confidence=0.8,
-                reason=f"同名概念「{a.title}」在两门课中含义相近",
-                evidence_chunk_ids="[]",
+                reason=f"同名概念「{a.title}」在两门课中含义相近{no_evidence_suffix}",
+                evidence_chunk_ids=evidence_json,
                 status="candidate",
             )
 
@@ -196,8 +232,8 @@ def _try_make_edge(a: ConceptNode, b: ConceptNode) -> ConceptEdge | None:
             target_node_id=b.id,
             relation_type=rtype,
             confidence=0.45 + 0.3 * kw_overlap,
-            reason=f"摘要关键词重叠度 {kw_overlap:.2f}",
-            evidence_chunk_ids="[]",
+            reason=f"摘要关键词重叠度 {kw_overlap:.2f}{no_evidence_suffix}",
+            evidence_chunk_ids=evidence_json,
             status="candidate",
         )
 
@@ -208,8 +244,8 @@ def _try_make_edge(a: ConceptNode, b: ConceptNode) -> ConceptEdge | None:
             target_node_id=b.id,
             relation_type="prerequisite_of",
             confidence=0.6,
-            reason="一方摘要提及另一方标题",
-            evidence_chunk_ids="[]",
+            reason=f"一方摘要提及另一方标题{no_evidence_suffix}",
+            evidence_chunk_ids=evidence_json,
             status="candidate",
         )
 
