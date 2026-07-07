@@ -71,6 +71,10 @@ from app.models import (  # noqa: E402
     User,
 )
 from app.retrieval.chunker import chunk_text, clean_keyword_text  # noqa: E402
+from app.services.concept_graph_service import (  # noqa: E402
+    generate_candidate_edges,
+    sync_nodes_for_user,
+)
 
 
 DEMO_USERNAME = "demo"
@@ -732,6 +736,94 @@ def _ensure_agent_runs_schema() -> None:
             conn.execute(text("ALTER TABLE agent_runs ADD COLUMN config_id INTEGER"))
 
 
+def _create_cross_course_graph(
+    db: Session, user: User, os_course: Course
+) -> dict:
+    """Seed a 数据库 course with cross-course KPs and build the graph.
+
+    Creates a 数据库 course (idempotent) with 死锁 + 缓冲池替换 KPs
+    that intentionally overlap with OS KPs (死锁, 页面置换), then syncs
+    KP -> ConceptNode and generates candidate edges. Returns a summary
+    dict with counts.
+    """
+    db_course = (
+        db.query(Course)
+        .filter(Course.name == "数据库", Course.user_id == user.id)
+        .first()
+    )
+    db_course_created = False
+    if db_course is None:
+        db_course = Course(
+            name="数据库",
+            user_id=user.id,
+            teacher="王老师",
+            semester="2026春",
+            color="#E6A23C",
+        )
+        db.add(db_course)
+        db.flush()
+        db_course_created = True
+
+    db_kp_specs = [
+        {
+            "title": "死锁",
+            "summary": (
+                "事务锁冲突：两个事务互相持有对方需要的锁，导致都无法继续执行。"
+                "可通过一次封锁、锁排序或死锁检测超时回滚来处理。"
+            ),
+            "importance": 5,
+            "exam_style": "简答题、综合题；常考锁协议与死锁检测",
+            "review_action": "对比 OS 死锁与 DB 死锁的四个必要条件",
+        },
+        {
+            "title": "缓冲池替换",
+            "summary": (
+                "数据库缓冲池在内存有限时选择被换出的页面，常见策略有 LRU、"
+                "Clock（类似二次机会）和 MRU，目标是最小化磁盘 I/O。"
+            ),
+            "importance": 4,
+            "exam_style": "计算题；给定页面访问串计算命中率和缺页次数",
+            "review_action": "手算 LRU 与 Clock 在示例访问串下的命中率",
+        },
+    ]
+    kps_created = 0
+    for spec in db_kp_specs:
+        existing = (
+            db.query(KnowledgePoint)
+            .filter(
+                KnowledgePoint.course_id == db_course.id,
+                KnowledgePoint.title == spec["title"],
+            )
+            .first()
+        )
+        if existing is not None:
+            continue
+        db.add(
+            KnowledgePoint(
+                course_id=db_course.id,
+                user_id=user.id,
+                title=spec["title"],
+                summary=spec["summary"],
+                importance=spec["importance"],
+                source_chunk_ids="[]",
+                exam_style=spec["exam_style"],
+                review_action=spec["review_action"],
+                parent_id=None,
+            )
+        )
+        kps_created += 1
+    db.flush()
+
+    nodes_count = sync_nodes_for_user(db, user.id)
+    edges_count = generate_candidate_edges(db, user.id)
+    return {
+        "db_course_created": db_course_created,
+        "kps_created": kps_created,
+        "nodes_count": nodes_count,
+        "edges_count": edges_count,
+    }
+
+
 def main() -> None:
     # Ensure tables exist (idempotent) so the seed can run on a fresh DB.
     Base.metadata.create_all(bind=engine)
@@ -785,6 +877,7 @@ def main() -> None:
         quiz_result = _create_quiz(db, user, os_course)
         conv_result = _create_conversation(db, user, os_course)
         runs_result = _create_agent_runs(db, user, os_course)
+        graph_result = _create_cross_course_graph(db, user, os_course)
 
         db.commit()
     except Exception:
@@ -842,6 +935,20 @@ def main() -> None:
         f"新增 {runs_result['runs_created']} 条 run / "
         f"{runs_result['steps_created']} 条 step"
         f"（course_qa + outline，各 3 步：retrieve/generate/validate）"
+    )
+    print()
+    graph_course_state = (
+        "新建" if graph_result["db_course_created"] else "已存在"
+    )
+    print(
+        f"跨课程图谱: 数据库课程（{graph_course_state}），"
+        f"新增 {graph_result['kps_created']} 个 DB 知识点"
+        f"（死锁 / 缓冲池替换）"
+    )
+    print(
+        f"  ConceptNode: {graph_result['nodes_count']} 个节点，"
+        f"ConceptEdge: {graph_result['edges_count']} 条候选边"
+        f"（OS 死锁 ↔ DB 死锁 为同名异义）"
     )
     print()
     print("提示: 可使用 demo 账号登录 http://localhost:5173 体验全部功能。")

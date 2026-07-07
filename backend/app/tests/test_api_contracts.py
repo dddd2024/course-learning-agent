@@ -297,3 +297,53 @@ def test_agent_runs_retrieve_step_items_contract(client) -> None:
             assert isinstance(out["items"], list), (
                 f"step {step.get('step_name')} output_data.items must be list"
             )
+
+
+# ---------------------------------------------------------------------------
+# Concept graph contract (P6)
+# ---------------------------------------------------------------------------
+
+
+def test_concept_graph_response_contract(client) -> None:
+    """GET /concept-graph 返回 {nodes: [...], edges: [...]} 结构。
+
+    锁定前端 conceptGraph.ts GraphResponse 接口契约：
+    - 顶层字段为 nodes + edges
+    - 两者均为 list
+    - node 至少含 id/title/course_id 字段
+    - edge 至少含 id/source_node_id/target_node_id/relation_type/status 字段
+    """
+    headers = auth_headers(client, username="alice")
+    create_course(client, headers, name="操作系统")
+    # rebuild is safe to call with 0 KPs (returns 0/0)
+    client.post("/api/v1/concept-graph/rebuild", headers=headers)
+    resp = client.get("/api/v1/concept-graph", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body.keys()) >= {"nodes", "edges"}
+    assert isinstance(body["nodes"], list)
+    assert isinstance(body["edges"], list)
+    for node in body["nodes"]:
+        assert isinstance(node, dict)
+        assert "id" in node
+        assert "title" in node
+        assert "course_id" in node
+    for edge in body["edges"]:
+        assert isinstance(edge, dict)
+        assert "id" in edge
+        assert "source_node_id" in edge
+        assert "target_node_id" in edge
+        assert "relation_type" in edge
+        assert "status" in edge
+
+
+def test_concept_graph_rebuild_response_contract(client) -> None:
+    """POST /concept-graph/rebuild 返回 {nodes_count, edges_count} 结构。"""
+    headers = auth_headers(client, username="alice")
+    create_course(client, headers, name="操作系统")
+    resp = client.post("/api/v1/concept-graph/rebuild", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body.keys()) >= {"nodes_count", "edges_count"}
+    assert isinstance(body["nodes_count"], int)
+    assert isinstance(body["edges_count"], int)

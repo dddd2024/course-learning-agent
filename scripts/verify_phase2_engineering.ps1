@@ -170,6 +170,35 @@ if ($agentRunsVue -match 'obj\.items') {
   Write-Bad 'AgentRunsView missing output_data.items support'
 }
 
+# 10. P6: Cross-course knowledge graph feature files present
+Write-Step 'Cross-course knowledge graph feature file checks'
+$kgApiTs = "$root\frontend\src\api\conceptGraph.ts"
+$kgView = "$root\frontend\src\views\KnowledgeGraphView.vue"
+$kgRouter = "$root\frontend\src\router\index.ts"
+$kgLayout = "$root\frontend\src\layouts\MainLayout.vue"
+$kgEndpoint = "$root\backend\app\api\v1\endpoints\concept_graph.py"
+$kgService = "$root\backend\app\services\concept_graph_service.py"
+$kgCompareAgent = "$root\backend\app\agents\concept_compare.py"
+$kgCompareService = "$root\backend\app\services\concept_compare_service.py"
+$kgModels = "$root\backend\app\models\concept_graph.py"
+
+if (Test-Path $kgApiTs) { Write-Ok "frontend api/conceptGraph.ts exists" } else { Write-Bad "missing frontend/src/api/conceptGraph.ts" }
+if (Test-Path $kgView) { Write-Ok "frontend KnowledgeGraphView.vue exists" } else { Write-Bad "missing frontend/src/views/KnowledgeGraphView.vue" }
+if (Test-Path $kgEndpoint) { Write-Ok "backend concept_graph endpoint exists" } else { Write-Bad "missing backend/app/api/v1/endpoints/concept_graph.py" }
+if (Test-Path $kgService) { Write-Ok "backend concept_graph_service exists" } else { Write-Bad "missing backend/app/services/concept_graph_service.py" }
+if (Test-Path $kgCompareAgent) { Write-Ok "backend concept_compare agent exists" } else { Write-Bad "missing backend/app/agents/concept_compare.py" }
+if (Test-Path $kgCompareService) { Write-Ok "backend concept_compare_service exists" } else { Write-Bad "missing backend/app/services/concept_compare_service.py" }
+if (Test-Path $kgModels) { Write-Ok "backend concept_graph models exist" } else { Write-Bad "missing backend/app/models/concept_graph.py" }
+
+# Static-content checks: route registered, menu item added, SVG graph present
+$routerContent = Get-Content $kgRouter -Raw
+if ($routerContent -match "knowledge-graph") { Write-Ok "router has /knowledge-graph route" } else { Write-Bad "router missing /knowledge-graph route" }
+$layoutContent = Get-Content $kgLayout -Raw
+if ($layoutContent -match '/knowledge-graph') { Write-Ok "MainLayout has knowledge-graph menu item" } else { Write-Bad "MainLayout missing knowledge-graph menu item" }
+$kgViewContent = Get-Content $kgView -Raw
+if ($kgViewContent -match '<svg') { Write-Ok "KnowledgeGraphView uses SVG graph" } else { Write-Bad "KnowledgeGraphView missing SVG graph" }
+if ($kgViewContent -match 'compareDrawerVisible') { Write-Ok "KnowledgeGraphView has compare drawer" } else { Write-Bad "KnowledgeGraphView missing compare drawer" }
+
 Write-Host ''
 if ($failed) {
   Write-Host 'ACCEPTANCE FAILED' -ForegroundColor Red

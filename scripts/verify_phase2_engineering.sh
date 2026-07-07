@@ -86,5 +86,30 @@ step "AgentRunsView output_data.items support check"
 agent_runs_vue="$root/frontend/src/views/AgentRunsView.vue"
 if grep -q 'obj\.items' "$agent_runs_vue"; then ok "AgentRunsView supports output_data.items"; else bad "AgentRunsView missing output_data.items support"; fi
 
+# 10. P6: Cross-course knowledge graph feature files present
+step "Cross-course knowledge graph feature file checks"
+kg_api_ts="$root/frontend/src/api/conceptGraph.ts"
+kg_view="$root/frontend/src/views/KnowledgeGraphView.vue"
+kg_router="$root/frontend/src/router/index.ts"
+kg_layout="$root/frontend/src/layouts/MainLayout.vue"
+kg_endpoint="$root/backend/app/api/v1/endpoints/concept_graph.py"
+kg_service="$root/backend/app/services/concept_graph_service.py"
+kg_compare_agent="$root/backend/app/agents/concept_compare.py"
+kg_compare_service="$root/backend/app/services/concept_compare_service.py"
+kg_models="$root/backend/app/models/concept_graph.py"
+
+[ -f "$kg_api_ts" ] && ok "frontend api/conceptGraph.ts exists" || bad "missing frontend/src/api/conceptGraph.ts"
+[ -f "$kg_view" ] && ok "frontend KnowledgeGraphView.vue exists" || bad "missing frontend/src/views/KnowledgeGraphView.vue"
+[ -f "$kg_endpoint" ] && ok "backend concept_graph endpoint exists" || bad "missing backend/app/api/v1/endpoints/concept_graph.py"
+[ -f "$kg_service" ] && ok "backend concept_graph_service exists" || bad "missing backend/app/services/concept_graph_service.py"
+[ -f "$kg_compare_agent" ] && ok "backend concept_compare agent exists" || bad "missing backend/app/agents/concept_compare.py"
+[ -f "$kg_compare_service" ] && ok "backend concept_compare_service exists" || bad "missing backend/app/services/concept_compare_service.py"
+[ -f "$kg_models" ] && ok "backend concept_graph models exist" || bad "missing backend/app/models/concept_graph.py"
+
+grep -q 'knowledge-graph' "$kg_router" && ok "router has /knowledge-graph route" || bad "router missing /knowledge-graph route"
+grep -q '/knowledge-graph' "$kg_layout" && ok "MainLayout has knowledge-graph menu item" || bad "MainLayout missing knowledge-graph menu item"
+grep -q '<svg' "$kg_view" && ok "KnowledgeGraphView uses SVG graph" || bad "KnowledgeGraphView missing SVG graph"
+grep -q 'compareDrawerVisible' "$kg_view" && ok "KnowledgeGraphView has compare drawer" || bad "KnowledgeGraphView missing compare drawer"
+
 echo ""
 if [ "$failed" -eq 0 ]; then echo "ACCEPTANCE PASSED"; exit 0; else echo "ACCEPTANCE FAILED"; exit 1; fi
