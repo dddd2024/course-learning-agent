@@ -414,6 +414,11 @@ def create_multi_plan(
         courses=courses_input,
         daily_minutes=payload.daily_minutes,
     )
+    # T08: schedule_multi_courses now returns a dict with schedule +
+    # overflow_warnings (warnings are appended when a task cannot fit
+    # within the daily budget and is forced onto the last day).
+    schedule_items_raw = schedule["schedule"]
+    overflow_warnings = schedule.get("overflow_warnings", [])
 
     # Persist: one StudyGoal per course so each course's plan can be
     # managed independently, then one StudyTask + one Todo per schedule
@@ -422,7 +427,7 @@ def create_multi_plan(
     goal_by_course: dict[int, StudyGoal] = {}
     items: list[MultiScheduleItem] = []
 
-    for item in schedule:
+    for item in schedule_items_raw:
         course_id = item["course_id"]
         course_name = item.get("course_name") or course_name_by_id.get(course_id, "")
 
@@ -484,7 +489,7 @@ def create_multi_plan(
 
     db.commit()
 
-    return MultiPlanResponse(schedule=items)
+    return MultiPlanResponse(schedule=items, overflow_warnings=overflow_warnings)
 
 
 @todos_router.get("", response_model=TodoListResponse)

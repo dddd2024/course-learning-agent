@@ -40,3 +40,4 @@ class MultiPlanResponse(BaseModel):
     """Result of POST /plans/multi."""
 
     schedule: List[MultiScheduleItem]
+    overflow_warnings: List[str] = Field(default_factory=list)

@@ -191,3 +191,109 @@ def test_multi_plan_persisted(client) -> None:
     valid_names = {"机器学习", "数据结构"}
     for item in items:
         assert item["course_name"] in valid_names
+
+
+# T08: 薄弱点权重 + 超预算提示
+
+
+def test_overflow_returns_warning(client) -> None:
+    """T08: 任务总量超出每日预算时，response 含 overflow_warnings。"""
+    headers = auth_headers(client, username="alice")
+    course_id = create_course(client, headers, name="溢出测试课程")
+    resp = client.post(
+        "/api/v1/plans/multi",
+        json={
+            "courses": [{"course_id": course_id, "deadline": "2026-08-15"}],
+            "daily_minutes": 10,  # 极低预算，必然溢出
+            "constraints": {},
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "overflow_warnings" in body
+    assert isinstance(body["overflow_warnings"], list)
+    # mock planner 生成 90+60 分钟任务，10 分钟预算必然触发溢出
+    if len(body["schedule"]) > 0:
+        assert len(body["overflow_warnings"]) >= 1
+
+
+def test_no_overflow_when_budget_sufficient(client) -> None:
+    """T08: 预算充足时 overflow_warnings 为空列表。"""
+    headers = auth_headers(client, username="alice")
+    course_id = create_course(client, headers, name="充足预算课程")
+    resp = client.post(
+        "/api/v1/plans/multi",
+        json={
+            "courses": [{"course_id": course_id, "deadline": "2026-12-31"}],
+            "daily_minutes": 480,  # 充足预算
+            "constraints": {},
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "overflow_warnings" in body
+    assert isinstance(body["overflow_warnings"], list)
+
+
+def test_weak_point_weight_computation(client) -> None:
+    """T08: _compute_weak_point_weight 根据 WeakPoint.wrong_count 计算权重。"""
+    from sqlalchemy.orm import Session
+
+    from app.api.deps import get_db
+    from app.main import app
+    from app.models.course import Course
+    from app.models.knowledge_point import KnowledgePoint
+    from app.models.quiz import WeakPoint
+    from app.models.user import User
+    from app.services.multi_scheduler import _compute_weak_point_weight
+    from app.tests.conftest import auth_headers, create_course
+
+    headers = auth_headers(client, username="alice")
+    course_id = create_course(client, headers, name="薄弱点课程")
+
+    db_generator = app.dependency_overrides[get_db]()
+    db: Session = next(db_generator)
+    try:
+        user = db.query(User).filter(User.username == "alice").first()
+        # 插入一条知识点 + 两条薄弱点记录
+        kp = KnowledgePoint(
+            course_id=course_id,
+            user_id=user.id,
+            title="测试知识点",
+            summary="",
+            importance=3,
+            source_chunk_ids="[]",
+            exam_style="",
+            review_action="",
+        )
+        db.add(kp)
+        db.flush()
+        wp1 = WeakPoint(
+            user_id=user.id,
+            course_id=course_id,
+            knowledge_point_id=kp.id,
+            wrong_count=3,
+        )
+        wp2 = WeakPoint(
+            user_id=user.id,
+            course_id=course_id,
+            knowledge_point_id=kp.id + 1,  # 不同 KP（即使不存在也行，FK 不强制）
+            wrong_count=2,
+        )
+        db.add(wp1)
+        db.add(wp2)
+        db.commit()
+
+        weight = _compute_weak_point_weight(db, user.id, course_id)
+        assert weight > 0.0
+        # 3 + 2 = 5 total wrong, normalised by max_wrong=5 → 1.0
+        assert weight == 1.0
+
+        # 无薄弱点的课程权重应为 0
+        empty_course = create_course(client, headers, name="无薄弱点课程")
+        weight_empty = _compute_weak_point_weight(db, user.id, empty_course)
+        assert weight_empty == 0.0
+    finally:
+        db.close()

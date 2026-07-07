@@ -396,13 +396,23 @@ onMounted(() => {
 
       <template v-else>
         <el-card
-          v-if="overloadDays.length > 0 || courseRisks.length > 0"
+          v-if="overloadDays.length > 0 || courseRisks.length > 0 || (result.overflow_warnings && result.overflow_warnings.length > 0)"
           class="section-card risk-card"
           shadow="never"
         >
           <template #header>
             <div class="section-title risk-title">风险提示</div>
           </template>
+          <el-alert
+            v-for="(w, i) in (result.overflow_warnings || [])"
+            :key="'overflow-' + i"
+            type="warning"
+            show-icon
+            :closable="false"
+            class="risk-alert"
+          >
+            <template #title>{{ w }}</template>
+          </el-alert>
           <el-alert
             v-if="overloadDays.length > 0"
             type="warning"

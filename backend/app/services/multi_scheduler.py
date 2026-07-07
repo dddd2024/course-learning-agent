@@ -14,23 +14,58 @@ Given a list of courses (each with its own ``deadline`` and optional
    - per-course-per-day total <= 90 minutes (the "continuous learning"
      cap; tasks that would exceed it roll forward to the next day).
 
-The return value is a flat list of schedule items (one per task, sorted
-by ``scheduled_date``) ready for ``StudyGoal`` / ``StudyTask`` / ``Todo``
-persistence by the API layer.
+When a task cannot fit within the daily budget on any day before its
+deadline, it is placed on the last available day (so it is never
+dropped) and an entry is appended to ``overflow_warnings`` so the caller
+can surface the issue to the user.
+
+The return value is a dict with ``schedule`` (a flat list of schedule
+items sorted by ``scheduled_date``) and ``overflow_warnings`` (a list of
+human-readable strings), ready for ``StudyGoal`` / ``StudyTask`` /
+``Todo`` persistence by the API layer.
 """
 from __future__ import annotations
 
 from datetime import date, timedelta
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.agents.planner import generate as planner_generate
 from app.models.course import Course
+from app.models.quiz import WeakPoint
 
 # Per-course-per-day continuous-learning cap (section 11.6 of the design
 # doc: 同一课程连续学习不超 90 分钟).
 _PER_COURSE_DAILY_CAP_MIN = 90
+
+# Normalisation ceiling for weak-point weight: a course with this many
+# total wrong answers maps to weight 1.0.
+_WEAK_POINT_MAX_WRONG = 5
+
+
+def _compute_weak_point_weight(
+    db: Session, user_id: int, course_id: int
+) -> float:
+    """Compute the weak-point weight in ``[0, 1]`` for a course.
+
+    Sums ``WeakPoint.wrong_count`` across all weak points the user has
+    for the given course, then normalises by
+    :data:`_WEAK_POINT_MAX_WRONG` so a course with many wrong answers
+    gets a weight close to 1.0 (and thus a higher priority_score).
+    """
+    total_wrong = (
+        db.query(func.sum(WeakPoint.wrong_count))
+        .filter(
+            WeakPoint.user_id == user_id,
+            WeakPoint.course_id == course_id,
+        )
+        .scalar()
+    ) or 0
+    if _WEAK_POINT_MAX_WRONG <= 0:
+        return 0.0
+    return min(1.0, float(total_wrong) / _WEAK_POINT_MAX_WRONG)
 
 
 def compute_priority_score(
@@ -57,7 +92,7 @@ def schedule_multi_courses(
     user_id: int,
     courses: list[dict[str, Any]],
     daily_minutes: int,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """Schedule tasks across multiple courses honouring daily + 90-min caps.
 
     Args:
@@ -69,15 +104,19 @@ def schedule_multi_courses(
         daily_minutes: Per-day budget shared across all courses.
 
     Returns:
-        A list of schedule dicts sorted by ``scheduled_date``. Each
-        dict carries ``scheduled_date``, ``course_id``, ``course_name``,
-        ``title``, ``task_type``, ``estimate_minutes``, ``priority``,
-        ``acceptance``, ``start_time`` (None) and ``end_time`` (None) —
-        enough for the API layer to persist ``StudyTask`` and ``Todo``
-        rows without a second lookup.
+        A dict with two keys:
+        - ``schedule``: list of schedule dicts sorted by
+          ``scheduled_date``. Each dict carries ``scheduled_date``,
+          ``course_id``, ``course_name``, ``title``, ``task_type``,
+          ``estimate_minutes``, ``priority``, ``acceptance``,
+          ``start_time`` (None) and ``end_time`` (None).
+        - ``overflow_warnings``: list of human-readable warning strings.
+          A warning is appended whenever a task cannot fit within the
+          daily budget on any day before its deadline and is instead
+          forced onto the last available day.
     """
     if not courses:
-        return []
+        return {"schedule": [], "overflow_warnings": []}
 
     # 1. Look up course names for the requested course_ids.
     course_ids = [int(c["course_id"]) for c in courses]
@@ -125,13 +164,18 @@ def schedule_multi_courses(
 
     # 3. Compute priority_score and sort courses by it descending. A
     #    stable sort keeps input order for ties so scheduling is
-    #    deterministic.
+    #    deterministic. The weak_point_weight is now derived from the
+    #    user's WeakPoint records for each course.
     for cp in course_plans:
         workload_weight = cp["workload"] / total_workload if total_workload > 0 else 0.0
+        weak_point_weight = _compute_weak_point_weight(
+            db, user_id, cp["course_id"]
+        )
+        cp["weak_point_weight"] = weak_point_weight
         cp["priority_score"] = compute_priority_score(
             deadline_urgency=cp["deadline_urgency"],
             workload_weight=workload_weight,
-            weak_point_weight=0.0,  # no weak-point data yet
+            weak_point_weight=weak_point_weight,
             user_priority=cp["user_priority"],
         )
     course_plans.sort(key=lambda cp: -cp["priority_score"])
@@ -153,6 +197,7 @@ def schedule_multi_courses(
     per_course_day_remaining: dict[tuple[int, date], int] = {}
 
     schedule: list[dict[str, Any]] = []
+    overflow_warnings: list[str] = []
 
     for cp in course_plans:
         # Sort tasks within the course by priority desc (high first);
@@ -183,12 +228,18 @@ def schedule_multi_courses(
 
             # Fallback: place on the last day within the deadline (or the
             # last available day overall) so the task is never dropped.
+            # Record an overflow warning so the caller can surface it.
             if chosen is None:
                 valid = [d for d in days if d <= cp["deadline"]]
                 chosen = valid[-1] if valid else days[-1]
                 cap_key = (cp["course_id"], chosen)
                 if cap_key not in per_course_day_remaining:
                     per_course_day_remaining[cap_key] = _PER_COURSE_DAILY_CAP_MIN
+                overflow_warnings.append(
+                    f"课程「{cp['course_name']}」的任务「{task.get('title', '')}」"
+                    f"（{estimate} 分钟）无法在每日预算（{daily_minutes} 分钟）内安排，"
+                    f"已放到 {chosen.isoformat()}，可能超出当日预算。"
+                )
 
             daily_remaining[chosen] -= estimate
             per_course_day_remaining[(cp["course_id"], chosen)] -= estimate
@@ -209,7 +260,7 @@ def schedule_multi_courses(
             )
 
     schedule.sort(key=lambda item: item["scheduled_date"])
-    return schedule
+    return {"schedule": schedule, "overflow_warnings": overflow_warnings}
 
 
 __all__ = ["compute_priority_score", "schedule_multi_courses"]

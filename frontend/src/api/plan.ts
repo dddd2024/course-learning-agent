@@ -103,6 +103,7 @@ export interface MultiPlanScheduleItem {
 export interface MultiPlanResult {
   schedule: MultiPlanScheduleItem[]
   goal_ids: number[]
+  overflow_warnings: string[]
 }
 
 export function createMultiPlan(payload: MultiPlanPayload): AxiosPromise<MultiPlanResult> {
