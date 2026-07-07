@@ -9,7 +9,8 @@ implementation without changing call sites.
 * :func:`keyword_search` — SQLite ``LIKE`` based keyword retrieval. It
   splits the query into keywords (whitespace tokens plus individual CJK
   characters), filters chunks whose ``keyword_text``/``text`` match any
-  keyword, scores by total occurrence count, and returns the top-K.
+  keyword, scores by weighted occurrence count (title 3x, filename 2x,
+  body 1x), and returns the top-K.
 * :func:`vector_search` — reserved for Task 11; raises
   ``NotImplementedError``.
 * :func:`merge_and_deduplicate` — de-duplicates keyword + vector
@@ -65,6 +66,11 @@ def keyword_search(
     ``status='ready'`` are considered so partially-parsed materials
     never surface in search results.
 
+    Scoring applies title/filename weighting: a keyword hit in the
+    chunk title counts 3x, in the material filename 2x, and in the
+    body text 1x. This prioritises chunks whose heading or source
+    filename directly matches the query.
+
     Args:
         db: SQLAlchemy session.
         course_id: Course to scope the search to.
@@ -103,9 +109,17 @@ def keyword_search(
     for chunk, filename in rows:
         text = chunk.text or ""
         text_lower = text.lower()
+        # T07: 标题命中加权 3x，材料名命中加权 2x，正文命中 1x。
+        # 标题通常是对切块内容的最紧凑概括，命中关键词时相关性更高；
+        # 材料名（文件名）次之；正文按出现次数计 1x。
+        title_lower = (chunk.title or "").lower()
+        filename_lower = (filename or "").lower()
         score = 0
         for kw in keywords:
-            score += text_lower.count(kw.lower())
+            kw_l = kw.lower()
+            score += title_lower.count(kw_l) * 3
+            score += filename_lower.count(kw_l) * 2
+            score += text_lower.count(kw_l)
         if score <= 0:
             continue
         results.append(

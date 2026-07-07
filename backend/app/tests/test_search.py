@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.retrieval.search import keyword_search
 from app.tests.conftest import (
     auth_headers,
+    create_course,
     setup_course_with_material,
 )
 
@@ -235,3 +236,131 @@ def test_search_no_result(client, tmp_path, monkeypatch) -> None:
     body = resp.json()
     assert body["total"] == 0
     assert body["items"] == []
+
+
+# T07: 检索质量 — 中英文混合查询 + 标题/材料名加权
+
+MIXED_CN_EN_TEXT = (
+    "# 快表原理\n"
+    "快表 TLB 是页表的高速缓存，用于加速虚拟地址到物理地址的转换。\n"
+    "# 页表机制\n"
+    "快表与页表协同工作，实现虚拟内存机制。\n"
+).encode("utf-8")
+
+# 标题加权测试内容：章节 A 标题含「快表」但正文无；章节 B 标题不含但正文三次。
+# 当前实现（仅正文计分）会让 B 排在前面；加权后 A 应反超。
+TITLE_WEIGHT_TEXT = (
+    "# 快表\n"
+    "TLB 是高速缓存。\n"
+    "# 其他章节\n"
+    "快表 快表 快表。\n"
+).encode("utf-8")
+
+
+def test_keyword_search_hits_mixed_cn_en(client, tmp_path, monkeypatch) -> None:
+    """T07: 中英文混合查询「快表 TLB」能命中相关切块。"""
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
+    )
+
+    headers = auth_headers(client, username="alice")
+    course_id, _ = setup_course_with_material(
+        client, headers, content=MIXED_CN_EN_TEXT
+    )
+
+    from app.api.deps import get_db
+    from app.main import app
+
+    db_generator = app.dependency_overrides[get_db]()
+    db: Session = next(db_generator)
+    try:
+        results = keyword_search(db, course_id, "快表 TLB", top_k=12)
+        assert len(results) > 0
+        assert any(
+            "快表" in r["text"] or "TLB" in r["text"] for r in results
+        )
+    finally:
+        db.close()
+
+
+def test_keyword_search_weights_title_higher(client, tmp_path, monkeypatch) -> None:
+    """T07: 标题命中加权 3x，使标题含关键词的切块排名高于正文多次命中。
+
+    内容有两个章节：
+      - 「# 快表」：标题含「快表」，正文不含「快表」（仅 TLB）
+      - 「# 其他章节」：标题不含「快表」，正文含「快表」三次
+    当前实现（仅正文计分）：A=1（标题在 text 中）, B=3 → B 胜
+    加权后：A = 3*1（标题）+ 1（正文里的标题行）= 4, B = 0 + 3 = 3 → A 胜
+    """
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
+    )
+
+    headers = auth_headers(client, username="alice")
+    course_id, _ = setup_course_with_material(
+        client, headers, content=TITLE_WEIGHT_TEXT
+    )
+
+    from app.api.deps import get_db
+    from app.main import app
+
+    db_generator = app.dependency_overrides[get_db]()
+    db: Session = next(db_generator)
+    try:
+        results = keyword_search(db, course_id, "快表", top_k=12)
+        assert len(results) >= 2
+        # 加权后标题含「快表」的切块应排第一
+        top = results[0]
+        assert "快表" in (top.get("title") or "")
+        assert results[0]["score"] > results[1]["score"]
+    finally:
+        db.close()
+
+
+def test_keyword_search_weights_filename(client, tmp_path, monkeypatch) -> None:
+    """T07: 材料名命中加权 2x，使文件名含关键词的切块排名更高。
+
+    上传两个材料到同一课程，正文都只含「快表」一次：
+      - 「快表笔记.txt」：文件名含「快表」
+      - 「普通笔记.txt」：文件名不含「快表」
+    查询「快表」时，前者的切块 score 应高于后者。
+    """
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
+    )
+
+    from app.tests.conftest import upload_material
+
+    headers = auth_headers(client, username="alice")
+    course_id = create_course(client, headers, "检索加权测试")
+
+    body_kw = "快表是页表的高速缓存\n".encode("utf-8")
+
+    # 上传并解析两个材料
+    mid_a = upload_material(
+        client, headers, course_id, "快表笔记.txt", body_kw
+    )
+    client.post(f"/api/v1/materials/{mid_a}/parse", headers=headers)
+
+    mid_b = upload_material(
+        client, headers, course_id, "普通笔记.txt", body_kw
+    )
+    client.post(f"/api/v1/materials/{mid_b}/parse", headers=headers)
+
+    from app.api.deps import get_db
+    from app.main import app
+
+    db_generator = app.dependency_overrides[get_db]()
+    db: Session = next(db_generator)
+    try:
+        results = keyword_search(db, course_id, "快表", top_k=12)
+        assert len(results) >= 2
+        # 文件名含「快表」的切块应排名更高
+        top = results[0]
+        assert "快表" in (top.get("filename") or "")
+        assert results[0]["score"] > results[1]["score"]
+    finally:
+        db.close()
