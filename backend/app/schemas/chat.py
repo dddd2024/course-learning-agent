@@ -56,3 +56,8 @@ class ChatResponse(BaseModel):
     reliability_level: str = "medium"
     # Task 19: top-K retrieved chunks with is_cited flag.
     retrieved_chunks: List[RetrievedChunkItem] = Field(default_factory=list)
+    # T05: LLM fallback visibility — lets the frontend warn the user
+    # when a real-LLM call failed and the answer came from the mock.
+    provider: str = "mock"
+    fallback_used: bool = False
+    fallback_reason: Optional[str] = None

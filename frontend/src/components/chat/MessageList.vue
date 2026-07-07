@@ -48,6 +48,20 @@ const emit = defineEmits<{
           <template v-else>{{ msg.content }}</template>
         </div>
 
+        <!-- T05: surface LLM fallback state so users know when an
+             answer came from the mock provider rather than a real LLM. -->
+        <el-alert
+          v-if="msg.role === 'agent' && msg.fallbackUsed"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="fallback-alert"
+        >
+          已回退到 mock 模式{{
+            msg.fallbackReason ? `（${msg.fallbackReason}）` : ''
+          }}
+        </el-alert>
+
         <div
           v-if="msg.role === 'agent' && !msg.pending"
           class="citations-area"
@@ -187,5 +201,11 @@ const emit = defineEmits<{
   padding: 8px 12px;
   background: #f5f7fa;
   border-radius: 4px;
+}
+
+.fallback-alert {
+  margin-top: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
 }
 </style>

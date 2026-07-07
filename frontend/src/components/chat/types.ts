@@ -17,6 +17,9 @@ export interface ChatMessage {
   reliabilityLevel?: ReliabilityLevel
   retrievedChunks?: RetrievedChunk[]
   pending?: boolean
+  // T05: LLM fallback visibility (mock fallback marker).
+  fallbackUsed?: boolean
+  fallbackReason?: string | null
 }
 
 // A single step in the SSE progress timeline.

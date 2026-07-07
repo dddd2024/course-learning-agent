@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.agents.llm import call_llm
+from app.agents.llm import call_llm_with_meta
 from app.agents.prompt_loader import load_prompt
 from app.services.security_scanner import PROMPT_GUARD
 
@@ -162,9 +162,14 @@ def answer_question(
     # never treated as a system instruction by the model.
     prompt = f"{PROMPT_GUARD}\n\n{prompt}"
 
-    output = call_llm(
+    output, llm_meta = call_llm_with_meta(
         prompt, agent_type="course_qa", user_config=user_config
     )
+    # T05: attach provider/fallback info so chat_service can surface it
+    # to the frontend via ChatResult.provider / fallback_used.
+    output["provider"] = llm_meta["provider"]
+    output["fallback_used"] = llm_meta["fallback_used"]
+    output["fallback_reason"] = llm_meta["fallback_reason"]
     _validate_schema(output)
 
     # No retrieved chunks ⇒ we cannot answer; force not_found.

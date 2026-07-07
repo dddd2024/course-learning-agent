@@ -20,6 +20,7 @@ from app.main import app
 from app.models.knowledge_point import KnowledgePoint
 from app.tests.conftest import (
     auth_headers,
+    create_course,
     setup_course_with_material,
 )
 
@@ -202,3 +203,29 @@ def test_knowledge_points_persisted(client, tmp_path, monkeypatch) -> None:
             assert row.review_action
     finally:
         db.close()
+
+
+def test_generate_kp_rejected_when_no_ready_chunks(client, tmp_path, monkeypatch) -> None:
+    """T06: generating KPs for a course with no parsed materials returns 400.
+
+    Prevents the mock LLM from fabricating knowledge points for an empty
+    course — the user must upload and parse materials first.
+    """
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
+    )
+
+    headers = auth_headers(client, username="alice")
+    # Create a course with NO materials at all.
+    course_id = create_course(client, headers, "空课程")
+
+    resp = client.post(
+        f"/api/v1/courses/{course_id}/knowledge-points/generate",
+        headers=headers,
+    )
+    assert resp.status_code == 400
+    body = resp.json()
+    # detail may be a string or nested; search the whole body text.
+    body_text = str(body)
+    assert "资料" in body_text or "解析" in body_text

@@ -60,6 +60,33 @@ export interface ChatResult {
   follow_up_questions: string[]
   reliability_level: ReliabilityLevel
   retrieved_chunks: RetrievedChunk[]
+  // T05: LLM fallback visibility
+  provider?: string
+  fallback_used?: boolean
+  fallback_reason?: string | null
+}
+
+// T04: conversation history replay types.
+export interface CitationBrief {
+  chunk_id: number
+  quote_text?: string | null
+  page_no?: number | null
+  material_name?: string | null
+  display_label?: string | null
+}
+
+export interface HistoryMessage {
+  id: number
+  role: 'user' | 'assistant'
+  content?: string | null
+  answer_json?: string | null
+  citations: CitationBrief[]
+  created_at: string
+}
+
+export interface HistoryResponse {
+  items: HistoryMessage[]
+  total: number
 }
 
 // Phase 2 Task B: SSE event shapes emitted by POST /chat/stream.
@@ -92,6 +119,13 @@ export function getCitations(
   messageId: number,
 ): AxiosPromise<CitationListResult> {
   return request.get(`/messages/${messageId}/citations`)
+}
+
+// T04: load conversation history for replay on conversation switch.
+export function listMessages(
+  conversationId: number,
+): AxiosPromise<HistoryResponse> {
+  return request.get(`/conversations/${conversationId}/messages`)
 }
 
 /**

@@ -39,31 +39,32 @@ def call_llm(
 ) -> dict:
     """Call the LLM and return a parsed JSON dict.
 
-    Parameters
-    ----------
-    prompt:
-        The fully-rendered prompt string to send to the model.
-    agent_type:
-        Which agent is calling. One of: ``course_qa``, ``outline``,
-        ``planner``, ``task_decompose``, ``multi_course_schedule``,
-        ``quiz_generate``, ``citation_verify``.
-    schema:
-        Optional JSON-schema-like dict describing required fields. Used
-        by the real provider for response shaping; the mock provider
-        ignores it and returns its own structurally-valid payload.
-    user_config:
-        Optional per-user OpenAI-compatible config. When supplied, the
-        real provider is called with these credentials regardless of
-        ``LLM_PROVIDER``. On any failure, the call falls back to the
-        mock provider so the demo never breaks.
+    Thin wrapper around :func:`call_llm_with_meta` that discards the
+    meta information. Kept for backward compatibility with callers that
+    do not need provider/fallback visibility (T05).
 
     Returns
     -------
     dict
         Parsed JSON response matching the agent's schema.
+    """
+    result, _meta = call_llm_with_meta(prompt, agent_type, schema, user_config)
+    return result
 
-    Notes
-    -----
+
+def call_llm_with_meta(
+    prompt: str,
+    agent_type: str,
+    schema: dict | None = None,
+    user_config: dict | None = None,
+) -> tuple[dict, dict]:
+    """Call the LLM and return ``(result, meta)``.
+
+    ``meta`` is a dict with keys:
+    - ``provider``: ``"real"`` or ``"mock"``
+    - ``fallback_used``: True when a real call failed and we fell back to mock
+    - ``fallback_reason``: short string explaining the failure (or ``None``)
+
     Three-layer fallback: ``user_config`` > system real provider > mock.
     Real-path failures (timeouts, HTTP errors, invalid JSON) are logged
     and swallowed so callers always receive a structurally-valid dict.
@@ -71,26 +72,48 @@ def call_llm(
     # 1. Prefer the per-user config when supplied.
     if user_config is not None:
         try:
-            return _real_response(prompt, agent_type, schema, user_config)
+            result = _real_response(prompt, agent_type, schema, user_config)
+            return result, {
+                "provider": "real",
+                "fallback_used": False,
+                "fallback_reason": None,
+            }
         except Exception as exc:  # noqa: BLE001 - demo must stay up
             logger.warning(
                 "User LLM config failed, falling back to mock: %s", exc
             )
-            return _mock_response(agent_type)
+            return _mock_response(agent_type), {
+                "provider": "mock",
+                "fallback_used": True,
+                "fallback_reason": str(exc) or exc.__class__.__name__,
+            }
 
     # 2. Otherwise defer to the system provider setting.
     provider = (settings.LLM_PROVIDER or "mock").lower()
     if provider == "real":
         try:
-            return _real_response(prompt, agent_type, schema, None)
+            result = _real_response(prompt, agent_type, schema, None)
+            return result, {
+                "provider": "real",
+                "fallback_used": False,
+                "fallback_reason": None,
+            }
         except Exception as exc:  # noqa: BLE001 - demo must stay up
             logger.warning(
                 "System real LLM failed, falling back to mock: %s", exc
             )
-            return _mock_response(agent_type)
+            return _mock_response(agent_type), {
+                "provider": "mock",
+                "fallback_used": True,
+                "fallback_reason": str(exc) or exc.__class__.__name__,
+            }
 
     # 3. Mock provider (default, or unknown provider) keeps the demo alive.
-    return _mock_response(agent_type)
+    return _mock_response(agent_type), {
+        "provider": "mock",
+        "fallback_used": False,
+        "fallback_reason": None,
+    }
 
 
 def _mock_response(agent_type: str) -> dict[str, Any]:
@@ -373,4 +396,4 @@ def _real_response(
     return json.loads(content)
 
 
-__all__ = ["call_llm"]
+__all__ = ["call_llm", "call_llm_with_meta"]

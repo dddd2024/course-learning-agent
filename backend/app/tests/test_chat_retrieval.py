@@ -171,9 +171,13 @@ def test_reliability_level_high(client, tmp_path, monkeypatch) -> None:
             ],
             "not_found": False,
             "follow_up_questions": ["TLB 如何工作？"],
+        }, {
+            "provider": "mock",
+            "fallback_used": False,
+            "fallback_reason": None,
         }
 
-    monkeypatch.setattr("app.agents.course_qa.call_llm", mock_call_llm)
+    monkeypatch.setattr("app.agents.course_qa.call_llm_with_meta", mock_call_llm)
 
     resp = client.post(
         "/api/v1/chat",

@@ -259,6 +259,56 @@ def run_chat_pipeline(
         "summary": {"hit_count": len(ranked)},
     }
 
+    # T06: when no chunks were retrieved, short-circuit to a clear
+    # "no materials" answer instead of calling the LLM (which would
+    # return a canned mock answer unrelated to the course and mislead
+    # the user into thinking the course has content).
+    if not ranked:
+        assistant_msg = Message(
+            conversation_id=conversation.id,
+            role="assistant",
+            content="未检索到与该问题相关的课程资料，请先上传并解析材料后再提问。",
+            answer_json=json.dumps(
+                {
+                    "answer": "未检索到与该问题相关的课程资料，请先上传并解析材料后再提问。",
+                    "not_found": True,
+                    "citations": [],
+                    "follow_up_questions": [],
+                    "provider": "mock",
+                    "fallback_used": False,
+                    "fallback_reason": None,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        db.add(assistant_msg)
+        db.commit()
+        db.refresh(assistant_msg)
+        _safe_finish_run(
+            db,
+            run_id=run_id,
+            status="success",
+            output_summary={"not_found": True, "citation_count": 0},
+            duration_ms=int((time.monotonic() - run_started_at) * 1000),
+        )
+        yield {
+            "event": "final",
+            "data": ChatResponse(
+                message_id=assistant_msg.id,
+                answer="未检索到与该问题相关的课程资料，请先上传并解析材料后再提问。",
+                citations=[],
+                not_found=True,
+                follow_up_questions=[],
+                agent_run_id=run_id,
+                reliability_level="failed",
+                retrieved_chunks=[],
+                provider="mock",
+                fallback_used=False,
+                fallback_reason=None,
+            ).model_dump(mode="json"),
+        }
+        return
+
     # 3. Generate
     yield {"event": "step_started", "step": "generate", "message": "正在调用模型"}
     course = db.query(Course).filter(Course.id == course_id).first()
@@ -397,6 +447,10 @@ def run_chat_pipeline(
         agent_run_id=run_id,
         reliability_level=result.get("reliability_level", "medium"),
         retrieved_chunks=retrieved_chunks,
+        # T05: surface provider/fallback state on the response.
+        provider=result.get("provider", "mock"),
+        fallback_used=result.get("fallback_used", False),
+        fallback_reason=result.get("fallback_reason"),
     )
 
     yield {

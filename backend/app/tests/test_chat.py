@@ -120,6 +120,44 @@ def test_chat_with_material(client, tmp_path, monkeypatch) -> None:
     assert "agent_run_id" in body
 
 
+def test_chat_response_exposes_provider_and_fallback(client, tmp_path, monkeypatch) -> None:
+    """T05: ChatResponse carries provider/fallback_used/fallback_reason.
+
+    In mock mode provider is "mock" and fallback_used is False.
+    """
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
+    )
+
+    headers = auth_headers(client, username="alice")
+    course_id, _ = setup_course_with_material(client, headers, content=TLB_TEXT)
+    conv_resp = client.post(
+        "/api/v1/conversations",
+        json={"course_id": course_id, "title": "fallback test"},
+        headers=headers,
+    )
+    conv_id = conv_resp.json()["id"]
+
+    resp = client.post(
+        "/api/v1/chat",
+        json={
+            "course_id": course_id,
+            "conversation_id": conv_id,
+            "question": "什么是快表？",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "provider" in body
+    assert "fallback_used" in body
+    assert "fallback_reason" in body
+    # mock mode → provider "mock", fallback_used False
+    assert body["provider"] == "mock"
+    assert body["fallback_used"] is False
+
+
 def test_chat_not_found(client, tmp_path, monkeypatch) -> None:
     """Asking a question outside the material yields not_found / empty citations."""
     monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))

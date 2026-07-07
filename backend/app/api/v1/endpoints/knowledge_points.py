@@ -16,7 +16,7 @@ import json
 import logging
 import time
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.agents.audit import AgentAudit
@@ -27,6 +27,8 @@ from app.core.database import get_db
 from app.core.exceptions import NotFoundException
 from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
+from app.models.material import Material
+from app.models.material_chunk import MaterialChunk
 from app.models.user import User
 from app.schemas.knowledge_point import (
     GenerateKnowledgePointsResponse,
@@ -67,6 +69,24 @@ def generate_knowledge_points(
 ) -> GenerateKnowledgePointsResponse:
     """Generate and persist knowledge points for a course's materials."""
     course = _get_owned_course(db, course_id, current_user.id)
+
+    # T06: refuse to generate knowledge points for a course with no
+    # parsed materials. Without this guard the mock LLM would happily
+    # fabricate points for an empty course, misleading the user.
+    ready_chunk_count = (
+        db.query(MaterialChunk)
+        .join(Material, MaterialChunk.material_id == Material.id)
+        .filter(
+            Material.course_id == course_id,
+            Material.status == "ready",
+        )
+        .count()
+    )
+    if ready_chunk_count == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="该课程还没有已解析的资料，请先上传并解析材料后再生成知识点。",
+        )
 
     active_config = get_active_config(db, current_user.id)
     user_config = build_user_config(active_config) if active_config else None

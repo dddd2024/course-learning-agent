@@ -13,12 +13,15 @@ import {
   createConversation,
   getCitations,
   listConversations,
+  listMessages,
   sendMessage,
   sendMessageStream,
   type ChatResult,
   type ChatStreamEvent,
   type Citation,
   type Conversation,
+  type HistoryMessage,
+  type RetrievedChunk,
 } from '../api/chat'
 import { getChunk, type ChunkDetail } from '../api/material'
 import { parseApiError } from '../utils/error'
@@ -177,14 +180,92 @@ async function handleCreateConversation() {
   }
 }
 
+// T04: convert a history message from the backend into the ChatMessage
+// shape used by the message list. Assistant messages parse answer_json
+// (the full structured LLM result) to restore citations, follow-ups,
+// not_found, and reliability level. If parsing fails we fall back to
+// the citations table rows attached to the message.
+function historyToChatMessage(m: HistoryMessage): ChatMessage {
+  let citations: Citation[] = []
+  let followUpQuestions: string[] = []
+  let notFound = false
+  let reliabilityLevel: ChatMessage['reliabilityLevel']
+  let retrievedChunks: RetrievedChunk[] = []
+  let fallbackUsed = false
+  let fallbackReason: string | null = null
+
+  if (m.answer_json) {
+    try {
+      const parsed = JSON.parse(m.answer_json) as Record<string, unknown>
+      const parsedCites = (parsed.citations ?? []) as Array<Record<string, unknown>>
+      citations = parsedCites.map((c, i): Citation => ({
+        chunk_id: Number(c.chunk_id ?? 0),
+        material_name:
+          (c.material_name as string | undefined) ??
+          m.citations[i]?.material_name ??
+          '',
+        page_no: Number(
+          (c.page_no as number | null | undefined) ??
+            m.citations[i]?.page_no ??
+            0,
+        ),
+        quote_text: (c.quote_text as string | undefined) ?? '',
+        confidence: Number(c.confidence ?? 0),
+        display_label:
+          (c.display_label as string | null | undefined) ??
+          m.citations[i]?.display_label ??
+          undefined,
+      }))
+      followUpQuestions = (parsed.follow_up_questions as string[]) ?? []
+      notFound = Boolean(parsed.not_found)
+      reliabilityLevel = parsed.reliability_level as ChatMessage['reliabilityLevel']
+      retrievedChunks = (parsed.retrieved_chunks as RetrievedChunk[]) ?? []
+      fallbackUsed = Boolean(parsed.fallback_used)
+      fallbackReason = (parsed.fallback_reason as string | null) ?? null
+    } catch {
+      // answer_json corrupted — fall back to citations table rows.
+      citations = m.citations.map((c): Citation => ({
+        chunk_id: c.chunk_id,
+        material_name: c.material_name ?? '',
+        page_no: Number(c.page_no ?? 0),
+        quote_text: c.quote_text ?? '',
+        confidence: 0,
+        display_label: c.display_label ?? undefined,
+      }))
+    }
+  }
+
+  return {
+    role: m.role === 'user' ? 'user' : 'agent',
+    content: m.content ?? '',
+    messageId: m.id,
+    citations,
+    followUpQuestions,
+    notFound,
+    reliabilityLevel,
+    retrievedChunks,
+    fallbackUsed,
+    fallbackReason,
+    pending: false,
+  }
+}
+
 async function selectConversation(conv: Conversation) {
   if (activeConversationId.value === conv.id) return
   activeConversationId.value = conv.id
   messages.value = []
   resetStreamState()
   statusExpanded.value = false
-  await nextTick()
-  scrollToBottom()
+  // T04: load conversation history so switching/reloading shows prior Q&A.
+  try {
+    const { data } = await listMessages(conv.id)
+    messages.value = data.items.map(historyToChatMessage)
+    await nextTick()
+    scrollToBottom()
+  } catch (err) {
+    // 读历史失败时不清空已选状态，只提示；用户仍可发新消息。
+    ElMessage.error(parseApiError(err, '读取历史失败'))
+  }
 }
 
 async function handleSend() {
@@ -276,6 +357,9 @@ function applyChatResult(pendingIndex: number, result: ChatResult): void {
   msg.followUpQuestions = result.follow_up_questions ?? []
   msg.reliabilityLevel = result.reliability_level
   msg.retrievedChunks = result.retrieved_chunks ?? []
+  // T05: surface LLM fallback state on the message bubble.
+  msg.fallbackUsed = result.fallback_used ?? false
+  msg.fallbackReason = result.fallback_reason ?? null
   msg.pending = false
 }
 
