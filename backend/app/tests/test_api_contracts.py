@@ -179,3 +179,98 @@ def test_not_found_error_contract(client) -> None:
     assert body["code"] == "NOT_FOUND"
     assert isinstance(body["message"], str)
     assert "detail" not in body  # 不应使用 FastAPI 默认的 detail 字段
+
+
+# ---------------------------------------------------------------------------
+# Agent audit (agent-runs) contract
+# ---------------------------------------------------------------------------
+
+
+def _create_chat_run(client, headers, course_name: str, question: str) -> int:
+    """辅助：创建课程→上传→解析→对话→提问，返回产生的第一个 AgentRun id。"""
+    course_id = create_course(client, headers, name=course_name)
+    material_id = upload_material(
+        client,
+        headers,
+        course_id,
+        "note.txt",
+        f"{question}的答案是示例文本\n".encode("utf-8"),
+    )
+    client.post(f"/api/v1/materials/{material_id}/parse", headers=headers)
+    conv_resp = client.post(
+        "/api/v1/conversations",
+        json={"course_id": course_id, "title": f"{course_name} 对话"},
+        headers=headers,
+    )
+    conversation_id = conv_resp.json()["id"]
+    client.post(
+        "/api/v1/chat",
+        json={
+            "course_id": course_id,
+            "conversation_id": conversation_id,
+            "question": question,
+        },
+        headers=headers,
+    )
+    list_resp = client.get("/api/v1/agent-runs", headers=headers)
+    return list_resp.json()["items"][0]["id"]
+
+
+def test_agent_runs_list_contract(client) -> None:
+    """GET /agent-runs 返回 {items: [...], total: int}。"""
+    headers = auth_headers(client, username="alice")
+    _create_chat_run(client, headers, "审计契约课程", "什么是进程？")
+
+    resp = client.get("/api/v1/agent-runs", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert set(body.keys()) >= {"items", "total"}
+    assert isinstance(body["items"], list)
+    assert isinstance(body["total"], int)
+    assert body["total"] >= 1
+    for item in body["items"]:
+        assert set(item.keys()) >= {
+            "id",
+            "user_id",
+            "run_type",
+            "status",
+            "input_summary",
+            "output_summary",
+            "duration_ms",
+        }
+
+
+def test_agent_runs_detail_contract(client) -> None:
+    """GET /agent-runs/{id} 返回含 steps 的详情，step 有 input_data/output_data。"""
+    headers = auth_headers(client, username="alice")
+    run_id = _create_chat_run(client, headers, "审计详情课程", "什么是线程？")
+
+    resp = client.get(f"/api/v1/agent-runs/{run_id}", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert set(body.keys()) >= {"id", "run_type", "status", "steps"}
+    assert isinstance(body["steps"], list)
+    for step in body["steps"]:
+        assert set(step.keys()) >= {
+            "id",
+            "run_id",
+            "step_name",
+            "step_index",
+            "input_data",
+            "output_data",
+            "status",
+        }
+
+
+def test_agent_runs_isolation_contract(client) -> None:
+    """非本人 run 访问返回 404（不泄漏存在性）。"""
+    headers_a = auth_headers(client, username="alice", email="a@x.com")
+    headers_b = auth_headers(client, username="bob", email="b@x.com")
+
+    run_id = _create_chat_run(client, headers_a, "隔离课程", "什么是进程？")
+
+    # bob 不能访问 alice 的 run
+    resp = client.get(f"/api/v1/agent-runs/{run_id}", headers=headers_b)
+    assert resp.status_code == 404
+    body = resp.json()
+    assert body["code"] == "NOT_FOUND"
