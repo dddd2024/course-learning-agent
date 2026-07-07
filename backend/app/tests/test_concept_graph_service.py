@@ -199,3 +199,57 @@ def test_candidate_edge_carries_evidence_chunk_ids(db_session):
         ids = json.loads(edge.evidence_chunk_ids or "[]")
         assert len(ids) >= 1, f"edge {edge.id} evidence_chunk_ids 不应为空"
         assert ch1.id in ids or ch2.id in ids
+
+
+def test_cjk_ngram_matching_avoids_common_char_false_positive(db_session):
+    """单字'的'重叠不应产生边；n-gram 匹配避免常见字误连。"""
+    user = User(username="alice", email="a@x.com", password_hash="x")
+    db_session.add(user)
+    db_session.commit()
+    c1 = Course(name="A", user_id=user.id)
+    c2 = Course(name="B", user_id=user.id)
+    db_session.add_all([c1, c2])
+    db_session.commit()
+    # 两个完全不相关的 KP，摘要只共享常见字"的"
+    kp1 = KnowledgePoint(
+        user_id=user.id, course_id=c1.id, title="排序算法",
+        summary="快速排序的分治思想", importance=3, source_chunk_ids="[]",
+    )
+    kp2 = KnowledgePoint(
+        user_id=user.id, course_id=c2.id, title="索引结构",
+        summary="B+树的磁盘存储结构", importance=3, source_chunk_ids="[]",
+    )
+    db_session.add_all([kp1, kp2])
+    db_session.commit()
+    sync_nodes_for_user(db_session, user.id)
+    generate_candidate_edges(db_session, user.id)
+    edges = db_session.query(ConceptEdge).filter_by(user_id=user.id).all()
+    # 排序算法 vs 索引结构 不应有边
+    assert len(edges) == 0
+
+
+def test_contrast_with_edge_for_different_concepts_same_domain(db_session):
+    """同领域但不同的概念应产生 contrast_with 关系。"""
+    user = User(username="alice", email="a@x.com", password_hash="x")
+    db_session.add(user)
+    db_session.commit()
+    c1 = Course(name="OS", user_id=user.id)
+    c2 = Course(name="DB", user_id=user.id)
+    db_session.add_all([c1, c2])
+    db_session.commit()
+    # 两个概念在相同领域（都涉及"锁"）但不同
+    kp1 = KnowledgePoint(
+        user_id=user.id, course_id=c1.id, title="互斥锁",
+        summary="操作系统互斥锁用于保护临界区", importance=4, source_chunk_ids="[]",
+    )
+    kp2 = KnowledgePoint(
+        user_id=user.id, course_id=c2.id, title="共享锁",
+        summary="数据库共享锁允许多事务读取", importance=4, source_chunk_ids="[]",
+    )
+    db_session.add_all([kp1, kp2])
+    db_session.commit()
+    sync_nodes_for_user(db_session, user.id)
+    generate_candidate_edges(db_session, user.id)
+    edges = db_session.query(ConceptEdge).filter_by(user_id=user.id).all()
+    # 应有边，且关系类型可能是 contrast_with 或 similar_to/applies_to
+    assert len(edges) >= 1

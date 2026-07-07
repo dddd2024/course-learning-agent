@@ -36,18 +36,37 @@ def _normalize_title(title: str) -> str:
     return t
 
 
-def _keyword_set(summary: str) -> set[str]:
-    """Extract meaningful keywords from a summary.
+CJK_STOP_CHARS = set("的是了和与及在为对中上下一种一个可以通过")
 
-    For Chinese text, each CJK char is a token (bigrams are too aggressive
-    for short summaries). For ASCII, tokens of length >= 2.
-    """
+
+def _cjk_ngrams(text: str) -> set[str]:
+    """Extract 2-gram and 3-gram from CJK text, filtering stop chars."""
+    chars = [
+        c for c in re.findall(r"[\u4e00-\u9fff]", text)
+        if c not in CJK_STOP_CHARS
+    ]
+    grams: set[str] = set()
+    for n in (2, 3):
+        for i in range(0, max(0, len(chars) - n + 1)):
+            grams.add("".join(chars[i:i + n]))
+    return grams
+
+
+def _cjk_chars(text: str) -> set[str]:
+    """Extract single non-stop CJK chars from text (for title domain matching)."""
+    return {
+        c for c in re.findall(r"[\u4e00-\u9fff]", text)
+        if c not in CJK_STOP_CHARS
+    }
+
+
+def _keyword_set(summary: str) -> set[str]:
+    """Extract meaningful keywords: CJK 2/3-grams + ASCII words >= 2 chars."""
     if not summary:
         return set()
-    # CJK chars individually + ASCII words of length >= 2
-    cjk = re.findall(r"[\u4e00-\u9fff]", summary)
-    ascii_words = re.findall(r"[a-zA-Z]{2,}", summary)
-    return set(cjk) | set(w.lower() for w in ascii_words)
+    cjk_grams = _cjk_ngrams(summary)
+    ascii_words = set(w.lower() for w in re.findall(r"[a-zA-Z]{2,}", summary))
+    return cjk_grams | ascii_words
 
 
 def _jaccard(a: set, b: set) -> float:
@@ -224,8 +243,31 @@ def _try_make_edge(a: ConceptNode, b: ConceptNode) -> ConceptEdge | None:
                 status="candidate",
             )
 
+    # Rule 1.5: cross-course, different title, moderate overlap or shared title char
+    # -> contrast_with (same domain, different concepts)
+    title_chars_a = _cjk_chars(a.title or "")
+    title_chars_b = _cjk_chars(b.title or "")
+    titles_share_char = bool(title_chars_a & title_chars_b)
+    if (
+        diff_course
+        and not same_title
+        and kw_overlap < 0.25
+        and (kw_overlap >= 0.1 or titles_share_char)
+    ):
+        domain_hint = "标题同域" if titles_share_char else "关键词部分重叠"
+        return ConceptEdge(
+            source_node_id=a.id,
+            target_node_id=b.id,
+            relation_type="contrast_with",
+            confidence=0.5,
+            reason=f"跨课程对比：{domain_hint} ({kw_overlap:.2f}){no_evidence_suffix}",
+            evidence_chunk_ids=evidence_json,
+            status="candidate",
+        )
+
     # Rule 2: keyword overlap -> similar_to / applies_to
-    if kw_overlap >= 0.2:
+    threshold = 0.25 if diff_course else 0.2
+    if kw_overlap >= threshold:
         rtype = "applies_to" if diff_course else "similar_to"
         return ConceptEdge(
             source_node_id=a.id,
