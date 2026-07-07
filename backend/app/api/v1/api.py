@@ -7,6 +7,7 @@ from app.api.v1.endpoints import (
     chat,
     chunks,
     citations,
+    concept_graph,
     conversations,
     courses,
     dashboard,
@@ -56,6 +57,9 @@ api_router.include_router(
 )
 api_router.include_router(
     error_logs.router, prefix="/agent-error-logs", tags=["error_logs"]
+)
+api_router.include_router(
+    concept_graph.router, prefix="/concept-graph", tags=["concept_graph"]
 )
 
 __all__ = ["api_router"]
