@@ -546,6 +546,31 @@ onMounted(() => {
             class="compare-alert"
           />
 
+          <div v-if="compareReport.citation_chunk_ids.length" class="report-section">
+            <div class="section-title">
+              证据来源 ({{ compareReport.citation_chunk_ids.length }} 个片段)
+            </div>
+            <div class="citation-list">
+              <el-tag
+                v-for="cid in compareReport.citation_chunk_ids"
+                :key="cid"
+                size="small"
+                type="info"
+                class="citation-tag"
+              >
+                Chunk #{{ cid }}
+              </el-tag>
+            </div>
+          </div>
+          <div v-else-if="compareReport.fallback_used" class="report-section">
+            <el-alert
+              type="warning"
+              title="无证据片段：本次对比基于知识点摘要推断，未引用原始资料"
+              :closable="false"
+              show-icon
+            />
+          </div>
+
           <div v-if="compareReport.report_json.concept_a || compareReport.report_json.concept_b">
             <el-row :gutter="12" class="concept-row">
               <el-col :span="12">
@@ -898,5 +923,15 @@ onMounted(() => {
 
 .diff-table {
   margin-top: 4px;
+}
+
+.citation-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.citation-tag {
+  font-family: 'JetBrains Mono', monospace;
 }
 </style>
