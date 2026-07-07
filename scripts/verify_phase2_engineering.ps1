@@ -161,6 +161,15 @@ if ($configPy -match 'CORS_ORIGINS' -and $configPy -match '"\*" in origins') {
   Write-Bad 'config.py missing wildcard CORS rejection'
 }
 
+# 9. P0: AgentRunsView supports output_data.items
+Write-Step 'AgentRunsView output_data.items support check'
+$agentRunsVue = Get-Content "$root\frontend\src\views\AgentRunsView.vue" -Raw
+if ($agentRunsVue -match 'obj\.items') {
+  Write-Ok 'AgentRunsView supports output_data.items'
+} else {
+  Write-Bad 'AgentRunsView missing output_data.items support'
+}
+
 Write-Host ''
 if ($failed) {
   Write-Host 'ACCEPTANCE FAILED' -ForegroundColor Red

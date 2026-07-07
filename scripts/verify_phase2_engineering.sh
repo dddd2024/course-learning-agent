@@ -81,5 +81,10 @@ step "Phase 0 edge-case checks"
 if grep -q 'is not None' "$scheduler_py" && ! grep -q 'or 0.5' "$scheduler_py"; then ok "scheduler preserves user_priority=0.0"; else bad "scheduler may still override user_priority=0.0"; fi
 if grep -q 'ENVIRONMENT.lower()' "$config_py"; then ok "ENVIRONMENT check is case-insensitive"; else bad "ENVIRONMENT check is case-sensitive"; fi
 
+# 9. P0: AgentRunsView supports output_data.items
+step "AgentRunsView output_data.items support check"
+agent_runs_vue="$root/frontend/src/views/AgentRunsView.vue"
+if grep -q 'obj\.items' "$agent_runs_vue"; then ok "AgentRunsView supports output_data.items"; else bad "AgentRunsView missing output_data.items support"; fi
+
 echo ""
 if [ "$failed" -eq 0 ]; then echo "ACCEPTANCE PASSED"; exit 0; else echo "ACCEPTANCE FAILED"; exit 1; fi

@@ -274,3 +274,26 @@ def test_agent_runs_isolation_contract(client) -> None:
     assert resp.status_code == 404
     body = resp.json()
     assert body["code"] == "NOT_FOUND"
+
+
+def test_agent_runs_retrieve_step_items_contract(client) -> None:
+    """AgentRun step output_data 支持 {total, items} 结构。
+
+    P0: 真实 chat retrieve step 写入 {total, items}，前端 extractChunks
+    需兼容此结构。本测试锁定该契约：任何 step 的 output_data 若含 items
+    字段，则 items 必须是 list。
+    """
+    headers = auth_headers(client, username="alice")
+    run_id = _create_chat_run(client, headers, "retrieve契约课程", "什么是进程？")
+
+    resp = client.get(f"/api/v1/agent-runs/{run_id}", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body["steps"], list)
+    # 契约：任何 step 的 output_data 若含 items 字段，items 必须是 list
+    for step in body["steps"]:
+        out = step.get("output_data")
+        if out and isinstance(out, dict) and "items" in out:
+            assert isinstance(out["items"], list), (
+                f"step {step.get('step_name')} output_data.items must be list"
+            )
