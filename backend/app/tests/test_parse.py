@@ -270,7 +270,9 @@ def test_parse_scanner_failure_rolls_back_and_preserves_old_chunks(
         f"/api/v1/materials/{material_id}/parse", headers=headers
     )
     assert second.status_code == 200
-    assert second.json()["status"] == "failed"
+    # P0: when old chunks exist, a failed re-parse must keep status="ready"
+    # so the previous parse result stays visible to the user.
+    assert second.json()["status"] == "ready"
 
     # After the failed re-parse, the chunks must still be the ORIGINAL
     # ones (no "MODIFIED_" prefix). If rollback is missing, the new
@@ -289,12 +291,51 @@ def test_parse_scanner_failure_rolls_back_and_preserves_old_chunks(
         "new (uncommitted) chunks leaked into the DB — missing rollback"
     )
 
-    # Verify the material row itself reflects the failure.
+    # Verify the material row reflects "ready with stale-result warning":
+    # status stays ready (old chunks still usable) but error_message
+    # records that the latest re-parse failed.
     list_resp = client.get(
         f"/api/v1/courses/{course_id}/materials", headers=headers
     )
     items = list_resp.json()["items"]
     mat_row = next(m for m in items if m["id"] == material_id)
+    assert mat_row["status"] == "ready"
+    assert mat_row["error_message"]
+    assert "上一版" in mat_row["error_message"] or "上次" in mat_row["error_message"]
+
+
+def test_parse_failure_without_old_chunks_still_failed(
+    client, tmp_path, monkeypatch
+) -> None:
+    """P0: when there are NO old chunks (first parse fails), status must
+    stay "failed" — there is no previous result to fall back to.
+    """
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
+    )
+
+    headers = auth_headers(client, username="alice")
+    course_id = create_course(client, headers, "操作系统")
+    # Corrupt PDF: first parse, no prior chunks exist.
+    material_id = upload_material(
+        client, headers, course_id, "fake.pdf", b"not a real pdf"
+    )
+
+    resp = client.post(
+        f"/api/v1/materials/{material_id}/parse", headers=headers
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "failed"
+    assert body["chunk_count"] == 0
+
+    list_resp = client.get(
+        f"/api/v1/courses/{course_id}/materials", headers=headers
+    )
+    mat_row = next(
+        m for m in list_resp.json()["items"] if m["id"] == material_id
+    )
     assert mat_row["status"] == "failed"
     assert mat_row["error_message"]
 

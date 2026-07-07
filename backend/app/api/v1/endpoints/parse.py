@@ -72,6 +72,17 @@ def parse_material(
     """
     material = _get_owned_material(db, material_id, current_user.id)
 
+    # P0: record whether a previous successful parse produced chunks.
+    # If a re-parse fails, we keep the old chunks visible (status="ready")
+    # instead of clobbering them with "failed", so the user can still use
+    # the last known good result. Only first-time failures (no old chunks)
+    # are marked "failed".
+    existing_chunk_count = (
+        db.query(MaterialChunk)
+        .filter(MaterialChunk.material_id == material_id)
+        .count()
+    )
+
     material.status = "processing"
     material.error_message = None
     db.commit()
@@ -135,6 +146,21 @@ def parse_material(
         # destroying the last known good chunks.
         db.rollback()
         material = _get_owned_material(db, material_id, current_user.id)
+        # P0: if a previous successful parse left chunks, keep them visible
+        # (status="ready") and only record the failure in error_message.
+        # This lets the user continue using the last known good result.
+        if existing_chunk_count > 0:
+            material.status = "ready"
+            material.error_message = (
+                f"最近一次重新解析失败，已保留上一版解析结果："
+                f"{str(exc) or exc.__class__.__name__}"
+            )
+            db.commit()
+            return ParseResponse(
+                material_id=material_id,
+                status="ready",
+                chunk_count=existing_chunk_count,
+            )
         material.status = "failed"
         material.error_message = str(exc) or exc.__class__.__name__
         db.commit()

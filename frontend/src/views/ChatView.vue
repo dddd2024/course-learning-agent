@@ -3,17 +3,10 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
-  ArrowDown,
   ArrowLeft,
-  ArrowUp,
   ChatDotRound,
-  CircleCheck,
-  CircleClose,
-  Document,
-  Loading,
   Plus,
   Promotion,
-  User,
 } from '@element-plus/icons-vue'
 import { getCourse, type Course } from '../api/course'
 import {
@@ -26,31 +19,13 @@ import {
   type ChatStreamEvent,
   type Citation,
   type Conversation,
-  type RetrievedChunk,
-  type ReliabilityLevel,
 } from '../api/chat'
 import { getChunk, type ChunkDetail } from '../api/material'
 import { parseApiError } from '../utils/error'
-
-interface ChatMessage {
-  role: 'user' | 'agent'
-  content: string
-  messageId?: number
-  citations?: Citation[]
-  notFound?: boolean
-  followUpQuestions?: string[]
-  reliabilityLevel?: ReliabilityLevel
-  retrievedChunks?: RetrievedChunk[]
-  pending?: boolean
-}
-
-// Phase 2 Task B: a single step in the SSE progress timeline.
-interface StreamStep {
-  step: string
-  status: 'running' | 'done' | 'error'
-  message: string
-  advice?: string
-}
+import type { ChatMessage, StreamStep } from '../components/chat/types'
+import MessageList from '../components/chat/MessageList.vue'
+import SseStatusPanel from '../components/chat/SseStatusPanel.vue'
+import EvidenceDrawer from '../components/chat/EvidenceDrawer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -88,27 +63,9 @@ const streamError = ref<string | null>(null)
 const streamAdvice = ref<string | null>(null)
 const statusExpanded = ref(false)
 
-function confidencePercent(confidence: number): number {
-  if (confidence > 1) return Math.min(100, Math.round(confidence))
-  return Math.min(100, Math.round(confidence * 100))
-}
-
-function truncate(text: string, max = 120): string {
-  if (!text) return ''
-  return text.length > max ? text.slice(0, max) + '…' : text
-}
-
-// Phase 2 Task A: build the capsule label. Prefer the backend-assembled
-// ``display_label``; fall back to client-side assembly for older data.
-function capsuleLabel(cit: Citation): string {
-  if (cit.display_label) return cit.display_label
-  if (cit.page_no !== null && cit.page_no !== undefined) {
-    return `${cit.material_name} · 第 ${cit.page_no} 页`
-  }
-  return cit.material_name || `片段 ${cit.chunk_id}`
-}
-
-// Phase 2 Task B: human-readable label for an SSE step name.
+// Phase 2 Task B: human-readable label for an SSE step name. Kept here
+// because it is used to set the default step message during event
+// handling (business state), not just for display.
 function stepLabel(step: string | undefined): string {
   switch (step) {
     case 'retrieve':
@@ -328,53 +285,6 @@ function scrollToBottom() {
   }
 }
 
-// Phase 2 bugfix P0-2: render chunk text with quote_text highlighted.
-// Escapes HTML first, then wraps the quote (if found) in <mark>. When
-// the quote is not an exact substring, the full context is shown without
-// highlighting — no error state, matching the "客观证据" design principle.
-function renderHighlightedText(
-  fullText: string,
-  quote: string,
-): string {
-  if (!fullText) return ''
-  const escapeHtml = (s: string) =>
-    s
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-  const escaped = escapeHtml(fullText)
-  if (!quote || quote.length < 2) return escaped
-  const escapedQuote = escapeHtml(quote.trim())
-  // Try exact match first (case-sensitive for Chinese text).
-  const idx = escaped.indexOf(escapedQuote)
-  if (idx !== -1) {
-    return (
-      escaped.slice(0, idx) +
-      '<mark class="citation-highlight">' +
-      escaped.slice(idx, idx + escapedQuote.length) +
-      '</mark>' +
-      escaped.slice(idx + escapedQuote.length)
-    )
-  }
-  // Fallback: try a shortened prefix of the quote (first 20 chars)
-  // since LLM quotes are sometimes paraphrased.
-  const shortQuote = escapedQuote.slice(0, 20)
-  if (shortQuote.length >= 4) {
-    const shortIdx = escaped.indexOf(shortQuote)
-    if (shortIdx !== -1) {
-      return (
-        escaped.slice(0, shortIdx) +
-        '<mark class="citation-highlight">' +
-        escaped.slice(shortIdx, shortIdx + shortQuote.length) +
-        '</mark>' +
-        escaped.slice(shortIdx + shortQuote.length)
-      )
-    }
-  }
-  return escaped
-}
-
 async function openCitationDrawer(citation: Citation, msg: ChatMessage) {
   drawerCitation.value = citation
   drawerMessage.value = msg
@@ -413,17 +323,10 @@ function openRetrievalDrawer(msg: ChatMessage) {
   drawerVisible.value = true
 }
 
-const drawerTitle = computed(() => {
-  if (drawerCitation.value) return '引用详情'
-  return '检索过程'
-})
-
 // Phase 2 Task B: the current running step (if any) for the header chip.
 const currentRunningStep = computed(() =>
   streamSteps.value.find((s) => s.status === 'running'),
 )
-
-const hasStreamError = computed(() => streamError.value !== null)
 
 function toggleStatusPanel() {
   statusExpanded.value = !statusExpanded.value
@@ -503,89 +406,12 @@ onMounted(async () => {
           ref="messageListRef"
           class="message-list"
         >
-          <el-empty
-            v-if="messages.length === 0"
-            description="开始提问吧，Agent 将基于课程资料回答"
-            :image-size="80"
+          <MessageList
+            :messages="messages"
+            @open-citation="openCitationDrawer"
+            @open-retrieval="openRetrievalDrawer"
+            @follow-up="handleFollowUp"
           />
-          <template v-for="(msg, idx) in messages" :key="idx">
-            <div
-              class="message-row"
-              :class="msg.role === 'user' ? 'message-user' : 'message-agent'"
-            >
-              <div class="message-avatar">
-                <el-icon v-if="msg.role === 'user'"><User /></el-icon>
-                <el-icon v-else><ChatDotRound /></el-icon>
-              </div>
-              <div class="message-bubble-wrap">
-                <div class="message-bubble">
-                  <template v-if="msg.pending">
-                    <el-icon class="is-loading"><Loading /></el-icon>
-                    <span class="pending-text">{{ msg.content }}</span>
-                  </template>
-                  <template v-else>{{ msg.content }}</template>
-                </div>
-
-                <div
-                  v-if="msg.role === 'agent' && !msg.pending"
-                  class="citations-area"
-                >
-                  <div class="citations-title">
-                    <el-icon><Document /></el-icon>
-                    <span>引用资料 ({{ msg.citations?.length ?? 0 }})</span>
-                    <el-button
-                      v-if="msg.retrievedChunks && msg.retrievedChunks.length > 0"
-                      text
-                      size="small"
-                      class="retrieval-btn"
-                      @click="openRetrievalDrawer(msg)"
-                    >
-                      检索过程 ({{ msg.retrievedChunks.length }})
-                    </el-button>
-                  </div>
-
-                  <div
-                    v-if="msg.citations && msg.citations.length > 0"
-                    class="citation-capsules"
-                  >
-                    <span
-                      v-for="(cit, ci) in msg.citations"
-                      :key="`${cit.chunk_id}-${ci}`"
-                      class="citation-capsule"
-                      :title="`相关度 ${confidencePercent(cit.confidence)}%`"
-                      @click="openCitationDrawer(cit, msg)"
-                    >
-                      <span class="capsule-index">{{ ci + 1 }}</span>
-                      <span class="capsule-label">{{ capsuleLabel(cit) }}</span>
-                    </span>
-                  </div>
-                  <div v-else class="no-citation">
-                    本次回答未找到直接资料依据
-                  </div>
-
-                  <div
-                    v-if="
-                      msg.followUpQuestions && msg.followUpQuestions.length > 0
-                    "
-                    class="follow-ups"
-                  >
-                    <div class="follow-ups-title">追问建议：</div>
-                    <div class="follow-up-chips">
-                      <el-tag
-                        v-for="(q, qi) in msg.followUpQuestions"
-                        :key="qi"
-                        class="follow-up-chip"
-                        effect="plain"
-                        @click="handleFollowUp(q)"
-                      >
-                        {{ q }}
-                      </el-tag>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </template>
         </div>
 
         <div v-else class="chat-empty">
@@ -600,72 +426,15 @@ onMounted(async () => {
           </el-empty>
         </div>
 
-        <div
-          v-if="activeConversationId && streamSteps.length > 0"
-          class="stream-status"
-          :class="{
-            'status-error': hasStreamError,
-            'status-collapsed': !statusExpanded,
-          }"
-        >
-          <div class="status-header" @click="toggleStatusPanel">
-            <el-icon
-              v-if="currentRunningStep && !hasStreamError"
-              class="is-loading"
-            >
-              <Loading />
-            </el-icon>
-            <el-icon v-else-if="hasStreamError" class="status-err-icon">
-              <CircleClose />
-            </el-icon>
-            <el-icon v-else class="status-ok-icon">
-              <CircleCheck />
-            </el-icon>
-            <span class="status-summary">
-              <template v-if="hasStreamError">
-                处理失败：{{ streamError }}
-              </template>
-              <template v-else-if="currentRunningStep">
-                {{ currentRunningStep.message }}
-              </template>
-              <template v-else>
-                已完成（{{ streamSteps.length }} 个步骤）
-              </template>
-            </span>
-            <el-icon class="status-toggle">
-              <ArrowUp v-if="statusExpanded" />
-              <ArrowDown v-else />
-            </el-icon>
-          </div>
-          <div v-if="statusExpanded" class="status-body">
-            <div
-              v-for="s in streamSteps"
-              :key="s.step"
-              class="status-step"
-              :class="`step-${s.status}`"
-            >
-              <el-icon v-if="s.status === 'running'" class="is-loading">
-                <Loading />
-              </el-icon>
-              <el-icon v-else-if="s.status === 'done'" class="step-done-icon">
-                <CircleCheck />
-              </el-icon>
-              <el-icon v-else class="step-err-icon">
-                <CircleClose />
-              </el-icon>
-              <span class="step-name">{{ stepLabel(s.step) }}</span>
-              <span class="step-message">{{ s.message }}</span>
-            </div>
-            <el-alert
-              v-if="hasStreamError && streamAdvice"
-              :title="streamAdvice"
-              type="warning"
-              :closable="false"
-              show-icon
-              class="status-advice"
-            />
-          </div>
-        </div>
+        <SseStatusPanel
+          v-if="activeConversationId"
+          :steps="streamSteps"
+          :error="streamError"
+          :advice="streamAdvice"
+          :expanded="statusExpanded"
+          :running-step="currentRunningStep"
+          @toggle="toggleStatusPanel"
+        />
 
         <div v-if="activeConversationId" class="chat-input">
           <el-input
@@ -690,116 +459,14 @@ onMounted(async () => {
       </div>
     </div>
 
-    <el-drawer
-      v-model="drawerVisible"
-      :title="drawerTitle"
-      direction="rtl"
-      size="480px"
-    >
-      <div v-loading="drawerLoading" class="drawer-body">
-        <template v-if="drawerCitation">
-          <div class="drawer-section">
-            <div class="drawer-label">资料名称</div>
-            <div class="drawer-value">{{ drawerCitation.material_name }}</div>
-          </div>
-          <div class="drawer-section">
-            <div class="drawer-label">页码</div>
-            <div class="drawer-value">
-              {{ drawerCitation.page_no !== null && drawerCitation.page_no !== undefined ? `第 ${drawerCitation.page_no} 页` : '未标注' }}
-            </div>
-          </div>
-          <div class="drawer-section">
-            <div class="drawer-label">原文片段</div>
-            <!-- Phase 2 bugfix P0-2: show full chunk text with quote_text
-                 highlighted. Falls back to quote_text only when the chunk
-                 fetch failed (e.g. cross-user). -->
-            <div
-              v-if="drawerChunk"
-              class="drawer-chunk-text"
-              v-html="renderHighlightedText(drawerChunk.text, drawerCitation.quote_text)"
-            />
-            <div v-else class="drawer-quote">{{ drawerCitation.quote_text }}</div>
-          </div>
-        </template>
-
-        <div
-          v-if="
-            drawerMessage?.followUpQuestions &&
-            drawerMessage.followUpQuestions.length > 0
-          "
-          class="drawer-section"
-        >
-          <div class="drawer-label">追问建议</div>
-          <div class="follow-up-chips">
-            <el-tag
-              v-for="(q, qi) in drawerMessage.followUpQuestions"
-              :key="qi"
-              class="follow-up-chip"
-              effect="plain"
-              @click="handleFollowUp(q)"
-            >
-              {{ q }}
-            </el-tag>
-          </div>
-        </div>
-
-        <div class="drawer-section">
-          <div class="drawer-label">
-            检索命中 ({{ drawerMessage?.retrievedChunks?.length ?? 0 }})
-          </div>
-          <template
-            v-if="
-              drawerMessage?.retrievedChunks &&
-              drawerMessage.retrievedChunks.length > 0
-            "
-          >
-            <div class="retrieval-list">
-              <div
-                v-for="chunk in drawerMessage.retrievedChunks"
-                :key="chunk.chunk_id"
-                class="retrieval-item"
-                :class="{ 'retrieval-cited': chunk.is_cited }"
-              >
-                <div class="retrieval-head">
-                  <span class="retrieval-title">
-                    {{ chunk.title || `片段 ${chunk.chunk_id}` }}
-                  </span>
-                  <el-tag
-                    v-if="chunk.is_cited"
-                    type="success"
-                    size="small"
-                    effect="plain"
-                  >
-                    已引用
-                  </el-tag>
-                  <el-tag v-else type="info" size="small" effect="plain">
-                    未引用
-                  </el-tag>
-                </div>
-                <div class="retrieval-meta">
-                  <el-tag
-                    v-if="chunk.page_no !== null && chunk.page_no !== undefined"
-                    type="info"
-                    size="small"
-                    effect="plain"
-                  >
-                    第 {{ chunk.page_no }} 页
-                  </el-tag>
-                </div>
-                <div class="retrieval-snippet">
-                  {{ truncate(chunk.snippet, 80) }}
-                </div>
-              </div>
-            </div>
-          </template>
-          <el-empty
-            v-else
-            description="未找到可靠资料依据"
-            :image-size="60"
-          />
-        </div>
-      </div>
-    </el-drawer>
+    <EvidenceDrawer
+      v-model:visible="drawerVisible"
+      :loading="drawerLoading"
+      :citation="drawerCitation"
+      :message="drawerMessage"
+      :chunk="drawerChunk"
+      @follow-up="handleFollowUp"
+    />
   </div>
 </template>
 
@@ -933,214 +600,6 @@ onMounted(async () => {
   padding: 16px;
 }
 
-.message-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.message-user {
-  flex-direction: row-reverse;
-}
-
-.message-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  font-size: 16px;
-}
-
-.message-user .message-avatar {
-  background: #409eff;
-  color: #fff;
-}
-
-.message-agent .message-avatar {
-  background: #67c23a;
-  color: #fff;
-}
-
-.message-bubble-wrap {
-  max-width: 75%;
-  display: flex;
-  flex-direction: column;
-}
-
-.message-user .message-bubble-wrap {
-  align-items: flex-end;
-}
-
-.message-agent .message-bubble-wrap {
-  align-items: flex-start;
-}
-
-.message-bubble {
-  padding: 10px 14px;
-  border-radius: 8px;
-  font-size: 14px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.message-bubble .is-loading {
-  margin-right: 6px;
-  vertical-align: middle;
-}
-
-.pending-text {
-  vertical-align: middle;
-}
-
-.message-user .message-bubble {
-  background: #409eff;
-  color: #fff;
-  border-top-right-radius: 2px;
-}
-
-.message-agent .message-bubble {
-  background: #f5f7fa;
-  color: #303133;
-  border-top-left-radius: 2px;
-}
-
-.not-found-alert {
-  margin-top: 8px;
-  width: 100%;
-}
-
-.reliability-area {
-  margin-top: 8px;
-  width: 100%;
-}
-
-.reliability-alert {
-  width: 100%;
-}
-
-.reliability-tag-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.reliability-hint {
-  font-size: 12px;
-  color: #909399;
-}
-
-.retrieval-btn {
-  margin-left: auto;
-  padding: 0;
-}
-
-.citations-area {
-  margin-top: 10px;
-  width: 100%;
-}
-
-.citations-title {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: #909399;
-  margin-bottom: 6px;
-}
-
-.citation-capsules {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 4px;
-}
-
-.citation-capsule {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: #f4f6f9;
-  border: 1px solid #e4e7ed;
-  font-size: 12px;
-  color: #606266;
-  cursor: pointer;
-  transition: all 0.2s;
-  max-width: 280px;
-}
-
-.citation-capsule:hover {
-  background: #ecf5ff;
-  border-color: #c6e2ff;
-  color: #409eff;
-}
-
-.capsule-index {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #dcdfe6;
-  color: #606266;
-  font-size: 10px;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.citation-capsule:hover .capsule-index {
-  background: #409eff;
-  color: #fff;
-}
-
-.capsule-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.no-citation {
-  font-size: 12px;
-  color: #909399;
-  padding: 8px 12px;
-  background: #f5f7fa;
-  border-radius: 4px;
-}
-
-.follow-ups {
-  margin-top: 10px;
-}
-
-.follow-ups-title {
-  font-size: 12px;
-  color: #909399;
-  margin-bottom: 6px;
-}
-
-.follow-up-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.follow-up-chip {
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.follow-up-chip:hover {
-  color: #409eff;
-  border-color: #409eff;
-  cursor: pointer;
-}
-
 .chat-empty {
   flex: 1;
   display: flex;
@@ -1157,237 +616,7 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 
-/* Phase 2 Task B: SSE real-time status panel */
-.stream-status {
-  border-top: 1px solid #ebeef5;
-  background: #fafbfc;
-  flex-shrink: 0;
-}
-
-.stream-status.status-error {
-  background: #fef0f0;
-  border-top-color: #fbc4c4;
-}
-
-.status-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  cursor: pointer;
-  user-select: none;
-  font-size: 13px;
-  color: #606266;
-}
-
-.status-header:hover {
-  background: #f5f7fa;
-}
-
-.stream-status.status-error .status-header {
-  color: #f56c6c;
-}
-
-.status-summary {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.status-err-icon {
-  color: #f56c6c;
-  flex-shrink: 0;
-}
-
-.status-ok-icon {
-  color: #67c23a;
-  flex-shrink: 0;
-}
-
-.status-toggle {
-  color: #909399;
-  flex-shrink: 0;
-}
-
-.status-body {
-  padding: 4px 16px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.status-step {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  padding: 4px 0;
-}
-
-.step-name {
-  font-weight: 600;
-  color: #303133;
-  flex-shrink: 0;
-  min-width: 64px;
-}
-
-.step-message {
-  color: #606266;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-}
-
-.status-step.step-running .step-name {
-  color: #409eff;
-}
-
-.status-step.step-done .step-name {
-  color: #67c23a;
-}
-
-.step-done-icon {
-  color: #67c23a;
-  flex-shrink: 0;
-}
-
-.step-err-icon {
-  color: #f56c6c;
-  flex-shrink: 0;
-}
-
-.status-advice {
-  margin-top: 4px;
-}
-
 .chat-input :deep(.el-textarea) {
   flex: 1;
-}
-
-.drawer-body {
-  padding: 0 20px 20px;
-}
-
-.drawer-section {
-  margin-bottom: 20px;
-}
-
-.drawer-label {
-  font-size: 12px;
-  color: #909399;
-  margin-bottom: 6px;
-}
-
-.drawer-value {
-  font-size: 14px;
-  color: #303133;
-}
-
-.confidence-text {
-  display: inline-block;
-  margin-bottom: 6px;
-  font-size: 14px;
-  color: #67c23a;
-}
-
-.drawer-quote {
-  font-size: 13px;
-  color: #606266;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  background: #f5f7fa;
-  padding: 12px;
-  border-radius: 4px;
-  max-height: 240px;
-  overflow-y: auto;
-  word-break: break-word;
-}
-
-/* Phase 2 bugfix P0-2: full chunk context with highlighted quote */
-.drawer-chunk-text {
-  font-size: 13px;
-  color: #303133;
-  line-height: 1.8;
-  white-space: pre-wrap;
-  background: #f5f7fa;
-  padding: 12px;
-  border-radius: 4px;
-  max-height: 320px;
-  overflow-y: auto;
-  word-break: break-word;
-  border-left: 3px solid #dcdfe6;
-}
-
-.drawer-chunk-text :deep(.citation-highlight) {
-  background: #fff3a0;
-  color: #303133;
-  padding: 0 2px;
-  border-radius: 2px;
-  font-weight: 600;
-}
-
-.retrieval-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.retrieval-item {
-  border: 1px solid #ebeef5;
-  border-radius: 6px;
-  padding: 10px 12px;
-  background: #fafafa;
-}
-
-.retrieval-cited {
-  border-color: #b3e19d;
-  background: #f0f9eb;
-}
-
-.retrieval-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.retrieval-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #303133;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-}
-
-.retrieval-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
-}
-
-.retrieval-score {
-  font-size: 12px;
-  color: #606266;
-  flex-shrink: 0;
-}
-
-.retrieval-progress {
-  flex: 1;
-  min-width: 60px;
-}
-
-.retrieval-snippet {
-  font-size: 12px;
-  color: #606266;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 </style>

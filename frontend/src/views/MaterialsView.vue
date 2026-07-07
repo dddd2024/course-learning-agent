@@ -58,6 +58,17 @@ const statusLabel: Record<MaterialStatus, string> = {
   failed: '解析失败',
 }
 
+// P0: a "ready" material with a non-empty error_message means the latest
+// re-parse failed but the previous chunks are still usable. Show a
+// distinct label + tooltip so the user knows the result is stale.
+function isStaleReady(m: Material): boolean {
+  return m.status === 'ready' && !!m.error_message
+}
+
+function staleReadyLabel(): string {
+  return '已就绪（上次解析失败）'
+}
+
 const chunksDialogVisible = ref(false)
 const chunksLoading = ref(false)
 const chunks = ref<Chunk[]>([])
@@ -228,8 +239,18 @@ async function handleParse(material: Material) {
         status: data.status,
       }
     }
-    ElMessage.success(`已提交解析，预计生成 ${data.chunk_count} 个片段`)
-    ensurePolling()
+    // The parse response omits error_message, so re-fetch the list to
+    // surface the "stale ready" warning (status=ready + error_message)
+    // or the failure reason (status=failed) on the row.
+    await fetchMaterials()
+    if (data.status === 'ready') {
+      ElMessage.success(`解析完成，共生成 ${data.chunk_count} 个片段`)
+    } else if (data.status === 'failed') {
+      ElMessage.warning('解析失败，请查看状态标签了解详情')
+    } else {
+      ElMessage.success(`已提交解析，预计生成 ${data.chunk_count} 个片段`)
+      ensurePolling()
+    }
   } catch (err) {
     ElMessage.error(parseApiError(err, '解析请求失败'))
   }
@@ -442,7 +463,7 @@ onUnmounted(() => {
       >
         <el-table-column prop="filename" label="文件名" min-width="220" show-overflow-tooltip />
         <el-table-column prop="file_type" label="类型" width="100" />
-        <el-table-column label="状态" width="120">
+        <el-table-column label="状态" width="160">
           <template #default="{ row }">
             <el-tooltip
               v-if="row.status === 'failed' && row.error_message"
@@ -451,6 +472,15 @@ onUnmounted(() => {
             >
               <el-tag :type="statusTagType[row.status as MaterialStatus]">
                 {{ statusLabel[row.status as MaterialStatus] }}
+              </el-tag>
+            </el-tooltip>
+            <el-tooltip
+              v-else-if="isStaleReady(row)"
+              :content="row.error_message"
+              placement="top"
+            >
+              <el-tag type="warning">
+                {{ staleReadyLabel() }}
               </el-tag>
             </el-tooltip>
             <el-tag v-else :type="statusTagType[row.status as MaterialStatus]">
@@ -528,7 +558,6 @@ onUnmounted(() => {
           <div class="search-item-head">
             <span class="search-item-name">{{ item.filename }}</span>
             <el-tag size="small" type="info">第 {{ item.page_no }} 页</el-tag>
-            <el-tag size="small" type="success">相关度 {{ (item.score * 100).toFixed(1) }}%</el-tag>
             <span v-if="item.title" class="search-item-title">{{ item.title }}</span>
           </div>
           <div class="search-item-text">
@@ -560,6 +589,14 @@ onUnmounted(() => {
       "
     >
       <div v-if="materialOverview" class="overview-panel">
+        <el-alert
+          v-if="currentMaterial && isStaleReady(currentMaterial)"
+          title="最近一次重新解析失败，当前展示的是上一版解析结果"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="overview-alert"
+        />
         <div class="overview-stats">
           <div class="overview-stat">
             <span class="stat-label">片段数</span>
