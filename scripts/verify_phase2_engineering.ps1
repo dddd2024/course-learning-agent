@@ -24,6 +24,20 @@ if (-not $SkipBackend) {
   Pop-Location
 }
 
+# 1b. T1-1: 指定关键测试文件运行（不只做字符串检查）
+if (-not $SkipBackend) {
+  Write-Step 'Key backend test files'
+  Push-Location "$root\backend"
+  & ".\.venv\Scripts\python.exe" -m pytest `
+      app/tests/test_multi_plans.py `
+      app/tests/test_api_contracts.py `
+      app/tests/test_e2e_learning_flow.py `
+      app/tests/test_health.py `
+      -q
+  if ($LASTEXITCODE -eq 0) { Write-Ok 'key backend test files passed' } else { Write-Bad 'key backend test files failed' }
+  Pop-Location
+}
+
 # 2. Frontend build
 Write-Step 'Frontend build'
 Push-Location "$root\frontend"

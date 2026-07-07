@@ -20,6 +20,16 @@ cd "$root/backend"
 if python -m pytest app/tests/ -q; then ok "backend tests passed"; else bad "backend tests failed"; fi
 cd "$root"
 
+# 1b. T1-1: 指定关键测试文件运行
+step "Key backend test files"
+cd "$root/backend"
+if python -m pytest app/tests/test_multi_plans.py app/tests/test_api_contracts.py app/tests/test_e2e_learning_flow.py app/tests/test_health.py -q; then
+  ok "key backend test files passed"
+else
+  bad "key backend test files failed"
+fi
+cd "$root"
+
 # 2. Frontend build
 step "Frontend build"
 cd "$root/frontend"
