@@ -125,6 +125,22 @@ export function getMaterialOverview(
   return request.get(`/materials/${materialId}/overview`)
 }
 
+// Phase 2 bugfix P0-2: fetch a single chunk's full text for citation
+// evidence display. The backend assembles display_label; the frontend
+// just needs the raw text for highlighting.
+export interface ChunkDetail {
+  chunk_id: number
+  material_id: number
+  material_name: string
+  title: string | null
+  page_no: number | null
+  text: string
+}
+
+export function getChunk(chunkId: number): AxiosPromise<ChunkDetail> {
+  return request.get(`/chunks/${chunkId}`)
+}
+
 export function search(params: SearchParams): AxiosPromise<SearchResult> {
   return request.get('/search', { params })
 }

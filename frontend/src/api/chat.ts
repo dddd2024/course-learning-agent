@@ -109,7 +109,10 @@ export async function sendMessageStream(
   signal?: AbortSignal,
 ): Promise<ChatResult | null> {
   const token = localStorage.getItem('token')
-  const resp = await fetch('http://localhost:8000/api/v1/chat/stream', {
+  // Phase 2 bugfix P2: use a relative URL so the Vite dev-server proxy
+  // (or the production reverse proxy) handles routing. The previous
+  // hardcoded http://localhost:8000 broke any non-default port.
+  const resp = await fetch('/api/v1/chat/stream', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

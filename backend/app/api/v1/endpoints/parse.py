@@ -128,6 +128,13 @@ def parse_material(
             chunk_count=len(chunks),
         )
     except Exception as exc:  # noqa: BLE001 - record any parse failure
+        # Phase 2 bugfix P1-3: roll back the half-finished transaction
+        # (old chunks were deleted, new chunks may have been flushed)
+        # before marking the material failed. Without rollback the
+        # db.commit() below would persist the partial delete+insert,
+        # destroying the last known good chunks.
+        db.rollback()
+        material = _get_owned_material(db, material_id, current_user.id)
         material.status = "failed"
         material.error_message = str(exc) or exc.__class__.__name__
         db.commit()

@@ -193,14 +193,110 @@ def test_parse_failed_status(client, tmp_path, monkeypatch) -> None:
     assert body["status"] == "failed"
     assert body["chunk_count"] == 0
 
+
+# ---------------------------------------------------------------------------
+# Phase 2 bugfix P1-3: parse rollback safety
+# ---------------------------------------------------------------------------
+
+
+def test_parse_scanner_failure_rolls_back_and_preserves_old_chunks(
+    client, tmp_path, monkeypatch
+) -> None:
+    """When the security scanner raises during re-parse, the transaction
+    must roll back so the previously-saved chunks are NOT replaced by
+    half-committed new ones.
+
+    Without rollback the except block commits the DELETE of old chunks
+    plus the INSERT of new (flushed) chunks — destroying the last known
+    good state and leaving the material "failed" with new chunks that
+    have no security findings.
+    """
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
+    )
+
+    headers = auth_headers(client, username="alice")
+    course_id = create_course(client, headers, "操作系统")
+    material_id = upload_material(
+        client, headers, course_id, "notes.txt", LONG_TEXT.encode("utf-8")
+    )
+
+    # First parse succeeds → material is ready with chunks.
+    first = client.post(
+        f"/api/v1/materials/{material_id}/parse", headers=headers
+    )
+    assert first.status_code == 200
+    assert first.json()["status"] == "ready"
+    first_chunks = client.get(
+        f"/api/v1/materials/{material_id}/chunks",
+        params={"page": 1, "page_size": 100},
+        headers=headers,
+    )
+    original_texts = [c["text"][:40] for c in first_chunks.json()["items"]]
+    assert len(original_texts) > 0
+
+    # Now monkeypatch build_chunks to produce DIFFERENT text on re-parse,
+    # so we can tell old chunks from new ones even when SQLite reuses rowids.
+    from app.retrieval import chunker as chunker_mod
+
+    real_build = chunker_mod.build_chunks
+    call_count = {"n": 0}
+
+    def marker_build(pages, chunk_size=600, overlap=100):
+        call_count["n"] += 1
+        chunks = real_build(pages, chunk_size, overlap)
+        # marker_build is only installed AFTER the first parse, so every
+        # call here is a re-parse. Prefix every chunk's text so we can
+        # detect whether the new (uncommitted-then-rolled-back) chunks
+        # leaked into the DB.
+        for c in chunks:
+            c["text"] = "MODIFIED_" + c["text"]
+        return chunks
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.parse.build_chunks", marker_build
+    )
+
+    # Scanner raises during the re-parse.
+    def boom(*args, **kwargs):
+        raise RuntimeError("scanner exploded")
+
+    monkeypatch.setattr(
+        "app.services.security_scanner.scan_material_chunks", boom
+    )
+
+    second = client.post(
+        f"/api/v1/materials/{material_id}/parse", headers=headers
+    )
+    assert second.status_code == 200
+    assert second.json()["status"] == "failed"
+
+    # After the failed re-parse, the chunks must still be the ORIGINAL
+    # ones (no "MODIFIED_" prefix). If rollback is missing, the new
+    # "MODIFIED_" chunks would be committed and visible here.
+    after = client.get(
+        f"/api/v1/materials/{material_id}/chunks",
+        params={"page": 1, "page_size": 100},
+        headers=headers,
+    )
+    after_texts = [c["text"][:40] for c in after.json()["items"]]
+    assert after_texts == original_texts, (
+        "re-parse failure must preserve the original chunks "
+        "(rollback should undo the half-finished delete+insert)"
+    )
+    assert not any(t.startswith("MODIFIED_") for t in after_texts), (
+        "new (uncommitted) chunks leaked into the DB — missing rollback"
+    )
+
     # Verify the material row itself reflects the failure.
     list_resp = client.get(
         f"/api/v1/courses/{course_id}/materials", headers=headers
     )
     items = list_resp.json()["items"]
-    mat = next(m for m in items if m["id"] == material_id)
-    assert mat["status"] == "failed"
-    assert mat["error_message"]
+    mat_row = next(m for m in items if m["id"] == material_id)
+    assert mat_row["status"] == "failed"
+    assert mat_row["error_message"]
 
 
 def test_chunk_size_strategy() -> None:

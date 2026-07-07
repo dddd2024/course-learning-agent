@@ -7,9 +7,16 @@ Verifies that the streaming endpoint:
 - Returns 401 when unauthenticated.
 - Returns 404 when the conversation belongs to another user.
 - Emits a step_error event (and no final) when the pipeline fails early.
+
+Phase 2 bugfix (P0-1 / P1-4): failure-path regression tests ensuring
+AgentRun is closed as ``failed`` (not left ``running``) and an
+AgentErrorLog row is written when retrieve or generate raises.
 """
 import json
 
+from app.core.database import get_db
+from app.models.audit import AgentRun
+from app.models.error_log import AgentErrorLog
 from app.tests.conftest import (
     auth_headers,
     setup_course_with_material,
@@ -165,3 +172,172 @@ def test_chat_stream_cross_user_conversation_404(
         headers=headers_b,
     )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 bugfix — failure-path regression tests (P0-1 / P1-4)
+# ---------------------------------------------------------------------------
+
+
+def _test_db_session(client):
+    """Return a SQLAlchemy session bound to the test DB (via override)."""
+    gen = client.app.dependency_overrides[get_db]
+    return next(gen())
+
+
+def _setup_chat(client, headers, monkeypatch, tmp_path):
+    """Shared setup: course + material + conversation for failure tests."""
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
+    )
+    course_id, _ = setup_course_with_material(
+        client, headers, content=TLB_TEXT
+    )
+    conv_resp = client.post(
+        "/api/v1/conversations",
+        json={"course_id": course_id, "title": "失败流测试"},
+        headers=headers,
+    )
+    return course_id, conv_resp.json()["id"]
+
+
+def test_chat_stream_retrieve_error_logs_and_finishes_run(
+    client, tmp_path, monkeypatch
+) -> None:
+    """When keyword_search raises, the SSE stream emits step_error, the
+    AgentRun is closed as ``failed`` (not ``running``), and an
+    AgentErrorLog row is written for the retrieve step."""
+    headers = auth_headers(client, username="alice")
+    course_id, conversation_id = _setup_chat(
+        client, headers, monkeypatch, tmp_path
+    )
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("retrieve exploded")
+
+    monkeypatch.setattr("app.services.chat_service.keyword_search", boom)
+
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={
+            "course_id": course_id,
+            "conversation_id": conversation_id,
+            "question": "什么是快表？",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+
+    events = _parse_sse(resp.text)
+    event_types = [e["event"] for e in events]
+    assert "step_error" in event_types
+    # No final event on failure.
+    assert "final" not in event_types
+
+    # Inspect the DB: AgentRun must be failed, not running.
+    db = _test_db_session(client)
+    try:
+        run = db.query(AgentRun).order_by(AgentRun.id.desc()).first()
+        assert run is not None
+        assert run.status == "failed"
+        assert run.finished_at is not None
+        # An error log must have been written for the retrieve step.
+        log = (
+            db.query(AgentErrorLog)
+            .filter(AgentErrorLog.step == "retrieve")
+            .first()
+        )
+        assert log is not None
+    finally:
+        db.close()
+
+
+def test_chat_stream_generate_error_logs_and_finishes_run(
+    client, tmp_path, monkeypatch
+) -> None:
+    """When answer_question raises, the SSE stream emits step_error for
+    generate, no final event, AgentRun is ``failed``, and an
+    AgentErrorLog row is written for the generate step."""
+    headers = auth_headers(client, username="alice")
+    course_id, conversation_id = _setup_chat(
+        client, headers, monkeypatch, tmp_path
+    )
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("generate exploded")
+
+    monkeypatch.setattr("app.services.chat_service.answer_question", boom)
+
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={
+            "course_id": course_id,
+            "conversation_id": conversation_id,
+            "question": "什么是快表？",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+
+    events = _parse_sse(resp.text)
+    event_types = [e["event"] for e in events]
+    assert "step_error" in event_types
+    assert "final" not in event_types
+
+    db = _test_db_session(client)
+    try:
+        run = db.query(AgentRun).order_by(AgentRun.id.desc()).first()
+        assert run is not None
+        assert run.status == "failed"
+        assert run.finished_at is not None
+        log = (
+            db.query(AgentErrorLog)
+            .filter(AgentErrorLog.step == "generate")
+            .first()
+        )
+        assert log is not None
+    finally:
+        db.close()
+
+
+def test_chat_sync_error_returns_failure_response_without_unfinished_run(
+    client, tmp_path, monkeypatch
+) -> None:
+    """POST /chat (sync) failure must not leave a ``running`` AgentRun.
+
+    The sync endpoint consumes the same generator; when generate raises it
+    must still close the run as ``failed`` and return a failure response
+    rather than leaving the run stuck in ``running``.
+    """
+    headers = auth_headers(client, username="alice")
+    course_id, conversation_id = _setup_chat(
+        client, headers, monkeypatch, tmp_path
+    )
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("sync generate exploded")
+
+    monkeypatch.setattr("app.services.chat_service.answer_question", boom)
+
+    resp = client.post(
+        "/api/v1/chat",
+        json={
+            "course_id": course_id,
+            "conversation_id": conversation_id,
+            "question": "什么是快表？",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["reliability_level"] == "failed"
+
+    db = _test_db_session(client)
+    try:
+        run = db.query(AgentRun).order_by(AgentRun.id.desc()).first()
+        assert run is not None
+        assert run.status == "failed"
+        assert run.finished_at is not None
+    finally:
+        db.close()

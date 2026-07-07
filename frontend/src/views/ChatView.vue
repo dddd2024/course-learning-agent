@@ -29,6 +29,7 @@ import {
   type RetrievedChunk,
   type ReliabilityLevel,
 } from '../api/chat'
+import { getChunk, type ChunkDetail } from '../api/material'
 import { parseApiError } from '../utils/error'
 
 interface ChatMessage {
@@ -74,6 +75,9 @@ const drawerVisible = ref(false)
 const drawerCitation = ref<Citation | null>(null)
 const drawerMessage = ref<ChatMessage | null>(null)
 const drawerLoading = ref(false)
+// Phase 2 bugfix P0-2: full chunk text fetched from /chunks/{id} so the
+// drawer can show the complete context around a citation's quote_text.
+const drawerChunk = ref<ChunkDetail | null>(null)
 
 // Phase 2 Task B: SSE status-panel state.
 // - streamSteps: ordered list of steps for the in-flight request.
@@ -92,52 +96,6 @@ function confidencePercent(confidence: number): number {
 function truncate(text: string, max = 120): string {
   if (!text) return ''
   return text.length > max ? text.slice(0, max) + '…' : text
-}
-
-function reliabilityTagType(
-  level: ReliabilityLevel,
-): 'success' | 'warning' | 'danger' {
-  switch (level) {
-    case 'high':
-      return 'success'
-    case 'medium':
-      return 'warning'
-    case 'low':
-      return 'warning'
-    case 'failed':
-      return 'danger'
-  }
-}
-
-function reliabilityLabel(level: ReliabilityLevel): string {
-  switch (level) {
-    case 'high':
-      return '高'
-    case 'medium':
-      return '中'
-    case 'low':
-      return '低'
-    case 'failed':
-      return '失败'
-  }
-}
-
-function reliabilityHint(level: ReliabilityLevel): string {
-  switch (level) {
-    case 'high':
-      return '回答有充分资料依据'
-    case 'medium':
-      return '回答有部分资料依据，建议核实'
-    case 'low':
-      return '回答缺少资料依据，请谨慎参考'
-    case 'failed':
-      return '未找到可靠资料依据'
-  }
-}
-
-function chunkScorePercent(score: number): number {
-  if (score > 1) return Math.min(100, Math.round(score))
-  return Math.min(100, Math.round(score * 100))
 }
 
 // Phase 2 Task A: build the capsule label. Prefer the backend-assembled
@@ -308,14 +266,27 @@ async function handleSend() {
 
   try {
     // Prefer SSE streaming for live progress; fall back to the sync
-    // POST /chat endpoint if the stream connection itself fails.
+    // POST /chat endpoint ONLY if the stream connection failed before
+    // any event was received. Once events have arrived the user message
+    // is already persisted server-side, so a sync retry would duplicate it.
     let result: ChatResult | null = null
+    let receivedAnyEvent = false
     try {
-      result = await sendMessageStream(payload, handleStreamEvent)
+      result = await sendMessageStream(payload, (evt) => {
+        receivedAnyEvent = true
+        handleStreamEvent(evt)
+      })
     } catch (streamErr) {
-      // Network / fetch error before any event arrived → fallback.
-      const { data } = await sendMessage(payload)
-      result = data
+      if (!receivedAnyEvent) {
+        // No events received → safe to retry via sync endpoint.
+        const { data } = await sendMessage(payload)
+        result = data
+      } else {
+        // Events already arrived → the user message is persisted; do
+        // NOT retry via /chat (would duplicate the message). Surface
+        // the error instead.
+        throw streamErr
+      }
     }
     if (result) {
       applyChatResult(pendingIndex, result)
@@ -357,23 +328,82 @@ function scrollToBottom() {
   }
 }
 
+// Phase 2 bugfix P0-2: render chunk text with quote_text highlighted.
+// Escapes HTML first, then wraps the quote (if found) in <mark>. When
+// the quote is not an exact substring, the full context is shown without
+// highlighting — no error state, matching the "客观证据" design principle.
+function renderHighlightedText(
+  fullText: string,
+  quote: string,
+): string {
+  if (!fullText) return ''
+  const escapeHtml = (s: string) =>
+    s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+  const escaped = escapeHtml(fullText)
+  if (!quote || quote.length < 2) return escaped
+  const escapedQuote = escapeHtml(quote.trim())
+  // Try exact match first (case-sensitive for Chinese text).
+  const idx = escaped.indexOf(escapedQuote)
+  if (idx !== -1) {
+    return (
+      escaped.slice(0, idx) +
+      '<mark class="citation-highlight">' +
+      escaped.slice(idx, idx + escapedQuote.length) +
+      '</mark>' +
+      escaped.slice(idx + escapedQuote.length)
+    )
+  }
+  // Fallback: try a shortened prefix of the quote (first 20 chars)
+  // since LLM quotes are sometimes paraphrased.
+  const shortQuote = escapedQuote.slice(0, 20)
+  if (shortQuote.length >= 4) {
+    const shortIdx = escaped.indexOf(shortQuote)
+    if (shortIdx !== -1) {
+      return (
+        escaped.slice(0, shortIdx) +
+        '<mark class="citation-highlight">' +
+        escaped.slice(shortIdx, shortIdx + shortQuote.length) +
+        '</mark>' +
+        escaped.slice(shortIdx + shortQuote.length)
+      )
+    }
+  }
+  return escaped
+}
+
 async function openCitationDrawer(citation: Citation, msg: ChatMessage) {
   drawerCitation.value = citation
   drawerMessage.value = msg
+  drawerChunk.value = null
   drawerVisible.value = true
-  if (msg.messageId) {
-    drawerLoading.value = true
-    try {
-      const { data } = await getCitations(msg.messageId)
-      const full = data.items.find((c) => c.chunk_id === citation.chunk_id)
-      if (full) {
-        drawerCitation.value = full
+  drawerLoading.value = true
+  try {
+    // Fetch the full chunk text for evidence display + highlighting.
+    const { data: chunk } = await getChunk(citation.chunk_id)
+    drawerChunk.value = chunk
+    // Also try to enrich with the persisted citation (may carry a
+    // longer quote_text than the inline one).
+    if (msg.messageId) {
+      try {
+        const { data } = await getCitations(msg.messageId)
+        const full = data.items.find((c) => c.chunk_id === citation.chunk_id)
+        if (full) {
+          drawerCitation.value = full
+        }
+      } catch {
+        // 静默失败，使用内联数据
       }
-    } catch {
-      // 静默失败，使用内联数据
-    } finally {
-      drawerLoading.value = false
     }
+  } catch {
+    // If the chunk fetch fails (e.g. cross-user), fall back to the
+    // inline quote_text only — no full context, no highlight.
+    drawerChunk.value = null
+  } finally {
+    drawerLoading.value = false
   }
 }
 
@@ -497,32 +527,6 @@ onMounted(async () => {
                 </div>
 
                 <div
-                  v-if="msg.role === 'agent' && !msg.pending && msg.reliabilityLevel"
-                  class="reliability-area"
-                >
-                  <el-alert
-                    v-if="msg.reliabilityLevel === 'failed'"
-                    title="未找到可靠资料依据"
-                    type="error"
-                    :closable="false"
-                    show-icon
-                    class="reliability-alert"
-                  />
-                  <div v-else class="reliability-tag-row">
-                    <el-tag
-                      :type="reliabilityTagType(msg.reliabilityLevel)"
-                      effect="dark"
-                      size="small"
-                    >
-                      可靠性：{{ reliabilityLabel(msg.reliabilityLevel) }}
-                    </el-tag>
-                    <span class="reliability-hint">
-                      {{ reliabilityHint(msg.reliabilityLevel) }}
-                    </span>
-                  </div>
-                </div>
-
-                <div
                   v-if="msg.role === 'agent' && !msg.pending"
                   class="citations-area"
                 >
@@ -546,7 +550,7 @@ onMounted(async () => {
                   >
                     <span
                       v-for="(cit, ci) in msg.citations"
-                      :key="cit.chunk_id"
+                      :key="`${cit.chunk_id}-${ci}`"
                       class="citation-capsule"
                       :title="`相关度 ${confidencePercent(cit.confidence)}%`"
                       @click="openCitationDrawer(cit, msg)"
@@ -700,23 +704,21 @@ onMounted(async () => {
           </div>
           <div class="drawer-section">
             <div class="drawer-label">页码</div>
-            <div class="drawer-value">第 {{ drawerCitation.page_no }} 页</div>
-          </div>
-          <div class="drawer-section">
-            <div class="drawer-label">相关度</div>
             <div class="drawer-value">
-              <span class="confidence-text">
-                相关度 {{ confidencePercent(drawerCitation.confidence) }}%
-              </span>
-              <el-progress
-                :percentage="confidencePercent(drawerCitation.confidence)"
-                :stroke-width="8"
-              />
+              {{ drawerCitation.page_no !== null && drawerCitation.page_no !== undefined ? `第 ${drawerCitation.page_no} 页` : '未标注' }}
             </div>
           </div>
           <div class="drawer-section">
-            <div class="drawer-label">片段内容</div>
-            <div class="drawer-quote">{{ drawerCitation.quote_text }}</div>
+            <div class="drawer-label">原文片段</div>
+            <!-- Phase 2 bugfix P0-2: show full chunk text with quote_text
+                 highlighted. Falls back to quote_text only when the chunk
+                 fetch failed (e.g. cross-user). -->
+            <div
+              v-if="drawerChunk"
+              class="drawer-chunk-text"
+              v-html="renderHighlightedText(drawerChunk.text, drawerCitation.quote_text)"
+            />
+            <div v-else class="drawer-quote">{{ drawerCitation.quote_text }}</div>
           </div>
         </template>
 
@@ -783,13 +785,6 @@ onMounted(async () => {
                   >
                     第 {{ chunk.page_no }} 页
                   </el-tag>
-                  <span class="retrieval-score">评分 {{ chunk.score }}</span>
-                  <el-progress
-                    :percentage="chunkScorePercent(chunk.score)"
-                    :stroke-width="6"
-                    :show-text="false"
-                    class="retrieval-progress"
-                  />
                 </div>
                 <div class="retrieval-snippet">
                   {{ truncate(chunk.snippet, 80) }}
@@ -1308,6 +1303,29 @@ onMounted(async () => {
   max-height: 240px;
   overflow-y: auto;
   word-break: break-word;
+}
+
+/* Phase 2 bugfix P0-2: full chunk context with highlighted quote */
+.drawer-chunk-text {
+  font-size: 13px;
+  color: #303133;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  background: #f5f7fa;
+  padding: 12px;
+  border-radius: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+  word-break: break-word;
+  border-left: 3px solid #dcdfe6;
+}
+
+.drawer-chunk-text :deep(.citation-highlight) {
+  background: #fff3a0;
+  color: #303133;
+  padding: 0 2px;
+  border-radius: 2px;
+  font-weight: 600;
 }
 
 .retrieval-list {

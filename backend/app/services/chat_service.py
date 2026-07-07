@@ -219,7 +219,8 @@ def run_chat_pipeline(
         _log_error(db, current_user.id, conversation_id, "retrieve",
                    provider, model_name, config_id, exc)
         _safe_finish_run(db, run_id, status="failed",
-                         error_message=str(exc), started_at=run_started_at)
+                         error_message=str(exc),
+                         duration_ms=int((time.monotonic() - run_started_at) * 1000))
         yield {
             "event": "step_error",
             "step": "retrieve",
@@ -281,7 +282,8 @@ def run_chat_pipeline(
                 error_message=str(exc),
             )
         _safe_finish_run(db, run_id, status="failed",
-                         error_message=str(exc), started_at=run_started_at)
+                         error_message=str(exc),
+                         duration_ms=int((time.monotonic() - run_started_at) * 1000))
         yield {
             "event": "step_error",
             "step": "generate",
@@ -312,10 +314,21 @@ def run_chat_pipeline(
 
     chunk_map = {c["chunk_id"]: c for c in ranked}
     citations: list[CitationItem] = []
+    # Phase 2 bugfix P1-1: deduplicate citations by chunk_id so the
+    # frontend never receives duplicate keys and the citations table
+    # never holds duplicate chunk_id rows for a single message. The
+    # first occurrence wins (highest confidence is usually first).
+    seen_chunk_ids: set = set()
     for cite in result.get("citations", []):
-        chunk = chunk_map.get(cite.get("chunk_id"))
+        chunk_id = cite.get("chunk_id")
+        if chunk_id is None:
+            continue
+        if chunk_id in seen_chunk_ids:
+            continue
+        chunk = chunk_map.get(chunk_id)
         if chunk is None:
             continue
+        seen_chunk_ids.add(chunk_id)
         page_no = chunk.get("page_no")
         quote_text = cite.get("quote_text", "")
         confidence = cite.get("confidence", 0.0)

@@ -27,11 +27,15 @@ def _get_owned_chunk(
 
     The ownership chain is:
     chunk -> material -> course -> user_id.
+    We join through ``Material.course_id`` (the canonical owner link)
+    rather than ``MaterialChunk.course_id`` so the check follows the
+    real ownership path: a chunk exists only because its material
+    belongs to a course owned by the user.
     """
     row = (
         db.query(MaterialChunk, Material)
         .join(Material, Material.id == MaterialChunk.material_id)
-        .join(Course, Course.id == MaterialChunk.course_id)
+        .join(Course, Course.id == Material.course_id)
         .filter(MaterialChunk.id == chunk_id, Course.user_id == user_id)
         .first()
     )
