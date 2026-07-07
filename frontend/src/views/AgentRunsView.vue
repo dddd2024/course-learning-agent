@@ -70,12 +70,22 @@ interface RetrievedChunk {
   page_no?: number | null
 }
 
+function normalizeChunk(value: unknown): RetrievedChunk {
+  if (typeof value === 'string') return { snippet: value }
+  if (value && typeof value === 'object') return value as RetrievedChunk
+  return { snippet: String(value ?? '') }
+}
+
 function extractChunks(step: AgentStep): RetrievedChunk[] {
   const out = step.output_data
   if (!out) return []
-  if (Array.isArray(out)) return out as RetrievedChunk[]
-  if (typeof out === 'object' && Array.isArray((out as Record<string, unknown>).chunks)) {
-    return (out as Record<string, unknown>).chunks as RetrievedChunk[]
+  if (Array.isArray(out)) return out.map(normalizeChunk)
+  if (typeof out === 'object') {
+    const obj = out as Record<string, unknown>
+    // T0-1: 真实 chat retrieve step 写入 { total, items } 结构，
+    // 旧 seed 写入 { chunks } 结构，两种都要支持。
+    if (Array.isArray(obj.items)) return obj.items.map(normalizeChunk)
+    if (Array.isArray(obj.chunks)) return obj.chunks.map(normalizeChunk)
   }
   return []
 }
