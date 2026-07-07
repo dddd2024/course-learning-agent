@@ -6,6 +6,11 @@ every table for ``init_db`` / Alembic.
 from app.models.audit import AgentRun, AgentStep
 from app.models.base import Base, TimestampMixin
 from app.models.citation import Citation
+from app.models.concept_graph import (
+    ConceptCompareReport,
+    ConceptEdge,
+    ConceptNode,
+)
 from app.models.conversation import Conversation, Message
 from app.models.course import Course
 from app.models.error_log import AgentErrorLog
@@ -25,6 +30,9 @@ __all__ = [
     "AgentStep",
     "AgentErrorLog",
     "Citation",
+    "ConceptCompareReport",
+    "ConceptEdge",
+    "ConceptNode",
     "Conversation",
     "Message",
     "Course",

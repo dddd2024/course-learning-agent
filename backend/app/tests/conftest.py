@@ -49,6 +49,57 @@ def client() -> Iterator[TestClient]:
     Base.metadata.drop_all(bind=test_engine)
 
 
+@pytest.fixture()
+def db_session():
+    """SQLAlchemy session for direct model/service tests (no HTTP layer).
+
+    Separate from the ``client`` fixture: creates a fresh in-memory SQLite
+    database, yields a session, then drops all tables. Used by model and
+    service tests that need ORM access without going through the API.
+    """
+    test_engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestSessionLocal = sessionmaker(
+        autocommit=False, autoflush=False, bind=test_engine
+    )
+    Base.metadata.create_all(bind=test_engine)
+    session = TestSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+        Base.metadata.drop_all(bind=test_engine)
+
+
+@pytest.fixture()
+def sample_user(db_session):
+    """A User row for model/service tests."""
+    from app.models import User
+
+    user = User(
+        username="alice",
+        email="alice@test.com",
+        password_hash="x",
+    )
+    db_session.add(user)
+    db_session.commit()
+    return user
+
+
+@pytest.fixture()
+def sample_course(db_session, sample_user):
+    """A Course row owned by ``sample_user``."""
+    from app.models import Course
+
+    course = Course(name="操作系统", user_id=sample_user.id)
+    db_session.add(course)
+    db_session.commit()
+    return course
+
+
 def auth_headers(
     client: TestClient,
     username: str = "alice",
