@@ -301,3 +301,15 @@ cd .. && bash ./scripts/verify_phase2_engineering.sh
 frontend build、acceptance script，并上传
 `backend-test-result.txt`、`frontend-build-result.txt`、
 `acceptance-result.txt` 三类 artifact，可在 Actions 页面下载。
+
+## 演示数据
+
+一键导入演示数据（demo 用户、操作系统/数据库课程、示例资料与 chunks）：
+
+```bash
+cd backend
+python -m app.core.database        # 初始化表（如已有可跳过）
+python ../scripts/seed_demo_data.py
+```
+
+启动后端后用 `demo / demo123` 登录即可看到预置课程和示例资料。
