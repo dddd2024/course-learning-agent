@@ -64,6 +64,25 @@ Write-Step 'CI workflow_dispatch trigger check'
 $ci = Get-Content "$root\.github\workflows\ci.yml" -Raw
 if ($ci -match 'workflow_dispatch') { Write-Ok 'CI workflow_dispatch present' } else { Write-Bad 'CI workflow_dispatch missing' }
 
+# 7. T09: production hardening checks
+Write-Step 'Production hardening check'
+$mainPy = Get-Content "$root\backend\app\main.py" -Raw
+$configPy = Get-Content "$root\backend\app\core\config.py" -Raw
+
+# main.py must NOT hardcode allow_origins=["*"]
+if ($mainPy -match 'allow_origins=\["\*"\]') {
+  Write-Bad 'main.py still hardcodes allow_origins=["*"]'
+} else {
+  Write-Ok 'main.py uses config-driven CORS origins'
+}
+
+# config.py must define ENVIRONMENT, CORS_ORIGINS, validate_prod_secrets
+if ($configPy -match 'ENVIRONMENT' -and $configPy -match 'CORS_ORIGINS' -and $configPy -match 'def validate_prod_secrets') {
+  Write-Ok 'config.py defines ENVIRONMENT/CORS_ORIGINS/validate_prod_secrets'
+} else {
+  Write-Bad 'config.py missing ENVIRONMENT/CORS_ORIGINS/validate_prod_secrets'
+}
+
 Write-Host ''
 if ($failed) {
   Write-Host 'ACCEPTANCE FAILED' -ForegroundColor Red
