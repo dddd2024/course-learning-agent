@@ -137,7 +137,10 @@ def schedule_multi_courses(
     for c in courses:
         course_id = int(c["course_id"])
         deadline: date = c["deadline"]
-        user_priority = float(c.get("user_priority") or 0.5)
+        # T0-2: 显式 user_priority=0.0 不应被默认值 0.5 覆盖。
+        # 用 `is None` 判断，而不是 `or`（0.0 是 falsy 会被 `or` 覆盖）。
+        raw_priority = c.get("user_priority")
+        user_priority = float(raw_priority) if raw_priority is not None else 0.5
         course_name = course_name_by_id.get(course_id, "")
 
         plan_output = planner_generate(

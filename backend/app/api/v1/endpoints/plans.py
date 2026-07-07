@@ -399,16 +399,13 @@ def create_multi_plan(
 
     # Build the input list for the scheduler with course_id + deadline
     # (and optional user_priority) for each requested course.
-    # T01: 旧前端可能发送 priority（1-5），这里统一归一化为 0-1。
+    # T0-1: 旧字段 priority（1-5）的归一化已在 schema 层的
+    # ``_normalize_priority_input`` 完成，这里直接透传。
     courses_input = [
         {
             "course_id": c.course_id,
             "deadline": c.deadline,
-            "user_priority": (
-                c.user_priority / 5.0
-                if c.user_priority is not None and c.user_priority > 1
-                else c.user_priority
-            ),
+            "user_priority": c.user_priority,
         }
         for c in payload.courses
     ]

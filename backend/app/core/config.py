@@ -64,7 +64,8 @@ class Settings(BaseSettings):
         same-origin policy in production). In development this is a
         no-op so the platform runs out-of-the-box without configuration.
         """
-        if self.ENVIRONMENT != "production":
+        # T0-3: ENVIRONMENT 判断大小写不敏感，Production/PRODUCTION 均触发。
+        if self.ENVIRONMENT.lower() != "production":
             return
         if self.JWT_SECRET_KEY in (_DEFAULT_JWT_SECRET, ""):
             raise ValueError(

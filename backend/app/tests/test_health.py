@@ -90,3 +90,29 @@ def test_prod_rejects_empty_cors() -> None:
     )
     with pytest.raises(ValueError, match="CORS_ORIGINS"):
         s.validate_prod_secrets()
+
+
+def test_prod_rejects_default_jwt_secret_case_insensitive() -> None:
+    """T0-3: ENVIRONMENT="Production"（首字母大写）也应触发生产校验。"""
+    from app.core.config import Settings
+
+    s = Settings(
+        ENVIRONMENT="Production",
+        JWT_SECRET_KEY="change_me",
+        LLM_CONFIG_SECRET_KEY="a-valid-fernet-key",
+    )
+    with pytest.raises(ValueError, match="JWT_SECRET_KEY"):
+        s.validate_prod_secrets()
+
+
+def test_prod_rejects_default_jwt_secret_uppercase() -> None:
+    """T0-3: ENVIRONMENT="PRODUCTION"（全大写）也应触发生产校验。"""
+    from app.core.config import Settings
+
+    s = Settings(
+        ENVIRONMENT="PRODUCTION",
+        JWT_SECRET_KEY="change_me",
+        LLM_CONFIG_SECRET_KEY="a-valid-fernet-key",
+    )
+    with pytest.raises(ValueError, match="JWT_SECRET_KEY"):
+        s.validate_prod_secrets()

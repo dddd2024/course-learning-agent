@@ -303,14 +303,20 @@ def test_weak_point_weight_computation(client) -> None:
 
 
 def test_multi_plan_accepts_legacy_priority_field() -> None:
-    """T01: 旧前端发送 priority（1-5）应被 schema 兼容并映射到 user_priority。"""
+    """T01/T0-1: 旧前端发送 priority（1-5）应被 schema 归一化为 0-1。"""
     from app.schemas.multi_plan import MultiCourseInput
 
-    # 旧字段 priority=4 应被接受（范围 0-5）并映射到 user_priority
+    # 旧字段 priority=4（1-5）应归一化为 0.8
     item = MultiCourseInput.model_validate(
         {"course_id": 1, "deadline": "2099-01-01", "priority": 4}
     )
-    assert item.user_priority == 4
+    assert item.user_priority == 0.8
+
+    # 旧字段 priority=1（最低）应归一化为 0.2，不是 1.0
+    item_low = MultiCourseInput.model_validate(
+        {"course_id": 1, "deadline": "2099-01-01", "priority": 1}
+    )
+    assert item_low.user_priority == 0.2
 
     # 新字段 user_priority=0.8 仍然直接生效
     item2 = MultiCourseInput.model_validate(
@@ -326,7 +332,7 @@ def test_multi_plan_accepts_legacy_priority_field() -> None:
 
 
 def test_multi_plan_normalizes_priority_in_api(client, monkeypatch) -> None:
-    """T01: API 层应把 priority=4（1-5）归一化为 user_priority=0.8 并传入 scheduler。"""
+    """T01: priority=4（1-5）经 schema 归一化为 0.8 后传入 scheduler。"""
     from app.api.v1.endpoints import plans as plans_module
 
     captured: dict = {}
@@ -354,6 +360,91 @@ def test_multi_plan_normalizes_priority_in_api(client, monkeypatch) -> None:
     assert resp.status_code == 200, resp.text
     # priority=4 应被归一化为 0.8
     assert captured["courses"][0]["user_priority"] == 0.8
+
+
+def test_priority_1_normalizes_to_02(client, monkeypatch) -> None:
+    """T0-1: 旧字段 priority=1 应归一化为 0.2，不是 1.0。"""
+    from app.api.v1.endpoints import plans as plans_module
+
+    captured: dict = {}
+
+    def fake_schedule(db, user_id, courses, daily_minutes, user_config=None):
+        captured["courses"] = courses
+        return {"schedule": [], "overflow_warnings": []}
+
+    monkeypatch.setattr(plans_module, "schedule_multi_courses", fake_schedule)
+
+    headers = auth_headers(client, username="alice")
+    course_id = create_course(client, headers, name="边界课程")
+    resp = client.post(
+        "/api/v1/plans/multi",
+        json={
+            "courses": [
+                {"course_id": course_id, "deadline": "2099-01-01", "priority": 1}
+            ],
+            "daily_minutes": 120,
+            "constraints": {},
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    # priority=1（1-5 旧字段）应归一化为 0.2
+    assert captured["courses"][0]["user_priority"] == 0.2
+
+
+def test_user_priority_zero_not_overridden_in_scheduler(monkeypatch) -> None:
+    """T0-2: scheduler 内部 user_priority=0.0 不应被 or 0.5 覆盖。"""
+    from datetime import date
+
+    from app.services import multi_scheduler
+
+    captured_priorities: list = []
+
+    def fake_planner_generate(
+        db, user_id, goal, courses, deadline, daily_minutes, user_config=None
+    ):
+        return {"tasks": []}
+
+    monkeypatch.setattr(multi_scheduler, "planner_generate", fake_planner_generate)
+
+    class _DummyDb:
+        def query(self, *a, **k):
+            class _Q:
+                def filter(self, *a, **k):
+                    return self
+
+                def all(self):
+                    return []
+
+                def scalar(self):
+                    return 0
+
+            return _Q()
+
+    original_compute = multi_scheduler.compute_priority_score
+
+    def spy_compute(
+        deadline_urgency, workload_weight, weak_point_weight, user_priority
+    ):
+        captured_priorities.append(user_priority)
+        return original_compute(
+            deadline_urgency, workload_weight, weak_point_weight, user_priority
+        )
+
+    monkeypatch.setattr(multi_scheduler, "compute_priority_score", spy_compute)
+
+    multi_scheduler.schedule_multi_courses(
+        db=_DummyDb(),
+        user_id=1,
+        courses=[
+            {"course_id": 1, "deadline": date(2099, 1, 1), "user_priority": 0.0}
+        ],
+        daily_minutes=120,
+    )
+
+    assert 0.0 in captured_priorities, (
+        "user_priority=0.0 应被保留，不应被 0.5 覆盖"
+    )
 
 
 # T02: 多课程规划应透传用户 LLM 配置
