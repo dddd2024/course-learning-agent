@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Emergent Curriculum — Generative Art</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --panel: #f7f5f2;
+    --panel-border: #e6e2dc;
+    --ink: #2b2b2b;
+    --ink-soft: #5a5a5a;
+    --accent: #c96442;
+    --accent-soft: #e8d5c4;
+    --line: #d9d4cc;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    font-family: 'Poppins', 'Helvetica Neue', Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    overflow: hidden;
+  }
+  .app {
+    display: flex;
+    width: 100vw; height: 100vh;
+  }
+  /* Sidebar */
+  .sidebar {
+    width: 320px; min-width: 320px;
+    background: var(--panel);
+    border-right: 1px solid var(--panel-border);
+    display: flex; flex-direction: column;
+    overflow-y: auto;
+    font-family: 'Lora', Georgia, serif;
+  }
+  .sidebar header {
+    padding: 22px 24px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .sidebar header .brand {
+    font-family: 'Poppins', sans-serif;
+    font-weight: 600; font-size: 13px;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--accent);
+  }
+  .sidebar header h1 {
+    margin: 6px 0 0; font-size: 20px; font-weight: 600;
+    font-family: 'Lora', serif; color: var(--ink); line-height: 1.2;
+  }
+  .sidebar header p {
+    margin: 6px 0 0; font-size: 12px; color: var(--ink-soft); line-height: 1.5;
+  }
+  .section {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--line);
+  }
+  .section h2 {
+    margin: 0 0 12px; font-size: 11px; font-weight: 600;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--ink-soft);
+    font-family: 'Poppins', sans-serif;
+  }
+  /* Seed controls */
+  .seed-row {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  }
+  .seed-display {
+    flex: 1; font-family: 'Poppins', monospace; font-weight: 600;
+    font-size: 22px; color: var(--ink);
+    background: #fff; border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 12px; text-align: center;
+  }
+  .btn {
+    background: #fff; border: 1px solid var(--line);
+    border-radius: 6px; padding: 7px 10px;
+    font-size: 12px; color: var(--ink); cursor: pointer;
+    font-family: 'Poppins', sans-serif;
+    transition: all 0.15s ease;
+  }
+  .btn:hover { background: var(--accent-soft); border-color: var(--accent); }
+  .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn-primary:hover { background: #b05536; }
+  .btn-row { display: flex; gap: 6px; }
+  .btn-row .btn { flex: 1; }
+  .jump-row { display: flex; gap: 6px; margin-top: 8px; }
+  .jump-row input {
+    flex: 1; padding: 6px 10px; border: 1px solid var(--line);
+    border-radius: 6px; font-size: 13px; font-family: monospace;
+  }
+  /* Parameter controls */
+  .control-group { margin-bottom: 14px; }
+  .control-group label {
+    display: block; font-size: 12px; color: var(--ink-soft);
+    margin-bottom: 4px; font-family: 'Poppins', sans-serif;
+  }
+  .control-group input[type="range"] {
+    width: 100%; -webkit-appearance: none; appearance: none;
+    height: 4px; background: var(--line); border-radius: 2px; outline: none;
+  }
+  .control-group input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--accent); cursor: pointer; border: 2px solid #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+  .control-group input[type="range"]::-moz-range-thumb {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); cursor: pointer; border: 2px solid #fff;
+  }
+  .value-display {
+    float: right; font-family: monospace; font-size: 11px; color: var(--accent);
+    font-weight: 600;
+  }
+  /* Actions */
+  .actions { display: flex; flex-direction: column; gap: 8px; }
+  .actions .btn { width: 100%; text-align: center; padding: 10px; }
+  .note {
+    font-size: 11px; color: var(--ink-soft); line-height: 1.5;
+    font-style: italic; margin-top: 8px;
+  }
+  /* Canvas area */
+  .canvas-wrap {
+    flex: 1; position: relative; background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #canvas-container { line-height: 0; }
+  canvas { display: block; }
+  .badge {
+    position: absolute; bottom: 16px; right: 16px;
+    background: rgba(26,26,46,0.7); color: #d8d8e8;
+    font-family: 'Poppins', sans-serif; font-size: 11px;
+    padding: 6px 12px; border-radius: 4px; letter-spacing: 0.05em;
+    pointer-events: none;
+  }
+</style>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&family=Lora:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <header>
+      <div class="brand">Generative Series</div>
+      <h1>Emergent Curriculum</h1>
+      <p>Knowledge as a living field — particles drift through layered noise, resonating into transient networks of connection.</p>
+    </header>
+
+    <div class="section">
+      <h2>Seed</h2>
+      <div class="seed-row">
+        <div class="seed-display" id="seed-display">12345</div>
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="prev-seed">◀ Prev</button>
+        <button class="btn" id="next-seed">Next ▶</button>
+      </div>
+      <div class="btn-row" style="margin-top:6px;">
+        <button class="btn" id="random-seed">Random</button>
+      </div>
+      <div class="jump-row">
+        <input type="number" id="seed-input" placeholder="Jump to seed…" />
+        <button class="btn" id="jump-seed">Go</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Parameters</h2>
+      <div class="control-group">
+        <label>Particle Count <span class="value-display" id="count-value">320</span></label>
+        <input type="range" id="count" min="80" max="800" step="20" value="320" oninput="updateParam('count', this.value)" />
+      </div>
+      <div class="control-group">
+        <label>Noise Scale <span class="value-display" id="noiseScale-value">0.0028</span></label>
+        <input type="range" id="noiseScale" min="0.0008" max="0.008" step="0.0002" value="0.0028" oninput="updateParam('noiseScale', this.value)" />
+      </div>
+      <div class="control-group">
+        <label>Flow Speed <span class="value-display" id="speed-value">1.20</span></label>
+        <input type="range" id="speed" min="0.2" max="3.0" step="0.05" value="1.20" oninput="updateParam('speed', this.value)" />
+      </div>
+      <div class="control-group">
+        <label>Coupling Radius <span class="value-display" id="radius-value">58</span></label>
+        <input type="range" id="radius" min="20" max="140" step="2" value="58" oninput="updateParam('radius', this.value)" />
+      </div>
+      <div class="control-group">
+        <label>Fade Rate <span class="value-display" id="fade-value">0.060</span></label>
+        <input type="range" id="fade" min="0.01" max="0.20" step="0.005" value="0.060" oninput="updateParam('fade', this.value)" />
+      </div>
+      <div class="control-group">
+        <label>Field Drift <span class="value-display" id="drift-value">0.00040</span></label>
+        <input type="range" id="drift" min="0" max="0.002" step="0.0001" value="0.0004" oninput="updateParam('drift', this.value)" />
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Actions</h2>
+      <div class="actions">
+        <button class="btn btn-primary" id="regenerate">Regenerate</button>
+        <button class="btn" id="reset">Reset Defaults</button>
+        <button class="btn" id="download">Download PNG</button>
+      </div>
+      <p class="note">Each seed produces a unique landscape of resonant connections — a different possible state of understanding.</p>
+    </div>
+  </aside>
+
+  <main class="canvas-wrap">
+    <div id="canvas-container"></div>
+    <div class="badge">p5.js · Emergent Curriculum</div>
+  </main>
+</div>
+
+<script>
+// ============================================================
+// EMERGENT CURRICULUM — Generative Algorithm
+// Philosophy: knowledge as particles flowing through layered noise,
+// resonating into transient networks via phase interference.
+// ============================================================
+
+let params = {
+  seed: 12345,
+  count: 320,
+  noiseScale: 0.0028,
+  speed: 1.20,
+  radius: 58,
+  fade: 0.060,
+  drift: 0.0004
+};
+
+const defaults = { ...params };
+let particles = [];
+let t = 0;           // slow time for noise field drift
+let W = 900, H = 900;
+
+// ---- Particle class ----
+class Particle {
+  constructor() {
+    this.x = random(W);
+    this.y = random(H);
+    this.px = this.x;
+    this.py = this.y;
+    this.phase = random(TWO_PI);
+    this.phaseSpeed = random(0.008, 0.022) * (random() < 0.5 ? -1 : 1);
+    this.brightness = 0;
+    this.vx = 0;
+    this.vy = 0;
+  }
+
+  step() {
+    // Sample layered noise field (3 octaves) to derive a flow angle
+    const ns = params.noiseScale;
+    const nx = this.x * ns;
+    const ny = this.y * ns;
+    const tt = t;
+    // Layered octaves: low freq base + mid + high detail
+    const a1 = noise(nx, ny, tt) * TWO_PI * 2;
+    const a2 = noise(nx * 2.3 + 100, ny * 2.3 + 100, tt + 50) * TWO_PI * 2;
+    const a3 = noise(nx * 4.7 + 200, ny * 4.7 + 200, tt + 120) * TWO_PI;
+    // Weighted superposition
+    let angle = (a1 * 0.6 + a2 * 0.3 + a3 * 0.1);
+
+    const force = params.speed;
+    this.vx = cos(angle) * force;
+    this.vy = sin(angle) * force;
+
+    this.px = this.x;
+    this.py = this.y;
+    this.x += this.vx;
+    this.y += this.vy;
+
+    // Wrap edges (toroidal field)
+    if (this.x < 0) { this.x = W; this.px = this.x; }
+    if (this.x > W) { this.x = 0; this.px = this.x; }
+    if (this.y < 0) { this.y = H; this.py = this.y; }
+    if (this.y > H) { this.y = 0; this.py = this.y; }
+
+    // Phase evolution (sinusoidal)
+    this.phase += this.phaseSpeed;
+    // Velocity magnitude drives brightness
+    const v = sqrt(this.vx * this.vx + this.vy * this.vy);
+    this.brightness = constrain(v / (params.speed * 1.2), 0, 1);
+  }
+}
+
+// ---- Setup ----
+function setup() {
+  const wrap = document.querySelector('.canvas-wrap');
+  const size = Math.min(wrap.clientWidth - 40, wrap.clientHeight - 40, 960);
+  W = size; H = size;
+  const c = createCanvas(W, H);
+  c.parent('canvas-container');
+  pixelDensity(Math.min(2, window.devicePixelRatio || 1));
+  initParticles();
+  background(26, 26, 46);
+}
+
+function initParticles() {
+  randomSeed(params.seed);
+  noiseSeed(params.seed);
+  particles = [];
+  for (let i = 0; i < params.count; i++) {
+    particles.push(new Particle());
+  }
+  t = 0;
+  // Clear canvas to base color
+  background(26, 26, 46);
+}
+
+// ---- Draw loop ----
+function draw() {
+  // Fade canvas slightly to create ghost trails
+  noStroke();
+  fill(26, 26, 46, params.fade * 255);
+  rect(0, 0, W, H);
+
+  // Advance slow time for field drift
+  t += params.drift;
+
+  // Update particles
+  for (const p of particles) p.step();
+
+  // Draw connecting filaments (resonance network)
+  const r = params.radius;
+  const r2 = r * r;
+  // Spatial grid for performance
+  const cell = r;
+  const cols = Math.ceil(W / cell) + 1;
+  const rows = Math.ceil(H / cell) + 1;
+  const grid = new Array(cols * rows);
+  for (let i = 0; i < grid.length; i++) grid[i] = null;
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    const cx = constrain(Math.floor(p.x / cell), 0, cols - 1);
+    const cy = constrain(Math.floor(p.y / cell), 0, rows - 1);
+    const idx = cy * cols + cx;
+    if (!grid[idx]) grid[idx] = [];
+    grid[idx].push(i);
+  }
+
+  strokeWeight(0.6);
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    const cx = constrain(Math.floor(p.x / cell), 0, cols - 1);
+    const cy = constrain(Math.floor(p.y / cell), 0, rows - 1);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const nx = cx + dx, ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+        const cellArr = grid[ny * cols + nx];
+        if (!cellArr) continue;
+        for (const j of cellArr) {
+          if (j <= i) continue;
+          const q = particles[j];
+          const ddx = p.x - q.x;
+          const ddy = p.y - q.y;
+          const d2 = ddx * ddx + ddy * ddy;
+          if (d2 < r2 && d2 > 1) {
+            const d = Math.sqrt(d2);
+            // Phase interference: constructive when phases align
+            const phaseDiff = Math.abs(Math.sin((p.phase + q.phase) * 0.5));
+            const resonance = Math.max(0, Math.cos(p.phase - q.phase));
+            const alpha = resonance * (1 - d / r) * 0.45;
+            if (alpha > 0.02) {
+              // Blend hues: warm if both bright, cool if dim
+              const avgBright = (p.brightness + q.brightness) * 0.5;
+              let hue;
+              if (avgBright > 0.85 && resonance > 0.92) {
+                // Rare cyan for near-perfect constructive interference
+                hue = [120, 200, 220];
+              } else if (avgBright > 0.6) {
+                hue = [230, 170, 110]; // amber
+              } else if (avgBright > 0.35) {
+                hue = [210, 140, 150]; // rose
+              } else {
+                hue = [90, 110, 160]; // indigo
+              }
+              stroke(hue[0], hue[1], hue[2], alpha * 255);
+              line(p.x, p.y, q.x, q.y);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Draw particles
+  noStroke();
+  for (const p of particles) {
+    const b = p.brightness;
+    let r1, g1, b1;
+    if (b > 0.85) {
+      r1 = 240; g1 = 210; b1 = 140; // bright amber-white
+    } else if (b > 0.55) {
+      r1 = 220; g1 = 160; b1 = 110; // amber
+    } else if (b > 0.3) {
+      r1 = 180; g1 = 130; b1 = 150; // rose
+    } else {
+      r1 = 110; g1 = 130; b1 = 180; // indigo
+    }
+    fill(r1, g1, b1, 180 + b * 60);
+    const sz = 1.2 + b * 2.0;
+    ellipse(p.x, p.y, sz, sz);
+  }
+}
+
+// ---- UI Handlers ----
+function updateParam(name, val) {
+  params[name] = parseFloat(val);
+  const disp = document.getElementById(name + '-value');
+  if (disp) {
+    if (name === 'noiseScale' || name === 'drift' || name === 'fade') {
+      disp.textContent = parseFloat(val).toFixed(name === 'fade' ? 3 : (name === 'drift' ? 5 : 4));
+    } else {
+      disp.textContent = val;
+    }
+  }
+  if (name === 'count') initParticles();
+}
+
+function setSeed(s) {
+  params.seed = s;
+  document.getElementById('seed-display').textContent = s;
+  document.getElementById('seed-input').value = '';
+  initParticles();
+}
+
+document.getElementById('prev-seed').addEventListener('click', () => setSeed(params.seed - 1));
+document.getElementById('next-seed').addEventListener('click', () => setSeed(params.seed + 1));
+document.getElementById('random-seed').addEventListener('click', () => setSeed(Math.floor(Math.random() * 1000000)));
+document.getElementById('jump-seed').addEventListener('click', () => {
+  const v = parseInt(document.getElementById('seed-input').value, 10);
+  if (!isNaN(v)) setSeed(v);
+});
+document.getElementById('seed-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const v = parseInt(document.getElementById('seed-input').value, 10);
+    if (!isNaN(v)) setSeed(v);
+  }
+});
+document.getElementById('regenerate').addEventListener('click', () => initParticles());
+document.getElementById('reset').addEventListener('click', () => {
+  Object.assign(params, defaults);
+  document.getElementById('count').value = defaults.count;
+  document.getElementById('noiseScale').value = defaults.noiseScale;
+  document.getElementById('speed').value = defaults.speed;
+  document.getElementById('radius').value = defaults.radius;
+  document.getElementById('fade').value = defaults.fade;
+  document.getElementById('drift').value = defaults.drift;
+  document.getElementById('count-value').textContent = defaults.count;
+  document.getElementById('noiseScale-value').textContent = defaults.noiseScale.toFixed(4);
+  document.getElementById('speed-value').textContent = defaults.speed.toFixed(2);
+  document.getElementById('radius-value').textContent = defaults.radius;
+  document.getElementById('fade-value').textContent = defaults.fade.toFixed(3);
+  document.getElementById('drift-value').textContent = defaults.drift.toFixed(5);
+  setSeed(defaults.seed);
+});
+document.getElementById('download').addEventListener('click', () => {
+  saveCanvas('emergent-curriculum-seed-' + params.seed, 'png');
+});
+
+// Handle window resize
+window.addEventListener('resize', () => {
+  const wrap = document.querySelector('.canvas-wrap');
+  const size = Math.min(wrap.clientWidth - 40, wrap.clientHeight - 40, 960);
+  if (Math.abs(size - W) > 20) {
+    W = size; H = size;
+    resizeCanvas(W, H);
+    background(26, 26, 46);
+  }
+});
+</script>
+</body>
+</html>

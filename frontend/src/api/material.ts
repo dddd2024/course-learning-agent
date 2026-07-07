@@ -107,6 +107,24 @@ export function getChunks(
   return request.get(`/materials/${materialId}/chunks`, { params })
 }
 
+// Phase 2 Task C/D: material overview (chunk stats + security findings).
+export interface MaterialOverview {
+  material_id: number
+  status: MaterialStatus
+  chunk_count: number
+  page_range: number[] | null
+  section_count: number
+  keywords: string[]
+  warnings: string[]
+  security_findings_count: number
+}
+
+export function getMaterialOverview(
+  materialId: number,
+): AxiosPromise<MaterialOverview> {
+  return request.get(`/materials/${materialId}/overview`)
+}
+
 export function search(params: SearchParams): AxiosPromise<SearchResult> {
   return request.get('/search', { params })
 }

@@ -86,20 +86,37 @@ def parse_material(
             MaterialChunk.material_id == material_id
         ).delete(synchronize_session=False)
 
+        # Also clear previous security findings (idempotent re-parse).
+        from app.models.security_finding import MaterialSecurityFinding
+
+        db.query(MaterialSecurityFinding).filter(
+            MaterialSecurityFinding.material_id == material_id
+        ).delete(synchronize_session=False)
+
+        saved_chunks: list[MaterialChunk] = []
         for chunk in chunks:
             text = chunk["text"]
-            db.add(
-                MaterialChunk(
-                    material_id=material_id,
-                    course_id=material.course_id,
-                    chunk_index=chunk["chunk_index"],
-                    title=chunk.get("title"),
-                    page_no=chunk.get("page_no"),
-                    text=text,
-                    token_count=len(text),
-                    keyword_text=clean_keyword_text(text),
-                )
+            mc = MaterialChunk(
+                material_id=material_id,
+                course_id=material.course_id,
+                chunk_index=chunk["chunk_index"],
+                title=chunk.get("title"),
+                page_no=chunk.get("page_no"),
+                text=text,
+                token_count=len(text),
+                keyword_text=clean_keyword_text(text),
             )
+            db.add(mc)
+            saved_chunks.append(mc)
+
+        db.flush()  # populate chunk ids for the scanner
+
+        # Phase 2 Task D: scan chunks for prompt-injection patterns.
+        from app.services.security_scanner import scan_material_chunks
+
+        findings = scan_material_chunks(saved_chunks)
+        for f in findings:
+            db.add(f)
 
         material.status = "ready"
         material.error_message = None

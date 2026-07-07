@@ -3,8 +3,12 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   ChatDotRound,
+  CircleCheck,
+  CircleClose,
   Document,
   Loading,
   Plus,
@@ -17,7 +21,9 @@ import {
   getCitations,
   listConversations,
   sendMessage,
+  sendMessageStream,
   type ChatResult,
+  type ChatStreamEvent,
   type Citation,
   type Conversation,
   type RetrievedChunk,
@@ -35,6 +41,14 @@ interface ChatMessage {
   reliabilityLevel?: ReliabilityLevel
   retrievedChunks?: RetrievedChunk[]
   pending?: boolean
+}
+
+// Phase 2 Task B: a single step in the SSE progress timeline.
+interface StreamStep {
+  step: string
+  status: 'running' | 'done' | 'error'
+  message: string
+  advice?: string
 }
 
 const route = useRoute()
@@ -56,12 +70,19 @@ const sending = ref(false)
 
 const messageListRef = ref<HTMLElement | null>(null)
 
-const expandedCitationKeys = ref<Set<string>>(new Set())
-
 const drawerVisible = ref(false)
 const drawerCitation = ref<Citation | null>(null)
 const drawerMessage = ref<ChatMessage | null>(null)
 const drawerLoading = ref(false)
+
+// Phase 2 Task B: SSE status-panel state.
+// - streamSteps: ordered list of steps for the in-flight request.
+// - streamError: when set, the panel expands to show advice.
+// - statusExpanded: manual collapse control (auto-expands on send/error).
+const streamSteps = ref<StreamStep[]>([])
+const streamError = ref<string | null>(null)
+const streamAdvice = ref<string | null>(null)
+const statusExpanded = ref(false)
 
 function confidencePercent(confidence: number): number {
   if (confidence > 1) return Math.min(100, Math.round(confidence))
@@ -119,26 +140,70 @@ function chunkScorePercent(score: number): number {
   return Math.min(100, Math.round(score * 100))
 }
 
-function citationKey(messageId: number | undefined, chunkId: number): string {
-  return `${messageId ?? 'tmp'}-${chunkId}`
+// Phase 2 Task A: build the capsule label. Prefer the backend-assembled
+// ``display_label``; fall back to client-side assembly for older data.
+function capsuleLabel(cit: Citation): string {
+  if (cit.display_label) return cit.display_label
+  if (cit.page_no !== null && cit.page_no !== undefined) {
+    return `${cit.material_name} · 第 ${cit.page_no} 页`
+  }
+  return cit.material_name || `片段 ${cit.chunk_id}`
 }
 
-function isCitationExpanded(
-  messageId: number | undefined,
-  chunkId: number,
-): boolean {
-  return expandedCitationKeys.value.has(citationKey(messageId, chunkId))
+// Phase 2 Task B: human-readable label for an SSE step name.
+function stepLabel(step: string | undefined): string {
+  switch (step) {
+    case 'retrieve':
+      return '检索资料'
+    case 'generate':
+      return '生成回答'
+    case 'citation':
+      return '整理引用'
+    default:
+      return step || '处理中'
+  }
 }
 
-function toggleCitationExpand(
-  messageId: number | undefined,
-  chunkId: number,
-): void {
-  const key = citationKey(messageId, chunkId)
-  if (expandedCitationKeys.value.has(key)) {
-    expandedCitationKeys.value.delete(key)
-  } else {
-    expandedCitationKeys.value.add(key)
+function resetStreamState() {
+  streamSteps.value = []
+  streamError.value = null
+  streamAdvice.value = null
+}
+
+function handleStreamEvent(evt: ChatStreamEvent) {
+  if (evt.event === 'step_started' && evt.step) {
+    const existing = streamSteps.value.find((s) => s.step === evt.step)
+    if (existing) {
+      existing.status = 'running'
+      existing.message = evt.message || existing.message
+    } else {
+      streamSteps.value.push({
+        step: evt.step,
+        status: 'running',
+        message: evt.message || stepLabel(evt.step),
+      })
+    }
+  } else if (evt.event === 'step_done' && evt.step) {
+    const existing = streamSteps.value.find((s) => s.step === evt.step)
+    if (existing) {
+      existing.status = 'done'
+      if (evt.message) existing.message = evt.message
+    }
+  } else if (evt.event === 'step_error') {
+    const existing = streamSteps.value.find((s) => s.step === evt.step)
+    if (existing) {
+      existing.status = 'error'
+      if (evt.message) existing.message = evt.message
+    } else if (evt.step) {
+      streamSteps.value.push({
+        step: evt.step,
+        status: 'error',
+        message: evt.message || stepLabel(evt.step),
+      })
+    }
+    streamError.value = evt.message || '处理失败'
+    streamAdvice.value = evt.advice || null
+    statusExpanded.value = true
   }
 }
 
@@ -201,6 +266,8 @@ async function selectConversation(conv: Conversation) {
   if (activeConversationId.value === conv.id) return
   activeConversationId.value = conv.id
   messages.value = []
+  resetStreamState()
+  statusExpanded.value = false
   await nextTick()
   scrollToBottom()
 }
@@ -226,16 +293,41 @@ async function handleSend() {
       pending: true,
     }) - 1
   sending.value = true
+
+  // Phase 2 Task B: expand the status panel and reset step state.
+  resetStreamState()
+  statusExpanded.value = true
   await nextTick()
   scrollToBottom()
 
+  const payload = {
+    course_id: courseId.value,
+    conversation_id: activeConversationId.value,
+    question,
+  }
+
   try {
-    const { data } = await sendMessage({
-      course_id: courseId.value,
-      conversation_id: activeConversationId.value,
-      question,
-    })
-    applyChatResult(pendingIndex, data)
+    // Prefer SSE streaming for live progress; fall back to the sync
+    // POST /chat endpoint if the stream connection itself fails.
+    let result: ChatResult | null = null
+    try {
+      result = await sendMessageStream(payload, handleStreamEvent)
+    } catch (streamErr) {
+      // Network / fetch error before any event arrived → fallback.
+      const { data } = await sendMessage(payload)
+      result = data
+    }
+    if (result) {
+      applyChatResult(pendingIndex, result)
+      // Collapse the panel on success unless an error was signalled.
+      if (!streamError.value) {
+        statusExpanded.value = false
+      }
+    } else if (streamError.value) {
+      // A step_error ended the stream with no final result.
+      messages.value.splice(pendingIndex, 1)
+      ElMessage.error(streamError.value)
+    }
   } catch (err) {
     messages.value.splice(pendingIndex, 1)
     ElMessage.error(parseApiError(err, '发送问题失败'))
@@ -295,6 +387,17 @@ const drawerTitle = computed(() => {
   if (drawerCitation.value) return '引用详情'
   return '检索过程'
 })
+
+// Phase 2 Task B: the current running step (if any) for the header chip.
+const currentRunningStep = computed(() =>
+  streamSteps.value.find((s) => s.status === 'running'),
+)
+
+const hasStreamError = computed(() => streamError.value !== null)
+
+function toggleStatusPanel() {
+  statusExpanded.value = !statusExpanded.value
+}
 
 function handleFollowUp(question: string) {
   inputText.value = question
@@ -439,64 +542,18 @@ onMounted(async () => {
 
                   <div
                     v-if="msg.citations && msg.citations.length > 0"
-                    class="citation-cards"
+                    class="citation-capsules"
                   >
-                    <div
-                      v-for="cit in msg.citations"
+                    <span
+                      v-for="(cit, ci) in msg.citations"
                       :key="cit.chunk_id"
-                      class="citation-card"
+                      class="citation-capsule"
+                      :title="`相关度 ${confidencePercent(cit.confidence)}%`"
                       @click="openCitationDrawer(cit, msg)"
                     >
-                      <div class="citation-head">
-                        <span class="citation-material">
-                          {{ cit.material_name }}
-                        </span>
-                        <el-tag size="small" type="info">
-                          第 {{ cit.page_no }} 页
-                        </el-tag>
-                      </div>
-                      <div class="citation-quote">
-                        <template
-                          v-if="isCitationExpanded(msg.messageId, cit.chunk_id)"
-                        >
-                          {{ cit.quote_text }}
-                        </template>
-                        <template v-else>
-                          {{ truncate(cit.quote_text) }}
-                        </template>
-                      </div>
-                      <div class="citation-foot">
-                        <span class="citation-confidence">
-                          相关度 {{ confidencePercent(cit.confidence) }}%
-                        </span>
-                        <el-progress
-                          :percentage="confidencePercent(cit.confidence)"
-                          :stroke-width="6"
-                          :show-text="false"
-                          class="citation-progress"
-                        />
-                        <el-button
-                          text
-                          size="small"
-                          @click.stop="
-                            toggleCitationExpand(msg.messageId, cit.chunk_id)
-                          "
-                        >
-                          {{
-                            isCitationExpanded(msg.messageId, cit.chunk_id)
-                              ? '收起'
-                              : '展开'
-                          }}
-                        </el-button>
-                        <el-button
-                          text
-                          size="small"
-                          @click.stop="openCitationDrawer(cit, msg)"
-                        >
-                          详情
-                        </el-button>
-                      </div>
-                    </div>
+                      <span class="capsule-index">{{ ci + 1 }}</span>
+                      <span class="capsule-label">{{ capsuleLabel(cit) }}</span>
+                    </span>
                   </div>
                   <div v-else class="no-citation">
                     本次回答未找到直接资料依据
@@ -537,6 +594,73 @@ onMounted(async () => {
               创建对话
             </el-button>
           </el-empty>
+        </div>
+
+        <div
+          v-if="activeConversationId && streamSteps.length > 0"
+          class="stream-status"
+          :class="{
+            'status-error': hasStreamError,
+            'status-collapsed': !statusExpanded,
+          }"
+        >
+          <div class="status-header" @click="toggleStatusPanel">
+            <el-icon
+              v-if="currentRunningStep && !hasStreamError"
+              class="is-loading"
+            >
+              <Loading />
+            </el-icon>
+            <el-icon v-else-if="hasStreamError" class="status-err-icon">
+              <CircleClose />
+            </el-icon>
+            <el-icon v-else class="status-ok-icon">
+              <CircleCheck />
+            </el-icon>
+            <span class="status-summary">
+              <template v-if="hasStreamError">
+                处理失败：{{ streamError }}
+              </template>
+              <template v-else-if="currentRunningStep">
+                {{ currentRunningStep.message }}
+              </template>
+              <template v-else>
+                已完成（{{ streamSteps.length }} 个步骤）
+              </template>
+            </span>
+            <el-icon class="status-toggle">
+              <ArrowUp v-if="statusExpanded" />
+              <ArrowDown v-else />
+            </el-icon>
+          </div>
+          <div v-if="statusExpanded" class="status-body">
+            <div
+              v-for="s in streamSteps"
+              :key="s.step"
+              class="status-step"
+              :class="`step-${s.status}`"
+            >
+              <el-icon v-if="s.status === 'running'" class="is-loading">
+                <Loading />
+              </el-icon>
+              <el-icon v-else-if="s.status === 'done'" class="step-done-icon">
+                <CircleCheck />
+              </el-icon>
+              <el-icon v-else class="step-err-icon">
+                <CircleClose />
+              </el-icon>
+              <span class="step-name">{{ stepLabel(s.step) }}</span>
+              <span class="step-message">{{ s.message }}</span>
+            </div>
+            <el-alert
+              v-if="hasStreamError && streamAdvice"
+              :title="streamAdvice"
+              type="warning"
+              :closable="false"
+              show-icon
+              class="status-advice"
+            />
+          </div>
         </div>
 
         <div v-if="activeConversationId" class="chat-input">
@@ -934,68 +1058,57 @@ onMounted(async () => {
   margin-bottom: 6px;
 }
 
-.citation-cards {
+.citation-capsules {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
 }
 
-.citation-card {
-  border: 1px solid #ebeef5;
-  border-radius: 6px;
-  padding: 10px 12px;
-  cursor: pointer;
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.citation-card:hover {
-  border-color: #409eff;
-  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.1);
-}
-
-.citation-head {
-  display: flex;
+.citation-capsule {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.citation-material {
-  font-size: 13px;
-  font-weight: 600;
-  color: #303133;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-}
-
-.citation-quote {
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #f4f6f9;
+  border: 1px solid #e4e7ed;
   font-size: 12px;
   color: #606266;
-  line-height: 1.6;
-  margin-bottom: 8px;
-  white-space: pre-wrap;
-  word-break: break-word;
+  cursor: pointer;
+  transition: all 0.2s;
+  max-width: 280px;
 }
 
-.citation-foot {
-  display: flex;
+.citation-capsule:hover {
+  background: #ecf5ff;
+  border-color: #c6e2ff;
+  color: #409eff;
+}
+
+.capsule-index {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.citation-confidence {
-  font-size: 12px;
-  color: #67c23a;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #dcdfe6;
+  color: #606266;
+  font-size: 10px;
+  font-weight: 600;
   flex-shrink: 0;
 }
 
-.citation-progress {
-  flex: 1;
-  min-width: 60px;
+.citation-capsule:hover .capsule-index {
+  background: #409eff;
+  color: #fff;
+}
+
+.capsule-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .no-citation {
@@ -1047,6 +1160,111 @@ onMounted(async () => {
   gap: 8px;
   align-items: flex-end;
   flex-shrink: 0;
+}
+
+/* Phase 2 Task B: SSE real-time status panel */
+.stream-status {
+  border-top: 1px solid #ebeef5;
+  background: #fafbfc;
+  flex-shrink: 0;
+}
+
+.stream-status.status-error {
+  background: #fef0f0;
+  border-top-color: #fbc4c4;
+}
+
+.status-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  color: #606266;
+}
+
+.status-header:hover {
+  background: #f5f7fa;
+}
+
+.stream-status.status-error .status-header {
+  color: #f56c6c;
+}
+
+.status-summary {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-err-icon {
+  color: #f56c6c;
+  flex-shrink: 0;
+}
+
+.status-ok-icon {
+  color: #67c23a;
+  flex-shrink: 0;
+}
+
+.status-toggle {
+  color: #909399;
+  flex-shrink: 0;
+}
+
+.status-body {
+  padding: 4px 16px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.status-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.step-name {
+  font-weight: 600;
+  color: #303133;
+  flex-shrink: 0;
+  min-width: 64px;
+}
+
+.step-message {
+  color: #606266;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.status-step.step-running .step-name {
+  color: #409eff;
+}
+
+.status-step.step-done .step-name {
+  color: #67c23a;
+}
+
+.step-done-icon {
+  color: #67c23a;
+  flex-shrink: 0;
+}
+
+.step-err-icon {
+  color: #f56c6c;
+  flex-shrink: 0;
+}
+
+.status-advice {
+  margin-top: 4px;
 }
 
 .chat-input :deep(.el-textarea) {

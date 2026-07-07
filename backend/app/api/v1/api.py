@@ -5,14 +5,17 @@ from app.api.v1.endpoints import (
     agent_runs,
     auth,
     chat,
+    chunks,
     citations,
     conversations,
     courses,
     dashboard,
+    error_logs,
     health,
     knowledge_points,
     llm_configs,
     materials,
+    material_overview,
     parse,
     plans,
     quizzes,
@@ -31,12 +34,16 @@ api_router.include_router(
     quizzes.weak_points_router, prefix="/courses", tags=["weak_points"]
 )
 api_router.include_router(parse.router, prefix="/materials", tags=["materials"])
+api_router.include_router(
+    material_overview.router, prefix="/materials", tags=["materials"]
+)
 api_router.include_router(search.router, prefix="/search", tags=["search"])
 api_router.include_router(
     conversations.router, prefix="/conversations", tags=["conversations"]
 )
 api_router.include_router(chat.router, tags=["chat"])
 api_router.include_router(citations.router, prefix="/messages", tags=["citations"])
+api_router.include_router(chunks.router, prefix="/chunks", tags=["chunks"])
 api_router.include_router(plans.router, prefix="/plans", tags=["plans"])
 api_router.include_router(plans.todos_router, prefix="/todos", tags=["todos"])
 api_router.include_router(quizzes.router, prefix="/quizzes", tags=["quizzes"])
@@ -46,6 +53,9 @@ api_router.include_router(
 )
 api_router.include_router(
     dashboard.router, prefix="/dashboard", tags=["dashboard"]
+)
+api_router.include_router(
+    error_logs.router, prefix="/agent-error-logs", tags=["error_logs"]
 )
 
 __all__ = ["api_router"]

@@ -252,6 +252,9 @@ def test_audit_retrieve_step_has_detail(
     monkeypatch.setattr(
         "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
     )
+    # Phase 2 Task B: this test inspects persisted step detail, so the
+    # run must record steps even on success (default is "error" only).
+    monkeypatch.setattr("app.core.config.settings.AGENT_TRACE_MODE", "always")
 
     headers = auth_headers(client, username="alice")
     course_id, conv_id = _setup_chat(client, headers)

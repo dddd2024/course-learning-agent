@@ -8,12 +8,14 @@ from app.models.base import Base, TimestampMixin
 from app.models.citation import Citation
 from app.models.conversation import Conversation, Message
 from app.models.course import Course
+from app.models.error_log import AgentErrorLog
 from app.models.knowledge_point import KnowledgePoint
 from app.models.llm_config import UserLLMConfig
 from app.models.material import Material
 from app.models.material_chunk import MaterialChunk
 from app.models.plan import StudyGoal, StudyTask, Todo
 from app.models.quiz import Quiz, QuizItem, WeakPoint
+from app.models.security_finding import MaterialSecurityFinding
 from app.models.user import User
 
 __all__ = [
@@ -21,6 +23,7 @@ __all__ = [
     "TimestampMixin",
     "AgentRun",
     "AgentStep",
+    "AgentErrorLog",
     "Citation",
     "Conversation",
     "Message",
@@ -28,6 +31,7 @@ __all__ = [
     "KnowledgePoint",
     "Material",
     "MaterialChunk",
+    "MaterialSecurityFinding",
     "StudyGoal",
     "StudyTask",
     "Todo",

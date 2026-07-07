@@ -66,14 +66,20 @@ def list_citations(
 
     items: list[CitationResponse] = []
     for cite, chunk, material in rows:
+        page = cite.page_no if cite.page_no is not None else chunk.page_no
+        if page is not None:
+            label = f"{material.filename} · 第 {page} 页"
+        else:
+            label = material.filename
         items.append(
             CitationResponse(
                 chunk_id=cite.chunk_id,
                 material_id=chunk.material_id,
                 material_name=material.filename,
-                page_no=cite.page_no,
+                page_no=page,
                 quote_text=cite.quote_text or "",
                 confidence=cite.confidence or 0.0,
+                display_label=label,
             )
         )
     return CitationListResponse(items=items, total=len(items))

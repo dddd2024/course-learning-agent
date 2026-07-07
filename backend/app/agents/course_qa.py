@@ -21,6 +21,7 @@ from typing import Any
 
 from app.agents.llm import call_llm
 from app.agents.prompt_loader import load_prompt
+from app.services.security_scanner import PROMPT_GUARD
 
 
 _REQUIRED_FIELDS = (
@@ -157,6 +158,9 @@ def answer_question(
         course_name=course_name,
         retrieved_chunks=_format_chunks(retrieved_chunks),
     )
+    # Phase 2 Task D: prepend guard so uploaded material content is
+    # never treated as a system instruction by the model.
+    prompt = f"{PROMPT_GUARD}\n\n{prompt}"
 
     output = call_llm(
         prompt, agent_type="course_qa", user_config=user_config

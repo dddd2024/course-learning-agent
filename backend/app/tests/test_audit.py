@@ -94,6 +94,9 @@ def test_agent_run_detail(client, tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
     )
+    # Phase 2 Task B: success runs only persist steps when AGENT_TRACE_MODE
+    # is "always". This test inspects step detail, so opt in explicitly.
+    monkeypatch.setattr("app.core.config.settings.AGENT_TRACE_MODE", "always")
 
     headers = auth_headers(client, username="alice")
     course_id, conv_id = _setup_chat(client, headers)

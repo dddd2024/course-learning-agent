@@ -22,6 +22,10 @@ class CitationItem(BaseModel):
     page_no: Optional[int] = None
     quote_text: str = ""
     confidence: float = 0.0
+    # Phase 2 Task A: pre-assembled label for capsule display
+    # (e.g. "操作系统讲义.pdf · 第 12 页"). Backend-assembled so the
+    # frontend renders capsules without repeating formatting logic.
+    display_label: str = ""
 
 
 class RetrievedChunkItem(BaseModel):

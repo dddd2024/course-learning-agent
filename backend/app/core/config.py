@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     LLM_CONFIG_SECRET_KEY: str = "change-me-please"
     EMBEDDING_PROVIDER: str = "mock"
     MAX_UPLOAD_MB: int = 30
+    # Phase 2 Task B: trace persistence level.
+    # - "error": only persist steps when the run fails (default)
+    # - "always": persist all steps (verbose, for debugging)
+    # - "off": never persist steps (audit run header only)
+    AGENT_TRACE_MODE: str = "error"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

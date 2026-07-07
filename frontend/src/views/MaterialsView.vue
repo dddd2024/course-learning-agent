@@ -7,12 +7,14 @@ import { ArrowLeft, Search, UploadFilled, View } from '@element-plus/icons-vue'
 import { getCourse, type Course } from '../api/course'
 import {
   getChunks,
+  getMaterialOverview,
   listMaterials,
   parseMaterial,
   search,
   uploadMaterial,
   type Chunk,
   type Material,
+  type MaterialOverview,
   type MaterialStatus,
   type SearchItem,
 } from '../api/material'
@@ -63,6 +65,9 @@ const chunksTotal = ref(0)
 const chunksPage = ref(1)
 const chunksPageSize = ref(10)
 const currentMaterial = ref<Material | null>(null)
+
+// Phase 2 Task C/D: material overview (stats + security findings).
+const materialOverview = ref<MaterialOverview | null>(null)
 
 const searchKeyword = ref('')
 const searchLoading = ref(false)
@@ -232,9 +237,26 @@ async function handleParse(material: Material) {
 
 async function openChunksDialog(material: Material) {
   currentMaterial.value = material
+  materialOverview.value = null
   chunksDialogVisible.value = true
   chunksPage.value = 1
-  await fetchChunks()
+  await Promise.all([fetchChunks(), fetchOverview(material.id)])
+}
+
+async function fetchOverview(materialId: number) {
+  try {
+    const { data } = await getMaterialOverview(materialId)
+    materialOverview.value = data
+  } catch {
+    // 静默失败，不影响片段查看
+    materialOverview.value = null
+  }
+}
+
+function pageRangeText(range: number[] | null): string {
+  if (!range || range.length === 0) return '无'
+  if (range.length === 1) return `第 ${range[0]} 页`
+  return `第 ${range[0]} - ${range[range.length - 1]} 页`
 }
 
 async function fetchChunks() {
@@ -530,8 +552,76 @@ onUnmounted(() => {
       v-model="chunksDialogVisible"
       :title="currentMaterial ? `片段列表 - ${currentMaterial.filename}` : '片段列表'"
       width="760px"
-      @closed="currentMaterial = null"
+      @closed="
+        () => {
+          currentMaterial = null
+          materialOverview = null
+        }
+      "
     >
+      <div v-if="materialOverview" class="overview-panel">
+        <div class="overview-stats">
+          <div class="overview-stat">
+            <span class="stat-label">片段数</span>
+            <span class="stat-value">{{ materialOverview.chunk_count }}</span>
+          </div>
+          <div class="overview-stat">
+            <span class="stat-label">页码范围</span>
+            <span class="stat-value">{{ pageRangeText(materialOverview.page_range) }}</span>
+          </div>
+          <div class="overview-stat">
+            <span class="stat-label">章节数</span>
+            <span class="stat-value">{{ materialOverview.section_count }}</span>
+          </div>
+          <div
+            v-if="materialOverview.security_findings_count > 0"
+            class="overview-stat stat-warning"
+          >
+            <span class="stat-label">安全提示</span>
+            <span class="stat-value">
+              {{ materialOverview.security_findings_count }} 处可疑注入
+            </span>
+          </div>
+        </div>
+        <div
+          v-if="materialOverview.keywords.length > 0"
+          class="overview-keywords"
+        >
+          <span class="overview-section-label">高频关键词</span>
+          <div class="keyword-tags">
+            <el-tag
+              v-for="kw in materialOverview.keywords"
+              :key="kw"
+              size="small"
+              effect="plain"
+              class="keyword-tag"
+            >
+              {{ kw }}
+            </el-tag>
+          </div>
+        </div>
+        <el-alert
+          v-if="materialOverview.security_findings_count > 0"
+          title="检测到疑似 Prompt 注入"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="overview-alert"
+        >
+          资料中检测到 {{ materialOverview.security_findings_count }} 处疑似
+          Prompt 注入模式，已自动隔离并在问答中加入防护提示。
+        </el-alert>
+        <el-alert
+          v-if="materialOverview.warnings.length > 0"
+          v-for="(w, wi) in materialOverview.warnings"
+          :key="wi"
+          :title="w"
+          type="info"
+          :closable="false"
+          show-icon
+          class="overview-alert"
+        />
+      </div>
       <el-table
         v-loading="chunksLoading"
         :data="chunks"
@@ -730,5 +820,73 @@ onUnmounted(() => {
   margin-top: 12px;
   display: flex;
   justify-content: flex-end;
+}
+
+/* Phase 2 Task C/D: material overview panel */
+.overview-panel {
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.overview-stats {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.overview-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 14px;
+  background: #f5f7fa;
+  border-radius: 6px;
+  min-width: 100px;
+}
+
+.overview-stat.stat-warning {
+  background: #fdf6ec;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #909399;
+}
+
+.stat-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.overview-stat.stat-warning .stat-value {
+  color: #e6a23c;
+}
+
+.overview-keywords {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.overview-section-label {
+  font-size: 12px;
+  color: #909399;
+}
+
+.keyword-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.keyword-tag {
+  font-size: 12px;
+}
+
+.overview-alert {
+  margin-top: 4px;
 }
 </style>
