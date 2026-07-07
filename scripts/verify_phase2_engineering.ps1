@@ -86,24 +86,31 @@ if ($configPy -match 'ENVIRONMENT' -and $configPy -match 'CORS_ORIGINS' -and $co
 # 8. T01-T04 audit-submit-rectification checks
 Write-Step 'Audit-submit-rectification checks'
 
-# T01: backend MultiCourseInput has AliasChoices for priority/user_priority
+# T01/T0-1: backend MultiCourseInput normalizes legacy priority via model_validator
 $multiPlanSchema = Get-Content "$root\backend\app\schemas\multi_plan.py" -Raw
 $plansPy = Get-Content "$root\backend\app\api\v1\endpoints\plans.py" -Raw
-if ($multiPlanSchema -match 'AliasChoices' -and $multiPlanSchema -match 'priority') {
-  Write-Ok 'MultiCourseInput accepts both priority and user_priority'
+$schedulerPy = Get-Content "$root\backend\app\services\multi_scheduler.py" -Raw
+if ($multiPlanSchema -match 'model_validator' -and $multiPlanSchema -match 'priority' -and $multiPlanSchema -match '/ 5.0') {
+  Write-Ok 'MultiCourseInput normalizes legacy priority (1-5) to 0-1 via model_validator'
 } else {
-  Write-Bad 'MultiCourseInput missing AliasChoices compat for priority'
+  Write-Bad 'MultiCourseInput missing priority normalization'
 }
 
-# T01: API layer normalizes priority (1-5) -> user_priority (0-1)
-if ($plansPy -match 'user_priority / 5.0' -or $plansPy -match 'user_priority / 5') {
-  Write-Ok 'create_multi_plan normalizes legacy priority to user_priority'
+# T0-2: scheduler preserves user_priority=0.0 (uses is None, not or)
+if ($schedulerPy -match 'is not None') {
+  Write-Ok 'scheduler preserves user_priority=0.0'
 } else {
-  Write-Bad 'create_multi_plan missing priority normalization'
+  Write-Bad 'scheduler may override user_priority=0.0'
+}
+
+# T0-3: ENVIRONMENT check is case-insensitive
+if ($configPy -match 'ENVIRONMENT.lower') {
+  Write-Ok 'ENVIRONMENT check is case-insensitive'
+} else {
+  Write-Bad 'ENVIRONMENT check is case-sensitive'
 }
 
 # T02: schedule_multi_courses has user_config param
-$schedulerPy = Get-Content "$root\backend\app\services\multi_scheduler.py" -Raw
 if ($schedulerPy -match 'user_config') {
   Write-Ok 'schedule_multi_courses accepts user_config'
 } else {
