@@ -28,22 +28,24 @@ const runTypeOptions = [
   { value: 'quiz', label: 'quiz' },
 ]
 
+// 状态词表与后端 AgentRun.status / AgentStep.status 对齐：
+// running / success / failed（后端 AgentAudit.create_run/finish_run 写入）。
 const statusOptions = [
-  { value: 'started', label: '进行中' },
-  { value: 'succeeded', label: '成功' },
+  { value: 'running', label: '进行中' },
+  { value: 'success', label: '成功' },
   { value: 'failed', label: '失败' },
 ]
 
 const statusTagType: Record<string, 'success' | 'danger' | 'warning' | 'info'> = {
-  succeeded: 'success',
+  success: 'success',
   failed: 'danger',
-  started: 'warning',
+  running: 'warning',
 }
 
 const statusLabel: Record<string, string> = {
-  succeeded: '成功',
+  success: '成功',
   failed: '失败',
-  started: '进行中',
+  running: '进行中',
 }
 
 const providerLabel: Record<string, string> = {
@@ -109,9 +111,9 @@ function formatData(value: unknown): string {
 }
 
 function stepStatus(status: string): 'finish' | 'error' | 'process' | 'wait' {
-  if (status === 'succeeded') return 'finish'
+  if (status === 'success') return 'finish'
   if (status === 'failed') return 'error'
-  if (status === 'started') return 'process'
+  if (status === 'running') return 'process'
   return 'wait'
 }
 
@@ -340,7 +342,7 @@ onMounted(() => {
                 :timestamp="formatDuration(step.duration_ms)"
                 placement="top"
                 :type="
-                  step.status === 'succeeded'
+                  step.status === 'success'
                     ? 'success'
                     : step.status === 'failed'
                     ? 'danger'
