@@ -347,3 +347,16 @@ def test_concept_graph_rebuild_response_contract(client) -> None:
     assert set(body.keys()) >= {"nodes_count", "edges_count"}
     assert isinstance(body["nodes_count"], int)
     assert isinstance(body["edges_count"], int)
+
+
+def test_concept_graph_compare_error_contract(client) -> None:
+    """compare 404 返回统一 {code, message} 格式。"""
+    headers = auth_headers(client, username="alice")
+    resp = client.post(
+        "/api/v1/concept-graph/compare", headers=headers,
+        json={"source_node_id": 99999, "target_node_id": 99998},
+    )
+    assert resp.status_code == 404
+    body = resp.json()
+    assert set(body.keys()) >= {"code", "message"}
+    assert "detail" not in body

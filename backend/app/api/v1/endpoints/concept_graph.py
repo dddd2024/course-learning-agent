@@ -10,10 +10,11 @@ Endpoints:
 """
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
+from app.core.exceptions import NotFoundException
 from app.models import User
 from app.schemas.concept_graph import (
     CompareReportResponse,
@@ -32,6 +33,7 @@ from app.services.concept_graph_service import (
     reject_edge,
     sync_nodes_for_user,
 )
+from app.services.llm_config_service import build_user_config, get_active_config
 
 router = APIRouter()
 
@@ -78,7 +80,7 @@ def get_node(
     """Return node detail with related edges. 404 if not owned by user."""
     detail = get_node_detail(db, current_user.id, node_id)
     if detail is None:
-        raise HTTPException(status_code=404, detail="节点不存在")
+        raise NotFoundException(message="节点不存在")
     return NodeDetailResponse(**detail)
 
 
@@ -91,7 +93,7 @@ def confirm(
     """Set an edge's status to 'confirmed'. 404 if not owned by user."""
     edge = confirm_edge(db, current_user.id, edge_id)
     if edge is None:
-        raise HTTPException(status_code=404, detail="边不存在")
+        raise NotFoundException(message="边不存在")
     db.commit()
     return EdgeActionResponse(**_edge_to_response_dict(edge))
 
@@ -105,7 +107,7 @@ def reject(
     """Set an edge's status to 'rejected'. 404 if not owned by user."""
     edge = reject_edge(db, current_user.id, edge_id)
     if edge is None:
-        raise HTTPException(status_code=404, detail="边不存在")
+        raise NotFoundException(message="边不存在")
     db.commit()
     return EdgeActionResponse(**_edge_to_response_dict(edge))
 
@@ -118,14 +120,17 @@ def compare(
 ):
     """Generate (or return cached) compare report for two nodes.
 
-    404 if either node does not exist or belongs to another user.
+    404 if either node does not exist, belongs to another user, or
+    edge_id is invalid/mismatched.
     """
+    active_config = get_active_config(db, current_user.id)
+    user_config = build_user_config(active_config) if active_config else None
     result = get_or_create_compare_report(
         db, current_user.id, req.source_node_id, req.target_node_id,
-        req.edge_id, req.user_focus,
+        req.edge_id, req.user_focus, user_config=user_config,
     )
     if result is None:
-        raise HTTPException(status_code=404, detail="节点不存在")
+        raise NotFoundException(message="节点不存在")
     db.commit()
     return CompareReportResponse(**result)
 

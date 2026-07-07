@@ -149,3 +149,41 @@ def test_reject_edge(client):
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "rejected"
+
+
+def test_node_detail_404_uses_unified_error_format(client):
+    """404 必须返回 {code, message} 格式，不含 FastAPI 默认 detail。"""
+    headers = auth_headers(client, username="alice")
+    resp = client.get("/api/v1/concept-graph/nodes/99999", headers=headers)
+    assert resp.status_code == 404
+    body = resp.json()
+    assert "code" in body
+    assert "message" in body
+    assert "detail" not in body
+
+
+def test_confirm_edge_404_uses_unified_error_format(client):
+    """404 必须返回 {code, message} 格式。"""
+    headers = auth_headers(client, username="alice")
+    resp = client.post(
+        "/api/v1/concept-graph/edges/99999/confirm", headers=headers
+    )
+    assert resp.status_code == 404
+    body = resp.json()
+    assert "code" in body
+    assert "message" in body
+    assert "detail" not in body
+
+
+def test_compare_404_uses_unified_error_format(client):
+    """compare 404 必须返回 {code, message} 格式。"""
+    headers = auth_headers(client, username="alice")
+    resp = client.post(
+        "/api/v1/concept-graph/compare", headers=headers,
+        json={"source_node_id": 99999, "target_node_id": 99998},
+    )
+    assert resp.status_code == 404
+    body = resp.json()
+    assert "code" in body
+    assert "message" in body
+    assert "detail" not in body
