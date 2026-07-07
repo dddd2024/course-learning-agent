@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
-import { Odometer, Reading, Tickets, Calendar, Monitor, EditPen } from '@element-plus/icons-vue'
+import { Odometer, Reading, Tickets, Calendar, Monitor, EditPen, Share } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -58,6 +58,10 @@ function handleLogout() {
         <el-menu-item index="/agent-runs">
           <el-icon><Monitor /></el-icon>
           <span>Agent 审计</span>
+        </el-menu-item>
+        <el-menu-item index="/knowledge-graph">
+          <el-icon><Share /></el-icon>
+          <span>知识图谱</span>
         </el-menu-item>
         <el-menu-item index="/profile">
           <el-icon><User /></el-icon>
