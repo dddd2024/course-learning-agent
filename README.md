@@ -304,7 +304,8 @@ frontend build、acceptance script，并上传
 
 ## 演示数据
 
-一键导入演示数据（demo 用户、操作系统/数据库课程、示例资料与 chunks）：
+一键导入演示数据（demo 用户 `demo123456`、操作系统/数据库课程、
+示例资料、chunks、知识点、计划、待办、测验、对话、AgentRun）：
 
 ```bash
 cd backend
@@ -312,4 +313,5 @@ python -m app.core.database        # 初始化表（如已有可跳过）
 python ../scripts/seed_demo_data.py
 ```
 
-启动后端后用 `demo / demo123` 登录即可看到预置课程和示例资料。
+启动后端后用 `demo / demo123456` 登录即可看到预置课程、资料、
+知识点、计划、测验、对话和 Agent 审计记录。
