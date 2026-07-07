@@ -16,11 +16,14 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, get_db
 from app.models import User
 from app.schemas.concept_graph import (
+    CompareReportResponse,
+    CompareRequest,
     EdgeActionResponse,
     GraphResponse,
     NodeDetailResponse,
     RebuildResponse,
 )
+from app.services.concept_compare_service import get_or_create_compare_report
 from app.services.concept_graph_service import (
     confirm_edge,
     generate_candidate_edges,
@@ -105,6 +108,26 @@ def reject(
         raise HTTPException(status_code=404, detail="边不存在")
     db.commit()
     return EdgeActionResponse(**_edge_to_response_dict(edge))
+
+
+@router.post("/compare", response_model=CompareReportResponse)
+def compare(
+    req: CompareRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Generate (or return cached) compare report for two nodes.
+
+    404 if either node does not exist or belongs to another user.
+    """
+    result = get_or_create_compare_report(
+        db, current_user.id, req.source_node_id, req.target_node_id,
+        req.edge_id, req.user_focus,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="节点不存在")
+    db.commit()
+    return CompareReportResponse(**result)
 
 
 def _edge_to_response_dict(edge) -> dict:
