@@ -499,10 +499,10 @@ onUnmounted(() => {
             <el-button
               size="small"
               type="primary"
-              :disabled="row.status !== 'uploaded'"
+              :disabled="row.status === 'processing'"
               @click="handleParse(row)"
             >
-              解析
+              {{ row.status === 'uploaded' ? '解析' : '重新解析' }}
             </el-button>
             <el-button
               size="small"

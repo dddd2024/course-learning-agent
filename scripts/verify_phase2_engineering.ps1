@@ -34,8 +34,10 @@ Pop-Location
 # 3. No subjective-metric UI residue in frontend src
 Write-Step 'Subjective metric UI residue check'
 $src = "$root\frontend\src"
+# T01 fix: -SimpleMatch treats the whole pipe-delimited string as one literal,
+# so the four terms were never matched independently. Use regex alternation.
 $matches = Get-ChildItem -Path $src -Recurse -File |
-  Select-String -Pattern '可靠性|相关度|confidencePercent|命中率' -SimpleMatch
+  Select-String -Pattern '可靠性|相关度|confidencePercent|命中率'
 if ($matches) {
   $matches | ForEach-Object { Write-Bad "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }
 } else {
