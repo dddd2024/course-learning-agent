@@ -399,20 +399,31 @@ def create_multi_plan(
 
     # Build the input list for the scheduler with course_id + deadline
     # (and optional user_priority) for each requested course.
+    # T01: 旧前端可能发送 priority（1-5），这里统一归一化为 0-1。
     courses_input = [
         {
             "course_id": c.course_id,
             "deadline": c.deadline,
-            "user_priority": c.user_priority,
+            "user_priority": (
+                c.user_priority / 5.0
+                if c.user_priority is not None and c.user_priority > 1
+                else c.user_priority
+            ),
         }
         for c in payload.courses
     ]
+
+    # T02: 读取当前用户启用的 LLM 配置并透传给 scheduler，确保多课程
+    # 规划与聊天、知识点、单课程计划的模型配置行为一致。
+    active_config = get_active_config(db, current_user.id)
+    user_config = build_user_config(active_config) if active_config else None
 
     schedule = schedule_multi_courses(
         db=db,
         user_id=current_user.id,
         courses=courses_input,
         daily_minutes=payload.daily_minutes,
+        user_config=user_config,
     )
     # T08: schedule_multi_courses now returns a dict with schedule +
     # overflow_warnings (warnings are appended when a task cannot fit

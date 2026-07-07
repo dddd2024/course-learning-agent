@@ -4,15 +4,28 @@ from __future__ import annotations
 from datetime import date, time
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class MultiCourseInput(BaseModel):
-    """A single course entry in a POST /plans/multi request."""
+    """A single course entry in a POST /plans/multi request.
+
+    ``user_priority`` 兼容两种输入：
+    - 新格式：0-1 的浮点数（如 0.8），直接生效
+    - 旧格式：1-5 的整数（如 4），由 API 层归一化为 0-1
+
+    旧前端发送的 ``priority`` 字段通过 ``AliasChoices`` 被接受并
+    映射到 ``user_priority``，避免历史 payload 失效。
+    """
 
     course_id: int
     deadline: date
-    user_priority: Optional[float] = Field(default=None, ge=0, le=1)
+    user_priority: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=5,
+        validation_alias=AliasChoices("user_priority", "priority"),
+    )
 
 
 class MultiPlanCreate(BaseModel):

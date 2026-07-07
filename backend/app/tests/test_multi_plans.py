@@ -297,3 +297,106 @@ def test_weak_point_weight_computation(client) -> None:
         assert weight_empty == 0.0
     finally:
         db.close()
+
+
+# T01: 多课程优先级字段兼容 — 旧前端发送 priority（1-5）应被接受
+
+
+def test_multi_plan_accepts_legacy_priority_field() -> None:
+    """T01: 旧前端发送 priority（1-5）应被 schema 兼容并映射到 user_priority。"""
+    from app.schemas.multi_plan import MultiCourseInput
+
+    # 旧字段 priority=4 应被接受（范围 0-5）并映射到 user_priority
+    item = MultiCourseInput.model_validate(
+        {"course_id": 1, "deadline": "2099-01-01", "priority": 4}
+    )
+    assert item.user_priority == 4
+
+    # 新字段 user_priority=0.8 仍然直接生效
+    item2 = MultiCourseInput.model_validate(
+        {"course_id": 1, "deadline": "2099-01-01", "user_priority": 0.8}
+    )
+    assert item2.user_priority == 0.8
+
+    # 两个字段都未提供时为 None
+    item3 = MultiCourseInput.model_validate(
+        {"course_id": 1, "deadline": "2099-01-01"}
+    )
+    assert item3.user_priority is None
+
+
+def test_multi_plan_normalizes_priority_in_api(client, monkeypatch) -> None:
+    """T01: API 层应把 priority=4（1-5）归一化为 user_priority=0.8 并传入 scheduler。"""
+    from app.api.v1.endpoints import plans as plans_module
+
+    captured: dict = {}
+
+    def fake_schedule(db, user_id, courses, daily_minutes, user_config=None):
+        captured["courses"] = courses
+        captured["user_config"] = user_config
+        return {"schedule": [], "overflow_warnings": []}
+
+    monkeypatch.setattr(plans_module, "schedule_multi_courses", fake_schedule)
+
+    headers = auth_headers(client, username="alice")
+    course_id = create_course(client, headers, name="优先级测试课程")
+    resp = client.post(
+        "/api/v1/plans/multi",
+        json={
+            "courses": [
+                {"course_id": course_id, "deadline": "2099-01-01", "priority": 4}
+            ],
+            "daily_minutes": 120,
+            "constraints": {},
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    # priority=4 应被归一化为 0.8
+    assert captured["courses"][0]["user_priority"] == 0.8
+
+
+# T02: 多课程规划应透传用户 LLM 配置
+
+
+def test_schedule_multi_courses_passes_user_config_to_planner(monkeypatch) -> None:
+    """T02: schedule_multi_courses 应把 user_config 透传给 planner_generate。"""
+    from datetime import date
+
+    from app.services import multi_scheduler
+
+    captured: dict = {}
+
+    def fake_planner_generate(
+        db, user_id, goal, courses, deadline, daily_minutes, user_config=None
+    ):
+        captured["user_config"] = user_config
+        return {"tasks": []}
+
+    monkeypatch.setattr(multi_scheduler, "planner_generate", fake_planner_generate)
+
+    class _DummyDb:
+        def query(self, *a, **k):
+            class _Q:
+                def filter(self, *a, **k):
+                    return self
+
+                def all(self):
+                    return []
+
+                def scalar(self):
+                    return 0
+
+            return _Q()
+
+    multi_scheduler.schedule_multi_courses(
+        db=_DummyDb(),
+        user_id=1,
+        courses=[
+            {"course_id": 1, "deadline": date(2099, 1, 1), "user_priority": 0.5}
+        ],
+        daily_minutes=120,
+        user_config={"provider": "real", "model": "gpt-4"},
+    )
+
+    assert captured["user_config"] == {"provider": "real", "model": "gpt-4"}

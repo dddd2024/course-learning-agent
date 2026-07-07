@@ -59,8 +59,10 @@ class Settings(BaseSettings):
         """Reject default secret values when ``ENVIRONMENT=production``.
 
         Raises ``ValueError`` if any secret still holds its default
-        placeholder value. In development this is a no-op so the
-        platform runs out-of-the-box without configuration.
+        placeholder value, or if ``CORS_ORIGINS`` is empty or contains
+        the ``*`` wildcard (a misconfiguration that would disable the
+        same-origin policy in production). In development this is a
+        no-op so the platform runs out-of-the-box without configuration.
         """
         if self.ENVIRONMENT != "production":
             return
@@ -72,6 +74,13 @@ class Settings(BaseSettings):
             raise ValueError(
                 "生产环境不能使用默认 LLM_CONFIG_SECRET_KEY，请设置一个 "
                 "Fernet 兼容密钥。"
+            )
+        # T04: production 下拒绝 CORS_ORIGINS="*" 或空来源，避免误配置
+        # 关闭同源策略。
+        origins = self.cors_origin_list()
+        if not origins or "*" in origins:
+            raise ValueError(
+                "生产环境不能使用 CORS_ORIGINS='*' 或空来源，请设置实际前端域名。"
             )
 
 

@@ -59,3 +59,34 @@ def test_cors_origin_list_parses_comma_separated() -> None:
     s = Settings(CORS_ORIGINS="http://a.com, http://b.com ,http://c.com")
     origins = s.cors_origin_list()
     assert origins == ["http://a.com", "http://b.com", "http://c.com"]
+
+
+# T04: 生产环境硬化 — 拒绝 CORS_ORIGINS="*" 误配
+
+
+def test_prod_rejects_wildcard_cors() -> None:
+    """T04: ENVIRONMENT=production 且 CORS_ORIGINS='*' 应启动校验失败。"""
+    from app.core.config import Settings
+
+    s = Settings(
+        ENVIRONMENT="production",
+        JWT_SECRET_KEY="a-real-secret",
+        LLM_CONFIG_SECRET_KEY="a-valid-fernet-key",
+        CORS_ORIGINS="*",
+    )
+    with pytest.raises(ValueError, match="CORS_ORIGINS"):
+        s.validate_prod_secrets()
+
+
+def test_prod_rejects_empty_cors() -> None:
+    """T04: ENVIRONMENT=production 且 CORS_ORIGINS 为空也应启动校验失败。"""
+    from app.core.config import Settings
+
+    s = Settings(
+        ENVIRONMENT="production",
+        JWT_SECRET_KEY="a-real-secret",
+        LLM_CONFIG_SECRET_KEY="a-valid-fernet-key",
+        CORS_ORIGINS="",
+    )
+    with pytest.raises(ValueError, match="CORS_ORIGINS"):
+        s.validate_prod_secrets()

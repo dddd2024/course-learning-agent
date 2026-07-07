@@ -78,7 +78,7 @@ export function createPlan(payload: PlanPayload): AxiosPromise<PlanResult> {
 export interface MultiPlanCourseInput {
   course_id: number
   deadline: string
-  priority?: number
+  user_priority?: number
 }
 
 export interface MultiPlanConstraints {
@@ -102,7 +102,6 @@ export interface MultiPlanScheduleItem {
 
 export interface MultiPlanResult {
   schedule: MultiPlanScheduleItem[]
-  goal_ids: number[]
   overflow_warnings: string[]
 }
 

@@ -232,10 +232,12 @@ async function handleGenerate() {
   const payload: MultiPlanPayload = {
     courses: selectedCourses.value.map((c) => {
       const cfg = courseConfigs[c.id]
+      // T01: 前端页面优先级为 1-5，归一化为 0-1 后以 user_priority
+      // 字段提交，与后端 schema 对齐。
       return {
         course_id: c.id,
         deadline: cfg.deadline,
-        priority: cfg.priority,
+        user_priority: cfg.priority / 5,
       }
     }),
     daily_minutes: dailyMinutes.value,

@@ -92,6 +92,7 @@ def schedule_multi_courses(
     user_id: int,
     courses: list[dict[str, Any]],
     daily_minutes: int,
+    user_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Schedule tasks across multiple courses honouring daily + 90-min caps.
 
@@ -102,6 +103,10 @@ def schedule_multi_courses(
             ``date``), and an optional ``user_priority`` in ``[0, 1]``
             (defaults to ``0.5`` when omitted).
         daily_minutes: Per-day budget shared across all courses.
+        user_config: Optional user-level LLM config dict (T02) that is
+            forwarded to ``planner_generate`` so multi-course planning
+            honours the user's active model configuration, matching the
+            behaviour of chat / knowledge-point / single-course plans.
 
     Returns:
         A dict with two keys:
@@ -142,6 +147,7 @@ def schedule_multi_courses(
             courses=[course_name],
             deadline=deadline,
             daily_minutes=daily_minutes,
+            user_config=user_config,
         )
         tasks = plan_output.get("tasks", []) or []
         workload = sum(int(t.get("estimate_minutes", 0) or 0) for t in tasks)

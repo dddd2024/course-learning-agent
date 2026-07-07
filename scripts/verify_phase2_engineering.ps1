@@ -83,6 +83,63 @@ if ($configPy -match 'ENVIRONMENT' -and $configPy -match 'CORS_ORIGINS' -and $co
   Write-Bad 'config.py missing ENVIRONMENT/CORS_ORIGINS/validate_prod_secrets'
 }
 
+# 8. T01-T04 audit-submit-rectification checks
+Write-Step 'Audit-submit-rectification checks'
+
+# T01: backend MultiCourseInput has AliasChoices for priority/user_priority
+$multiPlanSchema = Get-Content "$root\backend\app\schemas\multi_plan.py" -Raw
+$plansPy = Get-Content "$root\backend\app\api\v1\endpoints\plans.py" -Raw
+if ($multiPlanSchema -match 'AliasChoices' -and $multiPlanSchema -match 'priority') {
+  Write-Ok 'MultiCourseInput accepts both priority and user_priority'
+} else {
+  Write-Bad 'MultiCourseInput missing AliasChoices compat for priority'
+}
+
+# T01: API layer normalizes priority (1-5) -> user_priority (0-1)
+if ($plansPy -match 'user_priority / 5.0' -or $plansPy -match 'user_priority / 5') {
+  Write-Ok 'create_multi_plan normalizes legacy priority to user_priority'
+} else {
+  Write-Bad 'create_multi_plan missing priority normalization'
+}
+
+# T02: schedule_multi_courses has user_config param
+$schedulerPy = Get-Content "$root\backend\app\services\multi_scheduler.py" -Raw
+if ($schedulerPy -match 'user_config') {
+  Write-Ok 'schedule_multi_courses accepts user_config'
+} else {
+  Write-Bad 'schedule_multi_courses missing user_config param'
+}
+
+# T02: create_multi_plan reads active config and passes user_config to scheduler
+if ($plansPy -match 'get_active_config' -and $plansPy -match 'user_config=user_config') {
+  Write-Ok 'create_multi_plan passes user_config to scheduler'
+} else {
+  Write-Bad 'create_multi_plan does not pass user_config'
+}
+
+# T03: frontend MultiPlanResult has no goal_ids
+$planTs = Get-Content "$root\frontend\src\api\plan.ts" -Raw
+if ($planTs -notmatch 'goal_ids') {
+  Write-Ok 'frontend MultiPlanResult has no goal_ids'
+} else {
+  Write-Bad 'frontend MultiPlanResult still has goal_ids'
+}
+
+# T03: frontend MultiPlanCourseInput uses user_priority (not the legacy priority field)
+# Use word-boundary regex so 'user_priority?' does not count as 'priority?'.
+if ($planTs -match 'user_priority\?' -and $planTs -notmatch '(?<!user_)priority\?') {
+  Write-Ok 'frontend MultiPlanCourseInput uses user_priority'
+} else {
+  Write-Bad 'frontend MultiPlanCourseInput still uses priority'
+}
+
+# T04: config.py rejects wildcard CORS in production
+if ($configPy -match 'CORS_ORIGINS' -and $configPy -match '"\*" in origins') {
+  Write-Ok 'config.py rejects wildcard CORS in production'
+} else {
+  Write-Bad 'config.py missing wildcard CORS rejection'
+}
+
 Write-Host ''
 if ($failed) {
   Write-Host 'ACCEPTANCE FAILED' -ForegroundColor Red
