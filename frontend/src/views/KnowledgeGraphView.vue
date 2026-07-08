@@ -24,6 +24,12 @@ const selectedEdge = ref<GraphEdge | null>(null)
 const compareDrawerVisible = ref(false)
 const compareReport = ref<CompareReport | null>(null)
 const compareLoading = ref(false)
+const compareUserFocus = ref('concept')
+const userFocusOptions = [
+  { label: '概念理解', value: 'concept' },
+  { label: '考试重点', value: 'exam' },
+  { label: '迁移应用', value: 'transfer' },
+]
 
 // Filters
 const filterCourseId = ref('')
@@ -228,6 +234,7 @@ async function handleCompare() {
       selectedEdge.value.source_node_id,
       selectedEdge.value.target_node_id,
       selectedEdge.value.id,
+      compareUserFocus.value,
     )
     compareReport.value = data
   } catch (err) {
@@ -528,6 +535,18 @@ onMounted(() => {
       direction="rtl"
     >
       <div v-loading="compareLoading">
+        <div class="compare-focus-bar">
+          <span class="focus-label">关注点：</span>
+          <el-radio-group v-model="compareUserFocus" size="small" @change="handleCompare">
+            <el-radio-button
+              v-for="opt in userFocusOptions"
+              :key="opt.value"
+              :value="opt.value"
+            >
+              {{ opt.label }}
+            </el-radio-button>
+          </el-radio-group>
+        </div>
         <div v-if="compareReport" class="compare-report">
           <el-alert
             v-if="compareReport.fallback_used"
@@ -873,6 +892,20 @@ onMounted(() => {
 
 .compare-report {
   padding: 0 8px;
+}
+
+.compare-focus-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 0 8px;
+}
+
+.focus-label {
+  font-size: 14px;
+  color: #606266;
+  white-space: nowrap;
 }
 
 .compare-alert {

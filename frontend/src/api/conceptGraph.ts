@@ -85,11 +85,12 @@ export function compareNodes(
   sourceNodeId: number,
   targetNodeId: number,
   edgeId?: number,
+  userFocus: string = 'concept',
 ): AxiosPromise<CompareReport> {
   return request.post('/concept-graph/compare', {
     source_node_id: sourceNodeId,
     target_node_id: targetNodeId,
     edge_id: edgeId ?? null,
-    user_focus: 'concept',
+    user_focus: userFocus,
   })
 }
