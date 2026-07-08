@@ -34,6 +34,7 @@ from app.schemas.material import (
     ChunkResponse,
     ParseResponse,
 )
+from app.services.error_logger import log_error
 from app.services.material_parser import parse_with_retry
 
 router = APIRouter()
@@ -57,22 +58,60 @@ def _get_owned_material(
     return material
 
 
-def _run_parse_in_background(
-    db: Session, material_id: int, user_id: int
-) -> None:
-    """Background task: re-fetch the material and run parse_with_retry.
+def _run_parse_in_background(material_id: int, user_id: int) -> None:
+    """Background task: run parse_with_retry with an independent session.
 
-    FastAPI keeps the ``db`` dependency alive until after background
-    tasks complete, so the request's session is safe to reuse here.
+    Stability Task A: the background task must NOT reuse the request-level
+    ``db`` Session (which is closed after the response). Instead it creates
+    its own session via :data:`app.core.database.SessionLocal` and closes
+    it in a ``finally`` block. Any exception is caught so a material can
+    never get stuck in ``processing`` — it is flipped to ``failed`` and a
+    ``category=parse`` error log is written.
     """
-    material = (
-        db.query(Material)
-        .filter(Material.id == material_id, Material.user_id == user_id)
-        .first()
-    )
-    if material is None:
-        return
-    parse_with_retry(db, material, user_id)
+    # Import lazily so tests can monkeypatch ``app.core.database.SessionLocal``.
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    material = None
+    try:
+        material = (
+            db.query(Material)
+            .filter(Material.id == material_id, Material.user_id == user_id)
+            .first()
+        )
+        if material is None:
+            return
+        parse_with_retry(db, material, user_id)
+    except Exception as exc:
+        # Fallback: prevent the material from staying in processing forever.
+        db.rollback()
+        material = (
+            db.query(Material)
+            .filter(Material.id == material_id, Material.user_id == user_id)
+            .first()
+        )
+        if material is not None:
+            material.status = "failed"
+            material.error_message = "后台解析任务异常，请查看日志中心"
+            material.last_parse_error = str(exc)
+            material.parse_finished_at = utc_now()
+            log_error(
+                db,
+                user_id,
+                category="parse",
+                level="error",
+                title="后台解析任务异常",
+                message=str(exc),
+                technical_detail=f"{exc.__class__.__name__}: {exc}",
+                course_id=material.course_id,
+                material_id=material.id,
+                retry_count=material.parse_attempts or 0,
+                max_retries=3,
+                commit=False,
+            )
+            db.commit()
+    finally:
+        db.close()
 
 
 @router.post(
@@ -109,7 +148,7 @@ def parse_material(
     db.commit()
 
     background_tasks.add_task(
-        _run_parse_in_background, db, material_id, current_user.id
+        _run_parse_in_background, material_id, current_user.id
     )
 
     return ParseResponse(

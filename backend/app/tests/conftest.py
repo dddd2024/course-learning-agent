@@ -29,10 +29,13 @@ def _fast_parse_retries(monkeypatch):
 
 
 @pytest.fixture()
-def client() -> Iterator[TestClient]:
+def client(monkeypatch) -> Iterator[TestClient]:
     """Return a TestClient backed by an in-memory SQLite database.
 
     All tables are created fresh for every test, then dropped at teardown.
+    ``SessionLocal`` is also patched so background tasks (which create
+    their own sessions outside the request lifecycle) hit the same
+    in-memory test database instead of the production file DB.
     """
     test_engine = create_engine(
         "sqlite:///:memory:",
@@ -44,6 +47,10 @@ def client() -> Iterator[TestClient]:
     )
 
     Base.metadata.create_all(bind=test_engine)
+
+    # Patch SessionLocal so background tasks using SessionLocal() land on
+    # the in-memory test DB (stability Task A: session isolation).
+    monkeypatch.setattr("app.core.database.SessionLocal", TestSessionLocal)
 
     def override_get_db() -> Iterator:
         db = TestSessionLocal()

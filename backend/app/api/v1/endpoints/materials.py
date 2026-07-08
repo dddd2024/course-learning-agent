@@ -180,8 +180,17 @@ async def upload_material(
         absolute_path.parent.mkdir(parents=True, exist_ok=True)
         absolute_path.write_bytes(content)
     except OSError as exc:
-        # Disk write failed: roll back the Material row so no orphan with
-        # empty file_path remains, then log the error.
+        # Disk write failed: clean up any partial file and empty parent
+        # directories, then roll back the Material row so no orphan with
+        # empty file_path remains, and log the error.
+        try:
+            absolute_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        try:
+            absolute_path.parent.rmdir()  # only removes if empty
+        except OSError:
+            pass
         db.delete(material)
         db.commit()
         log_error(

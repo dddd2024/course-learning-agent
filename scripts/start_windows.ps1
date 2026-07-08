@@ -7,10 +7,14 @@
     in hidden windows, waits for health checks, then opens the app in
     Microsoft Edge (or Chrome) --app mode for a desktop-app experience.
 
-    - Auto-locates the repo root (no hard-coded paths).
-    - Prefers backend/.venv/Scripts/python.exe; falls back to system python.
-    - Checks ports 8000 and 5173; reuses if already serving this app.
-    - Logs to logs/dev-server/backend.log and frontend.log.
+    Stability Task C/D/E enhancements:
+    - First-run init: creates backend/.venv, installs requirements.txt,
+      runs scripts/init_db.py so a fresh checkout can boot directly.
+    - PID management: writes backend.pid / frontend.pid under logs/dev-server
+      so stop_windows.ps1 can safely stop only this project's processes.
+    - Port-reuse accuracy: verifies port 5173 actually serves this app
+      (by checking the page content for the project identifier) before
+      reusing it, avoiding false reuse of other Vite projects.
 
 .NOTES
     Run from anywhere:  powershell.exe -File scripts/start_windows.ps1
@@ -60,20 +64,42 @@ function Wait-ForUrl($url, $timeoutSec = 30) {
     return $false
 }
 
-# --- Check dependencies -----------------------------------------------------
-Write-Step "Checking Python..."
-$pythonExe = $null
-if (Test-Path $venvPython) {
-    $pythonExe = $venvPython
-    Write-Ok "Using venv Python: $pythonExe"
-} elseif (Get-Command python -ErrorAction SilentlyContinue) {
-    $pythonExe = "python"
-    Write-Ok "Using system Python."
-} else {
-    Write-Bad "Python not found. Please install Python 3.10+ or create backend/.venv."
-    exit 1
+# --- Create log directory ---------------------------------------------------
+if (-not (Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 }
 
+# --- Check Python (system) --------------------------------------------------
+Write-Step "Checking Python..."
+if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    Write-Bad "Python not found. Please install Python 3.10+ and add it to PATH."
+    exit 1
+}
+Write-Ok "System Python found."
+
+# --- Stability Task C: first-run backend init (venv + reqs + init_db) -------
+if (-not (Test-Path $venvPython)) {
+    Write-Step "Creating backend/.venv..."
+    & python -m venv (Join-Path $backendDir ".venv")
+    if ($LASTEXITCODE -ne 0) { Write-Bad "Failed to create backend/.venv"; exit 1 }
+    Write-Ok "backend/.venv created."
+} else {
+    Write-Ok "backend/.venv exists."
+}
+
+Write-Step "Installing backend dependencies (pip install -r requirements.txt)..."
+& $venvPython -m pip install --upgrade pip --quiet
+& $venvPython -m pip install -r (Join-Path $backendDir "requirements.txt") --quiet
+if ($LASTEXITCODE -ne 0) { Write-Bad "Failed to install backend dependencies."; exit 1 }
+Write-Ok "Backend dependencies installed."
+
+Write-Step "Initializing database (scripts/init_db.py)..."
+$initDb = Join-Path $repoRoot "scripts\init_db.py"
+& $venvPython $initDb
+if ($LASTEXITCODE -ne 0) { Write-Bad "Database initialization failed."; exit 1 }
+Write-Ok "Database initialized."
+
+# --- Check Node/npm ---------------------------------------------------------
 Write-Step "Checking Node.js..."
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Write-Bad "Node.js not found. Please install Node 18+ and add it to PATH."
@@ -91,19 +117,17 @@ if (-not (Test-Path $nodeModules)) {
     Write-Step "Installing frontend dependencies..."
     Push-Location $frontendDir
     try { npm install } catch { Write-Bad "npm install failed."; exit 1 }
-    Pop-Location
+    finally { Pop-Location }
     Write-Ok "Frontend dependencies installed."
-}
-
-# --- Create log directory ---------------------------------------------------
-if (-not (Test-Path $logDir)) {
-    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+} else {
+    Write-Ok "Frontend dependencies already installed."
 }
 
 # --- Backend port 8000 ------------------------------------------------------
 $backendPort = 8000
 $backendUrl = "http://localhost:$backendPort/api/v1/health"
 $backendLog = Join-Path $logDir "backend.log"
+$backendPidFile = Join-Path $logDir "backend.pid"
 
 if (Test-PortInUse $backendPort) {
     Write-Step "Port $backendPort in use. Checking if it is our backend..."
@@ -119,26 +143,34 @@ if (Test-PortInUse $backendPort) {
         "-NoExit",
         "-WindowStyle", "Hidden",
         "-Command",
-        "cd '$backendDir'; & '$pythonExe' -m uvicorn app.main:app --reload --host 127.0.0.1 --port $backendPort 2>&1 | Tee-Object -FilePath '$backendLog'"
+        "cd '$backendDir'; & '$venvPython' -m uvicorn app.main:app --reload --host 127.0.0.1 --port $backendPort 2>&1 | Tee-Object -FilePath '$backendLog'"
     )
-    Start-Process -FilePath "powershell.exe" -ArgumentList $backendArgs -WindowStyle Hidden
+    $backendProc = Start-Process -FilePath "powershell.exe" -ArgumentList $backendArgs -WindowStyle Hidden -PassThru
+    # Stability Task D: record PID so stop_windows.ps1 can target it.
+    $backendProc.Id | Out-File -FilePath $backendPidFile -Encoding ascii -Force
     Write-Step "Waiting for backend health check..."
     if (-not (Wait-ForUrl $backendUrl 30)) {
         Write-Bad "Backend failed to start within 30s. Check log: $backendLog"
         exit 1
     }
-    Write-Ok "Backend is up."
+    Write-Ok "Backend is up (PID $($backendProc.Id))."
 }
 
 # --- Frontend port 5173 -----------------------------------------------------
 $frontendPort = 5173
 $frontendUrl = "http://localhost:$frontendPort"
 $frontendLog = Join-Path $logDir "frontend.log"
+$frontendPidFile = Join-Path $logDir "frontend.pid"
 
 if (Test-PortInUse $frontendPort) {
-    Write-Step "Port $frontendPort in use. Checking if it is our frontend..."
+    Write-Step "Port $frontendPort in use. Verifying it serves Course Learning Agent..."
     try {
         $resp = Invoke-WebRequest -Uri $frontendUrl -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+        # Stability Task E: only reuse if the page identifies this project.
+        if ($resp.Content -notmatch "course-learning-agent" -and $resp.Content -notmatch "课程学习助手") {
+            Write-Bad "Port $frontendPort is serving a different project (not Course Learning Agent). Please free it."
+            exit 1
+        }
         Write-Ok "Frontend already running on port $frontendPort. Reusing."
     } catch {
         Write-Bad "Port $frontendPort is occupied by another process. Please free it."
@@ -152,13 +184,14 @@ if (Test-PortInUse $frontendPort) {
         "-Command",
         "cd '$frontendDir'; npm run dev -- --host 127.0.0.1 --port $frontendPort 2>&1 | Tee-Object -FilePath '$frontendLog'"
     )
-    Start-Process -FilePath "powershell.exe" -ArgumentList $frontendArgs -WindowStyle Hidden
+    $frontendProc = Start-Process -FilePath "powershell.exe" -ArgumentList $frontendArgs -WindowStyle Hidden -PassThru
+    $frontendProc.Id | Out-File -FilePath $frontendPidFile -Encoding ascii -Force
     Write-Step "Waiting for frontend to be ready..."
     if (-not (Wait-ForUrl $frontendUrl 30)) {
         Write-Bad "Frontend failed to start within 30s. Check log: $frontendLog"
         exit 1
     }
-    Write-Ok "Frontend is up."
+    Write-Ok "Frontend is up (PID $($frontendProc.Id))."
 }
 
 # --- Open in browser app mode ----------------------------------------------
@@ -194,4 +227,5 @@ Write-Host " Course Learning Agent is running!" -ForegroundColor Cyan
 Write-Host "  Frontend: $frontendUrl" -ForegroundColor Cyan
 Write-Host "  Backend:  http://localhost:$backendPort/docs" -ForegroundColor Cyan
 Write-Host "  Logs:     $logDir" -ForegroundColor Cyan
+Write-Host "  Stop:     powershell.exe -File scripts\stop_windows.ps1" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan

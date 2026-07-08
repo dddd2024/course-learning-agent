@@ -137,3 +137,55 @@ def test_upload_success_writes_no_error_log(
 
     logs = client.get("/api/v1/logs?category=upload", headers=headers).json()
     assert logs["total"] == 0
+
+
+def test_upload_disk_failure_cleans_partial_file_and_empty_dirs(
+    client, tmp_path, monkeypatch
+) -> None:
+    """Disk write failure cleans up any partial file and empty parent dirs.
+
+    Stability Task B: if write_bytes leaves a half-written file behind
+    before raising, the exception handler must unlink it and remove the
+    now-empty parent directories so no disk residue remains.
+    """
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    headers = auth_headers(client, username="alice")
+    course_id = create_course(client, headers, "操作系统")
+
+    # Simulate a partial write: create the file on disk, then raise.
+    import os
+
+    def boom(self, data):
+        os.makedirs(str(self.parent), exist_ok=True)
+        with open(str(self), "w") as fh:
+            fh.write("partial-residue")
+        raise PermissionError("simulated mid-write failure")
+
+    monkeypatch.setattr(Path, "write_bytes", boom)
+
+    files = {
+        "file": ("notes.txt", io.BytesIO(b"hello"), "text/plain"),
+    }
+    resp = client.post(
+        f"/api/v1/courses/{course_id}/materials",
+        files=files,
+        headers=headers,
+    )
+    assert resp.status_code == 400
+
+    # No partial file should remain anywhere under UPLOAD_DIR.
+    leftover = list(tmp_path.rglob("original.*"))
+    assert leftover == [], f"partial file residue found: {leftover}"
+
+    # The material row must have been rolled back.
+    db = _test_db(client)
+    try:
+        from app.models.user import User
+        user = db.query(User).filter(User.username == "alice").first()
+        assert _count_materials(db, user.id) == 0
+    finally:
+        db.close()
+
+    # An error log was written.
+    logs = client.get("/api/v1/logs?category=upload", headers=headers).json()
+    assert logs["total"] >= 1
