@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -82,7 +83,7 @@ def call_llm_with_meta(
             logger.warning(
                 "User LLM config failed, falling back to mock: %s", exc
             )
-            return _mock_response(agent_type), {
+            return _mock_response(agent_type, prompt), {
                 "provider": "mock",
                 "fallback_used": True,
                 "fallback_reason": str(exc) or exc.__class__.__name__,
@@ -102,31 +103,33 @@ def call_llm_with_meta(
             logger.warning(
                 "System real LLM failed, falling back to mock: %s", exc
             )
-            return _mock_response(agent_type), {
+            return _mock_response(agent_type, prompt), {
                 "provider": "mock",
                 "fallback_used": True,
                 "fallback_reason": str(exc) or exc.__class__.__name__,
             }
 
     # 3. Mock provider (default, or unknown provider) keeps the demo alive.
-    return _mock_response(agent_type), {
+    return _mock_response(agent_type, prompt), {
         "provider": "mock",
         "fallback_used": False,
         "fallback_reason": None,
     }
 
 
-def _mock_response(agent_type: str) -> dict[str, Any]:
+def _mock_response(
+    agent_type: str, prompt: str = ""
+) -> dict[str, Any]:
     """Return a deterministic, structurally-valid payload for ``agent_type``."""
     builder = _MOCK_BUILDERS.get(agent_type)
     if builder is None:
         # Unknown agent types get a minimal generic envelope so callers
         # still receive valid JSON.
         return {"agent_type": agent_type, "result": {}}
-    return builder()
+    return builder(prompt)
 
 
-def _mock_course_qa() -> dict[str, Any]:
+def _mock_course_qa(prompt: str = "") -> dict[str, Any]:
     return {
         "answer": (
             "梯度下降是一种迭代优化算法，通过沿损失函数梯度反方向更新参数，"
@@ -153,7 +156,7 @@ def _mock_course_qa() -> dict[str, Any]:
     }
 
 
-def _mock_outline() -> dict[str, Any]:
+def _mock_outline(prompt: str = "") -> dict[str, Any]:
     return {
         "knowledge_points": [
             {
@@ -176,7 +179,7 @@ def _mock_outline() -> dict[str, Any]:
     }
 
 
-def _mock_planner() -> dict[str, Any]:
+def _mock_planner(prompt: str = "") -> dict[str, Any]:
     return {
         "goal_title": "两周内复习完《机器学习》前五章",
         "deadline": "2026-07-20",
@@ -202,7 +205,7 @@ def _mock_planner() -> dict[str, Any]:
     }
 
 
-def _mock_task_decompose() -> dict[str, Any]:
+def _mock_task_decompose(prompt: str = "") -> dict[str, Any]:
     return {
         "parent_task": "复习第一章 绪论",
         "subtasks": [
@@ -226,7 +229,7 @@ def _mock_task_decompose() -> dict[str, Any]:
     }
 
 
-def _mock_multi_course_schedule() -> dict[str, Any]:
+def _mock_multi_course_schedule(prompt: str = "") -> dict[str, Any]:
     return {
         "schedule": [
             {
@@ -253,7 +256,7 @@ def _mock_multi_course_schedule() -> dict[str, Any]:
     }
 
 
-def _mock_quiz_generate() -> dict[str, Any]:
+def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
     return {
         "questions": [
             {
@@ -285,7 +288,7 @@ def _mock_quiz_generate() -> dict[str, Any]:
     }
 
 
-def _mock_citation_verify() -> dict[str, Any]:
+def _mock_citation_verify(prompt: str = "") -> dict[str, Any]:
     return {
         "verified": [
             {
@@ -302,6 +305,45 @@ def _mock_citation_verify() -> dict[str, Any]:
     }
 
 
+def _mock_concept_compare(prompt: str = "") -> dict[str, Any]:
+    """Mock concept_compare: return citations derived from evidence in the prompt.
+
+    The prompt contains a ``证据片段: [...]`` line whose JSON array lists
+    the evidence chunks. We parse it so the mock returns real chunk ids
+    rather than empty citations.
+    """
+    chunk_ids: list[int] = []
+    m = re.search(r"证据片段:\s*(\[.*\])", prompt)
+    if m:
+        try:
+            chunks = json.loads(m.group(1))
+            for c in chunks:
+                if isinstance(c, dict) and "chunk_id" in c:
+                    try:
+                        chunk_ids.append(int(c["chunk_id"]))
+                    except (TypeError, ValueError):
+                        continue
+        except (json.JSONDecodeError, TypeError):
+            pass
+    citations = [
+        {"chunk_id": cid, "quote": f"证据片段 {cid}", "supports": "对比依据"}
+        for cid in chunk_ids
+    ]
+    return {
+        "concept_a": {"title": "概念 A", "explanation": "基于证据的概念 A 解析"},
+        "concept_b": {"title": "概念 B", "explanation": "基于证据的概念 B 解析"},
+        "similarities": ["两者在各自课程中均为核心概念"],
+        "differences": [
+            {"dimension": "所属课程", "a": "课程 A", "b": "课程 B"}
+        ],
+        "transfer_learning": ["可迁移的方法论"],
+        "confusions": ["注意适用场景差异"],
+        "exam_questions": ["简述两者的联系与区别"],
+        "citations": citations,
+        "insufficient_evidence": not bool(citations),
+    }
+
+
 _MOCK_BUILDERS = {
     "course_qa": _mock_course_qa,
     "outline": _mock_outline,
@@ -310,6 +352,7 @@ _MOCK_BUILDERS = {
     "multi_course_schedule": _mock_multi_course_schedule,
     "quiz_generate": _mock_quiz_generate,
     "citation_verify": _mock_citation_verify,
+    "concept_compare": _mock_concept_compare,
 }
 
 

@@ -1,4 +1,7 @@
 """Concept compare agent + service tests."""
+import json
+
+from app.agents.concept_compare import generate_compare
 from app.models import (
     ConceptCompareReport,
     ConceptNode,
@@ -205,3 +208,37 @@ def test_compare_rejects_mismatched_edge_id(db_session):
         db_session, user.id, n1.id, n2.id, edge_id=mismatch_edge.id
     )
     assert result is None
+
+
+def test_concept_compare_mock_returns_citations_when_evidence_given(db_session):
+    """mock 模式下，给 evidence_chunks 时 generate_compare 必须返回 citation。"""
+    from app.models import MaterialChunk
+
+    user, n1, n2 = _setup_two_nodes(db_session)
+    ch1 = MaterialChunk(
+        material_id=1, course_id=n1.course_id, chunk_index=0,
+        title="OS死锁证据", page_no=1, text="资源循环等待是死锁的关键特征",
+    )
+    ch2 = MaterialChunk(
+        material_id=1, course_id=n2.course_id, chunk_index=0,
+        title="DB死锁证据", page_no=1, text="事务锁冲突是死锁的关键特征",
+    )
+    db_session.add_all([ch1, ch2])
+    db_session.commit()
+    n1.source_chunk_ids = json.dumps([ch1.id])
+    n2.source_chunk_ids = json.dumps([ch2.id])
+    db_session.commit()
+
+    # 不 monkeypatch generate_compare，走真实 mock LLM 路径
+    result = generate_compare(
+        db_session, user.id,
+        concept_a={"title": n1.title, "summary": n1.summary or ""},
+        concept_b={"title": n2.title, "summary": n2.summary or ""},
+        evidence_chunks=[
+            {"chunk_id": ch1.id, "course_id": n1.course_id, "text": "资源循环等待"},
+            {"chunk_id": ch2.id, "course_id": n2.course_id, "text": "事务锁冲突"},
+        ],
+    )
+    assert result["citation_chunk_ids"], "mock 模式有证据时必须返回 citation"
+    assert ch1.id in result["citation_chunk_ids"]
+    assert ch2.id in result["citation_chunk_ids"]
