@@ -9,19 +9,21 @@ These endpoints live under ``/api/v1/materials`` (note: not under
   and updates the material's status (``processing`` -> ``ready`` or
   ``failed``).
 * ``GET /materials/{material_id}/chunks`` returns paginated chunks.
+* ``DELETE /materials/{material_id}`` removes the material, its chunks,
+  its security findings, and the original uploaded file from disk.
 
 All queries are scoped by ``current_user.id`` so a material owned by
 another user is invisible (returned as 404).
 """
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import BusinessException, NotFoundException
 from app.models.material import Material
 from app.models.material_chunk import MaterialChunk
 from app.models.user import User
@@ -201,3 +203,52 @@ def list_chunks(
         page=page,
         page_size=page_size,
     )
+
+
+@router.delete(
+    "/{material_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_material(
+    material_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Delete a material owned by the current user.
+
+    Removes the material record, all of its chunks, its security findings,
+    and the original uploaded file from disk. A material in ``processing``
+    status cannot be deleted (returns 400) to avoid racing the parse flow.
+    A missing disk file is treated as already-cleaned-up and does not
+    cause the delete to fail.
+    """
+    material = _get_owned_material(db, material_id, current_user.id)
+
+    if material.status == "processing":
+        raise BusinessException(message="资料处理中，暂不能删除，请稍后再试")
+
+    # Delete the original file from disk first. A missing file (already
+    # removed, moved, etc.) must not fail the request.
+    try:
+        disk_path = Path(settings.UPLOAD_DIR) / material.file_path
+        disk_path.unlink(missing_ok=True)
+    except OSError:
+        # Permission / path errors are logged by the global handler; the
+        # database cleanup still proceeds so no orphan rows remain.
+        pass
+
+    # Delete dependent rows before the parent row.
+    db.query(MaterialChunk).filter(
+        MaterialChunk.material_id == material_id
+    ).delete(synchronize_session=False)
+
+    from app.models.security_finding import MaterialSecurityFinding
+
+    db.query(MaterialSecurityFinding).filter(
+        MaterialSecurityFinding.material_id == material_id
+    ).delete(synchronize_session=False)
+
+    db.delete(material)
+    db.commit()
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

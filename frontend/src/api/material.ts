@@ -100,6 +100,12 @@ export function parseMaterial(materialId: number): AxiosPromise<ParseResult> {
   return request.post(`/materials/${materialId}/parse`)
 }
 
+export function deleteMaterial(
+  materialId: number,
+): AxiosPromise<void> {
+  return request.delete(`/materials/${materialId}`)
+}
+
 export function getChunks(
   materialId: number,
   params?: ChunkListParams,

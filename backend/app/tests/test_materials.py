@@ -12,7 +12,8 @@ Covers:
 """
 import io
 
-from app.tests.conftest import auth_headers, create_course
+from app.main import app
+from app.tests.conftest import auth_headers, create_course, upload_material
 
 
 def test_upload_material_success(client, tmp_path, monkeypatch) -> None:
@@ -133,3 +134,153 @@ def test_upload_without_auth(client) -> None:
     )
 
     assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/v1/materials/{material_id}
+# ---------------------------------------------------------------------------
+
+
+def test_delete_material_success(client, tmp_path, monkeypatch) -> None:
+    """DELETE /materials/{id} removes the material and returns 204."""
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+
+    headers = auth_headers(client, username="alice")
+    course_id = create_course(client, headers, "操作系统")
+    material_id = upload_material(
+        client, headers, course_id, "notes.txt", b"hello world"
+    )
+
+    resp = client.delete(
+        f"/api/v1/materials/{material_id}", headers=headers
+    )
+    assert resp.status_code == 204
+
+    # The material no longer appears in the list.
+    list_resp = client.get(
+        f"/api/v1/courses/{course_id}/materials", headers=headers
+    )
+    assert list_resp.status_code == 200
+    items = list_resp.json()["items"]
+    assert all(m["id"] != material_id for m in items)
+
+
+def test_delete_other_user_material_returns_404(
+    client, tmp_path, monkeypatch
+) -> None:
+    """Deleting another user's material returns 404 (no existence leak)."""
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+
+    headers_a = auth_headers(client, username="alice")
+    course_id = create_course(client, headers_a, "操作系统")
+    material_id = upload_material(
+        client, headers_a, course_id, "notes.txt", b"content"
+    )
+
+    headers_b = auth_headers(client, username="bob")
+    resp = client.delete(
+        f"/api/v1/materials/{material_id}", headers=headers_b
+    )
+    assert resp.status_code == 404
+
+    # The material still exists for alice.
+    list_resp = client.get(
+        f"/api/v1/courses/{course_id}/materials", headers=headers_a
+    )
+    assert any(m["id"] == material_id for m in list_resp.json()["items"])
+
+
+def test_delete_material_clears_chunks(client, tmp_path, monkeypatch) -> None:
+    """Deleting a material also removes all of its chunks."""
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
+    )
+
+    headers = auth_headers(client, username="alice")
+    course_id = create_course(client, headers, "操作系统")
+    material_id = upload_material(
+        client,
+        headers,
+        course_id,
+        "notes.txt",
+        ("操作系统是管理硬件资源的系统软件。" * 30).encode("utf-8"),
+    )
+    # Parse so chunks exist.
+    parse_resp = client.post(
+        f"/api/v1/materials/{material_id}/parse", headers=headers
+    )
+    assert parse_resp.status_code == 200
+    assert parse_resp.json()["chunk_count"] > 0
+
+    del_resp = client.delete(
+        f"/api/v1/materials/{material_id}", headers=headers
+    )
+    assert del_resp.status_code == 204
+
+    # Chunks for this material are gone (404 because the material is gone).
+    chunks_resp = client.get(
+        f"/api/v1/materials/{material_id}/chunks", headers=headers
+    )
+    assert chunks_resp.status_code == 404
+
+
+def test_delete_material_missing_disk_file_still_succeeds(
+    client, tmp_path, monkeypatch
+) -> None:
+    """If the disk file is already gone, DELETE still returns 204."""
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+
+    headers = auth_headers(client, username="alice")
+    course_id = create_course(client, headers, "操作系统")
+    material_id = upload_material(
+        client, headers, course_id, "notes.txt", b"content"
+    )
+
+    # Read the stored relative path from the API (no direct DB access) and
+    # remove the file from disk before deleting the record.
+    list_resp = client.get(
+        f"/api/v1/courses/{course_id}/materials", headers=headers
+    )
+    mat = next(m for m in list_resp.json()["items"] if m["id"] == material_id)
+    disk_path = tmp_path / mat["file_path"]
+    disk_path.unlink(missing_ok=True)
+
+    resp = client.delete(
+        f"/api/v1/materials/{material_id}", headers=headers
+    )
+    assert resp.status_code == 204
+
+
+def test_delete_processing_material_returns_400(
+    client, tmp_path, monkeypatch
+) -> None:
+    """A material in 'processing' status cannot be deleted (returns 400)."""
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+
+    headers = auth_headers(client, username="alice")
+    course_id = create_course(client, headers, "操作系统")
+    material_id = upload_material(
+        client, headers, course_id, "notes.txt", b"content"
+    )
+
+    # Force the material into 'processing' status using the same test DB
+    # session the client fixture wired into get_db (avoid the production
+    # SessionLocal, which points at a different database).
+    from app.core.database import get_db
+    from app.models.material import Material
+
+    db = next(app.dependency_overrides[get_db]())
+    try:
+        mat = db.query(Material).filter(Material.id == material_id).first()
+        mat.status = "processing"
+        db.commit()
+    finally:
+        db.close()
+
+    resp = client.delete(
+        f"/api/v1/materials/{material_id}", headers=headers
+    )
+    assert resp.status_code == 400
+    body = resp.json()
+    assert "处理" in body["message"] or "processing" in body["message"].lower()

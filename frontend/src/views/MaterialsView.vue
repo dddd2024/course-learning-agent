@@ -6,6 +6,7 @@ import type { UploadRequestOptions } from 'element-plus'
 import { ArrowLeft, Search, UploadFilled, View } from '@element-plus/icons-vue'
 import { getCourse, type Course } from '../api/course'
 import {
+  deleteMaterial,
   getChunks,
   getMaterialOverview,
   listMaterials,
@@ -199,7 +200,20 @@ function customUpload(options: UploadRequestOptions): Promise<unknown> {
     .then((res) => {
       task.status = 'success'
       task.percent = 100
-      ElMessage.success(`「${file.name}」上传成功`)
+      ElMessage.success(`「${file.name}」上传成功，正在处理`)
+      // Auto-parse: trigger processing immediately so the user never has
+      // to click "parse" manually. The parse endpoint is a separate call
+      // so upload success and parse success stay independent (a parse
+      // failure does not roll back the upload).
+      const materialId = res.data.id
+      parseMaterial(materialId)
+        .then(() => {
+          ensurePolling()
+        })
+        .catch(() => {
+          // Parse failure is surfaced via status refresh; do not block.
+          fetchMaterials()
+        })
       return res
     })
     .catch((err) => {
@@ -223,9 +237,9 @@ function clearFinishedTasks() {
 async function handleParse(material: Material) {
   try {
     await ElMessageBox.confirm(
-      `确定解析资料「${material.filename}」吗？`,
-      '解析确认',
-      { type: 'info', confirmButtonText: '解析', cancelButtonText: '取消' },
+      `确定处理资料「${material.filename}」吗？`,
+      '处理确认',
+      { type: 'info', confirmButtonText: '处理', cancelButtonText: '取消' },
     )
   } catch {
     return
@@ -244,15 +258,40 @@ async function handleParse(material: Material) {
     // or the failure reason (status=failed) on the row.
     await fetchMaterials()
     if (data.status === 'ready') {
-      ElMessage.success(`解析完成，共生成 ${data.chunk_count} 个片段`)
+      ElMessage.success(`处理完成，共生成 ${data.chunk_count} 个片段`)
     } else if (data.status === 'failed') {
-      ElMessage.warning('解析失败，请查看状态标签了解详情')
+      ElMessage.warning('处理失败，请查看状态标签了解详情')
     } else {
-      ElMessage.success(`已提交解析，预计生成 ${data.chunk_count} 个片段`)
+      ElMessage.success(`已提交处理，预计生成 ${data.chunk_count} 个片段`)
       ensurePolling()
     }
   } catch (err) {
-    ElMessage.error(parseApiError(err, '解析请求失败'))
+    ElMessage.error(parseApiError(err, '处理请求失败'))
+  }
+}
+
+async function handleDelete(material: Material) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除资料「${material.filename}」吗？删除后将同时清理其片段与原始文件，且不可恢复。`,
+      '删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteMaterial(material.id)
+    // If the deleted material was open in the chunks dialog, close it so
+    // we never reference a material that no longer exists.
+    if (currentMaterial.value && currentMaterial.value.id === material.id) {
+      currentMaterial.value = null
+      chunksDialogVisible.value = false
+    }
+    ElMessage.success(`「${material.filename}」已删除`)
+    fetchMaterials()
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '删除失败'))
   }
 }
 
@@ -494,7 +533,7 @@ onUnmounted(() => {
             {{ new Date(row.uploaded_at).toLocaleString() }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
             <el-button
               size="small"
@@ -502,7 +541,7 @@ onUnmounted(() => {
               :disabled="row.status === 'processing'"
               @click="handleParse(row)"
             >
-              {{ row.status === 'uploaded' ? '解析' : '重新解析' }}
+              {{ row.status === 'uploaded' ? '处理' : '重新处理' }}
             </el-button>
             <el-button
               size="small"
@@ -511,6 +550,14 @@ onUnmounted(() => {
               @click="openChunksDialog(row)"
             >
               查看片段
+            </el-button>
+            <el-button
+              size="small"
+              type="danger"
+              :disabled="row.status === 'processing'"
+              @click="handleDelete(row)"
+            >
+              删除
             </el-button>
           </template>
         </el-table-column>

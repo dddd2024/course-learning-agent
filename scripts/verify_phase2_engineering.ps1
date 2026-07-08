@@ -285,6 +285,19 @@ Push-Location "$root\backend"
 if ($LASTEXITCODE -eq 0) { Write-Ok 'v3 compare behavior tests passed' } else { Write-Bad 'v3 compare behavior tests failed' }
 Pop-Location
 
+# 14. Material delete + auto-parse behavior tests
+Write-Step 'Material delete and auto-parse behavior tests'
+Push-Location "$root\backend"
+& ".\.venv\Scripts\python.exe" -m pytest `
+    app/tests/test_materials.py::test_delete_material_success `
+    app/tests/test_materials.py::test_delete_other_user_material_returns_404 `
+    app/tests/test_materials.py::test_delete_material_clears_chunks `
+    app/tests/test_materials.py::test_delete_material_missing_disk_file_still_succeeds `
+    app/tests/test_materials.py::test_delete_processing_material_returns_400 `
+    -q
+if ($LASTEXITCODE -eq 0) { Write-Ok 'material delete tests passed' } else { Write-Bad 'material delete tests failed' }
+Pop-Location
+
 Write-Host ''
 if ($failed) {
   Write-Host 'ACCEPTANCE FAILED' -ForegroundColor Red
