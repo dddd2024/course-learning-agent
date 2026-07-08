@@ -247,6 +247,7 @@ async function handleParse(material: Material) {
   }
   try {
     const { data } = await parseMaterial(material.id)
+    // Background task: endpoint returns processing immediately.
     const idx = materials.value.findIndex((m) => m.id === material.id)
     if (idx >= 0) {
       materials.value[idx] = {
@@ -254,20 +255,16 @@ async function handleParse(material: Material) {
         status: data.status,
       }
     }
-    // The parse response omits error_message, so re-fetch the list to
-    // surface the "stale ready" warning (status=ready + error_message)
-    // or the failure reason (status=failed) on the row.
-    await fetchMaterials()
-    if (data.status === 'ready') {
-      ElMessage.success(`处理完成，共生成 ${data.chunk_count} 个片段`)
-    } else if (data.status === 'failed') {
-      ElMessage.warning('处理失败，请查看状态标签了解详情')
-    } else {
-      ElMessage.success(`已提交处理，预计生成 ${data.chunk_count} 个片段`)
+    if (data.status === 'processing') {
+      ElMessage.success('已提交处理任务，请稍候')
       ensurePolling()
+    } else {
+      // Already processing or other state — refresh list.
+      await fetchMaterials()
     }
   } catch (err) {
     ElMessage.error(parseApiError(err, '处理请求失败'))
+    await fetchMaterials()
   }
 }
 
@@ -565,7 +562,7 @@ onUnmounted(() => {
               查看片段
             </el-button>
             <el-button
-              v-if="row.status === 'failed'"
+              v-if="row.status === 'failed' || isStaleReady(row)"
               size="small"
               type="warning"
               @click="goToLogs(row)"

@@ -123,8 +123,16 @@ def _log_error(
     model: str | None,
     config_id: int | None,
     exc: Exception,
+    *,
+    course_id: int | None = None,
+    agent_run_id: int | None = None,
 ) -> None:
-    """Persist an agent failure to agent_error_logs (best-effort)."""
+    """Persist an agent failure to agent_error_logs AND error_logs (best-effort).
+
+    The legacy ``AgentErrorLog`` row is kept for the Agent audit page.
+    A new ``ErrorLog(category=agent)`` row is also written so the failure
+    shows up in the user-facing log center.
+    """
     try:
         tb = traceback.format_exc()
         db.add(
@@ -141,6 +149,34 @@ def _log_error(
             )
         )
         db.commit()
+    except Exception:  # pragma: no cover
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+    # Also write a general ErrorLog so the failure appears in the log center.
+    try:
+        from app.services.error_logger import log_error
+
+        step_label = {
+            "retrieve": "检索",
+            "generate": "生成",
+            "validate": "验证",
+            "persist": "持久化",
+        }.get(step, step)
+
+        log_error(
+            db,
+            user_id,
+            category="agent",
+            level="error",
+            title="Agent 执行失败",
+            message=f"{step_label}步骤失败：{exc.__class__.__name__}: {exc}",
+            technical_detail=tb[:1000],
+            course_id=course_id,
+            agent_run_id=agent_run_id,
+        )
     except Exception:  # pragma: no cover
         try:
             db.rollback()
@@ -217,7 +253,8 @@ def run_chat_pipeline(
         ranked = rerank(question, candidates, top_k=6)
     except Exception as exc:
         _log_error(db, current_user.id, conversation_id, "retrieve",
-                   provider, model_name, config_id, exc)
+                   provider, model_name, config_id, exc,
+                   course_id=course_id, agent_run_id=run_id)
         _safe_finish_run(db, run_id, status="failed",
                          error_message=str(exc),
                          duration_ms=int((time.monotonic() - run_started_at) * 1000))
@@ -321,7 +358,8 @@ def run_chat_pipeline(
     except Exception as exc:
         generate_duration = int((time.monotonic() - generate_started) * 1000)
         _log_error(db, current_user.id, conversation_id, "generate",
-                   provider, model_name, config_id, exc)
+                   provider, model_name, config_id, exc,
+                   course_id=course_id, agent_run_id=run_id)
         if _should_persist_steps("failed"):
             _safe_add_step(
                 db, run_id=run_id, step_name="generate", step_index=1,

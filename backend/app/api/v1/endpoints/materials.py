@@ -110,17 +110,46 @@ async def upload_material(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MaterialResponse:
-    """Upload a material file to a course owned by the current user."""
+    """Upload a material file to a course owned by the current user.
+
+    On any failure (unsupported type, oversized, disk write error) an
+    ErrorLog(category=upload) row is written so the user can see the
+    reason in the log center. Disk write failures also roll back the
+    Material row to avoid orphan records with empty file_path.
+    """
     _get_owned_course(db, course_id, current_user.id)
 
     filename = file.filename or ""
     ext = Path(filename).suffix.lower().lstrip(".")
     if ext not in ALLOWED_FILE_TYPES:
+        log_error(
+            db,
+            current_user.id,
+            category="upload",
+            level="error",
+            title="资料上传失败",
+            message=f"不支持的文件类型：{ext or '(无扩展名)'}",
+            technical_detail=f"filename={filename} ext={ext}",
+            course_id=course_id,
+        )
         raise BusinessException(message="不支持的文件类型")
 
     content = await file.read()
     max_bytes = settings.MAX_UPLOAD_MB * 1024 * 1024
     if len(content) > max_bytes:
+        log_error(
+            db,
+            current_user.id,
+            category="upload",
+            level="error",
+            title="资料上传失败",
+            message=(
+                f"文件大小超过限制：{len(content) / 1024 / 1024:.1f}MB "
+                f"> {settings.MAX_UPLOAD_MB}MB"
+            ),
+            technical_detail=f"filename={filename} size={len(content)}",
+            course_id=course_id,
+        )
         raise BusinessException(message="文件大小超过限制")
 
     # The material_id is only known after the row is persisted, so create
@@ -146,8 +175,26 @@ async def upload_material(
         / f"original.{ext}"
     )
     absolute_path = Path(settings.UPLOAD_DIR) / relative_path
-    absolute_path.parent.mkdir(parents=True, exist_ok=True)
-    absolute_path.write_bytes(content)
+
+    try:
+        absolute_path.parent.mkdir(parents=True, exist_ok=True)
+        absolute_path.write_bytes(content)
+    except OSError as exc:
+        # Disk write failed: roll back the Material row so no orphan with
+        # empty file_path remains, then log the error.
+        db.delete(material)
+        db.commit()
+        log_error(
+            db,
+            current_user.id,
+            category="upload",
+            level="error",
+            title="资料上传失败",
+            message="文件保存到磁盘失败，请稍后重试或联系管理员",
+            technical_detail=f"{exc.__class__.__name__}: {exc}",
+            course_id=course_id,
+        )
+        raise BusinessException(message="上传失败，请查看日志中心")
 
     material.file_path = str(relative_path).replace("\\", "/")
     db.commit()

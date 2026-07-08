@@ -60,9 +60,15 @@ def test_parse_txt_material(client, tmp_path, monkeypatch) -> None:
     )
     assert parse_resp.status_code == 200
     body = parse_resp.json()
-    assert body["material_id"] == material_id
-    assert body["status"] == "ready"
-    assert body["chunk_count"] > 0
+    # Background task: endpoint returns processing immediately.
+    assert body["status"] == "processing"
+
+    # After the background task completes, the material should be ready.
+    list_resp = client.get(
+        f"/api/v1/courses/{course_id}/materials", headers=headers
+    )
+    mat_row = next(m for m in list_resp.json()["items"] if m["id"] == material_id)
+    assert mat_row["status"] == "ready"
 
     chunks_resp = client.get(
         f"/api/v1/materials/{material_id}/chunks", headers=headers
@@ -105,7 +111,15 @@ def test_parse_pdf_material(client, tmp_path, monkeypatch) -> None:
         f"/api/v1/materials/{material_id}/parse", headers=headers
     )
     assert parse_resp.status_code == 200
-    assert parse_resp.json()["status"] == "ready"
+    # Background task: endpoint returns processing immediately.
+    assert parse_resp.json()["status"] == "processing"
+
+    # After the background task completes, the material should be ready.
+    list_resp = client.get(
+        f"/api/v1/courses/{course_id}/materials", headers=headers
+    )
+    mat_row = next(m for m in list_resp.json()["items"] if m["id"] == material_id)
+    assert mat_row["status"] == "ready"
 
 
 def test_parse_invalid_material_id(client) -> None:
@@ -189,9 +203,16 @@ def test_parse_failed_status(client, tmp_path, monkeypatch) -> None:
         f"/api/v1/materials/{material_id}/parse", headers=headers
     )
     assert response.status_code == 200
+    # Background task: endpoint returns processing immediately.
     body = response.json()
-    assert body["status"] == "failed"
-    assert body["chunk_count"] == 0
+    assert body["status"] == "processing"
+
+    # After the background task completes, the material should be failed.
+    list_resp = client.get(
+        f"/api/v1/courses/{course_id}/materials", headers=headers
+    )
+    mat_row = next(m for m in list_resp.json()["items"] if m["id"] == material_id)
+    assert mat_row["status"] == "failed"
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +248,14 @@ def test_parse_scanner_failure_rolls_back_and_preserves_old_chunks(
         f"/api/v1/materials/{material_id}/parse", headers=headers
     )
     assert first.status_code == 200
-    assert first.json()["status"] == "ready"
+    # Background task: endpoint returns processing immediately.
+    assert first.json()["status"] == "processing"
+    # After the background task completes, the material should be ready.
+    list_after_first = client.get(
+        f"/api/v1/courses/{course_id}/materials", headers=headers
+    )
+    mat_first = next(m for m in list_after_first.json()["items"] if m["id"] == material_id)
+    assert mat_first["status"] == "ready"
     first_chunks = client.get(
         f"/api/v1/materials/{material_id}/chunks",
         params={"page": 1, "page_size": 100},
@@ -270,9 +298,12 @@ def test_parse_scanner_failure_rolls_back_and_preserves_old_chunks(
         f"/api/v1/materials/{material_id}/parse", headers=headers
     )
     assert second.status_code == 200
+    # Background task: endpoint returns processing immediately.
+    assert second.json()["status"] == "processing"
+
+    # After the failed re-parse background task, check material state.
     # P0: when old chunks exist, a failed re-parse must keep status="ready"
     # so the previous parse result stays visible to the user.
-    assert second.json()["status"] == "ready"
 
     # After the failed re-parse, the chunks must still be the ORIGINAL
     # ones (no "MODIFIED_" prefix). If rollback is missing, the new
@@ -326,9 +357,9 @@ def test_parse_failure_without_old_chunks_still_failed(
         f"/api/v1/materials/{material_id}/parse", headers=headers
     )
     assert resp.status_code == 200
+    # Background task: endpoint returns processing immediately.
     body = resp.json()
-    assert body["status"] == "failed"
-    assert body["chunk_count"] == 0
+    assert body["status"] == "processing"
 
     list_resp = client.get(
         f"/api/v1/courses/{course_id}/materials", headers=headers

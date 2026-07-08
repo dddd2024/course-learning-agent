@@ -206,12 +206,20 @@ def test_delete_material_clears_chunks(client, tmp_path, monkeypatch) -> None:
         "notes.txt",
         ("操作系统是管理硬件资源的系统软件。" * 30).encode("utf-8"),
     )
-    # Parse so chunks exist.
+    # Parse so chunks exist (background task, returns processing).
     parse_resp = client.post(
         f"/api/v1/materials/{material_id}/parse", headers=headers
     )
     assert parse_resp.status_code == 200
-    assert parse_resp.json()["chunk_count"] > 0
+    # Background task: endpoint returns processing immediately, chunk_count=0.
+    # Verify the background task completed and chunks exist.
+    chunks_before = client.get(
+        f"/api/v1/materials/{material_id}/chunks",
+        params={"page": 1, "page_size": 100},
+        headers=headers,
+    )
+    assert chunks_before.status_code == 200
+    assert len(chunks_before.json()["items"]) > 0
 
     del_resp = client.delete(
         f"/api/v1/materials/{material_id}", headers=headers

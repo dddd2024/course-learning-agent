@@ -3,11 +3,12 @@
 These endpoints live under ``/api/v1/materials`` (note: not under
 ``/courses``) so chunks can be addressed directly by ``material_id``.
 
-* ``POST /materials/{material_id}/parse`` reads the uploaded file from
-  disk, extracts text via :mod:`app.retrieval.parsers`, splits it with
-  :mod:`app.retrieval.chunker`, persists chunks to ``material_chunks``,
-  and updates the material's status (``processing`` -> ``ready`` or
-  ``failed``).
+* ``POST /materials/{material_id}/parse`` sets the material to
+  ``processing`` and schedules a background task that runs
+  :func:`app.services.material_parser.parse_with_retry`. The endpoint
+  returns immediately with ``status=processing`` so the frontend is not
+  blocked; the background task eventually flips the status to ``ready``
+  or ``failed``.
 * ``GET /materials/{material_id}/chunks`` returns paginated chunks.
 * ``DELETE /materials/{material_id}`` removes the material, its chunks,
   its security findings, and the original uploaded file from disk.
@@ -17,13 +18,14 @@ another user is invisible (returned as 404).
 """
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exceptions import BusinessException, NotFoundException
+from app.core.timezone import utc_now
 from app.models.material import Material
 from app.models.material_chunk import MaterialChunk
 from app.models.user import User
@@ -55,28 +57,65 @@ def _get_owned_material(
     return material
 
 
+def _run_parse_in_background(
+    db: Session, material_id: int, user_id: int
+) -> None:
+    """Background task: re-fetch the material and run parse_with_retry.
+
+    FastAPI keeps the ``db`` dependency alive until after background
+    tasks complete, so the request's session is safe to reuse here.
+    """
+    material = (
+        db.query(Material)
+        .filter(Material.id == material_id, Material.user_id == user_id)
+        .first()
+    )
+    if material is None:
+        return
+    parse_with_retry(db, material, user_id)
+
+
 @router.post(
     "/{material_id}/parse",
     response_model=ParseResponse,
 )
 def parse_material(
     material_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ParseResponse:
-    """Parse a material, build chunks, and update its status.
+    """Schedule a background parse task and return ``processing`` immediately.
 
-    Delegates to :func:`app.services.material_parser.parse_with_retry`
-    which owns the retry policy, status tracking, and error logging.
+    If the material is already ``processing``, returns the current status
+    without scheduling a duplicate task. The actual parse (with retry)
+    runs in the background via :class:`fastapi.BackgroundTasks`.
     """
     material = _get_owned_material(db, material_id, current_user.id)
-    final_status, chunk_count = parse_with_retry(
-        db, material, current_user.id
+
+    if material.status == "processing":
+        return ParseResponse(
+            material_id=material_id,
+            status="processing",
+            chunk_count=0,
+        )
+
+    # Set processing state so the immediate response is accurate and
+    # list_materials sees the material as in-progress.
+    material.status = "processing"
+    material.error_message = None
+    material.parse_started_at = utc_now()
+    material.parse_attempts = 0
+    db.commit()
+
+    background_tasks.add_task(
+        _run_parse_in_background, db, material_id, current_user.id
     )
+
     return ParseResponse(
         material_id=material_id,
-        status=final_status,
-        chunk_count=chunk_count,
+        status="processing",
+        chunk_count=0,
     )
 
 

@@ -117,10 +117,11 @@ def test_parse_retries_then_succeeds(client, tmp_path, monkeypatch) -> None:
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["status"] == "ready"
-    assert body["chunk_count"] > 0
-    assert calls["n"] == 3  # 2 failures + 1 success
+    # Background task: endpoint returns processing immediately.
+    assert body["status"] == "processing"
 
+    # After the background task completes, check the final state.
+    assert calls["n"] == 3  # 2 failures + 1 success
     # No error log on success.
     logs = client.get("/api/v1/logs?category=parse", headers=headers).json()
     # retries happened, so warning-level logs may exist for the failed
@@ -155,9 +156,9 @@ def test_parse_always_fails_ends_failed_with_log(
         f"/api/v1/materials/{material_id}/parse", headers=headers
     )
     assert resp.status_code == 200
+    # Background task: endpoint returns processing immediately.
     body = resp.json()
-    assert body["status"] == "failed"
-    assert body["chunk_count"] == 0
+    assert body["status"] == "processing"
 
     db = _test_db(client)
     try:
@@ -199,7 +200,8 @@ def test_reparse_failure_with_old_chunks_keeps_ready_warning(
     # First parse succeeds so chunks exist.
     ok = client.post(f"/api/v1/materials/{material_id}/parse", headers=headers)
     assert ok.status_code == 200
-    assert ok.json()["status"] == "ready"
+    # Background task: endpoint returns processing immediately.
+    assert ok.json()["status"] == "processing"
 
     # Second parse always fails.
     def always_fail(path, file_type):
@@ -211,9 +213,9 @@ def test_reparse_failure_with_old_chunks_keeps_ready_warning(
         f"/api/v1/materials/{material_id}/parse", headers=headers
     )
     assert resp.status_code == 200
+    # Background task: endpoint returns processing immediately.
     body = resp.json()
-    assert body["status"] == "ready"  # old chunks preserved
-    assert body["chunk_count"] > 0
+    assert body["status"] == "processing"
 
     db = _test_db(client)
     try:

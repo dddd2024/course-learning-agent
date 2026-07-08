@@ -147,7 +147,8 @@ def test_material_parse_contract(client) -> None:
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert set(body.keys()) >= {"material_id", "status", "chunk_count"}
-    assert body["status"] == "ready"
+    # Background task: endpoint returns processing immediately.
+    assert body["status"] == "processing"
     assert isinstance(body["chunk_count"], int)
 
 

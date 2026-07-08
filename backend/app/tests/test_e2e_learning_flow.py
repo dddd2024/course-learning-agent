@@ -34,12 +34,21 @@ def test_full_learning_flow(client) -> None:
     assert upload_resp.status_code == 201, upload_resp.text
     material_id = upload_resp.json()["id"]
 
-    # 3. 解析资料
+    # 3. 解析资料（后台任务，立即返回 processing）
     parse_resp = client.post(
         f"/api/v1/materials/{material_id}/parse", headers=headers
     )
     assert parse_resp.status_code == 200, parse_resp.text
-    assert parse_resp.json()["status"] == "ready"
+    # Background task: endpoint returns processing immediately.
+    assert parse_resp.json()["status"] == "processing"
+    # Verify the background task completed and material is ready.
+    mat_resp = client.get(
+        f"/api/v1/courses/{os_course_id}/materials", headers=headers
+    )
+    mat_row = next(
+        m for m in mat_resp.json()["items"] if m["id"] == material_id
+    )
+    assert mat_row["status"] == "ready"
 
     # 4. 创建对话并提问
     conv_resp = client.post(

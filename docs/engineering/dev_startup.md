@@ -71,3 +71,19 @@ npm run dev
 - 响应是 OpenAI Chat Completions 格式（包含 `choices[0].message.content`）。
 
 测试连接**不要求**模型回复正文是 JSON，因此即使模型返回普通文本 `OK` 也会判定为连接成功。测试失败时会以弹窗展示后端返回的可诊断错误（HTTP 状态码、响应片段、非 JSON / 缺少 choices 等分类原因）。
+
+## 旧资料时间修正
+
+在 timezone-aware UTC 迁移（commit 2c60dfa）之前，`materials.uploaded_at` 以 naive `datetime.utcnow()` 写入，SQLite 不保存时区信息，前端可能显示偏移 8 小时的时间。
+
+如发现旧资料的上传时间仍有偏移，运行以下脚本修正：
+
+```powershell
+# Dry-run（只打印，不写入）
+python scripts/fix_legacy_material_time.py
+
+# 实际写入
+python scripts/fix_legacy_material_time.py --apply
+```
+
+脚本会检测 `uploaded_at` 缺少时区信息的行，将其重新标记为 UTC+00:00。新数据已使用 timezone-aware 方案，无需运行此脚本。
