@@ -53,3 +53,43 @@ gh run view 28914666690 --json status,conclusion,jobs
 gh api repos/dddd2024/course-learning-agent/actions/runs/28914666690/artifacts \
   --jq '.artifacts[] | {name, size: .size_in_bytes}'
 ```
+
+## v3 收尾 CI 运行
+
+v3 工程收尾（证据缓存版本化、旧库兼容、user_focus 枚举、验收脚本行为化）推送后的 CI 运行。
+
+| 项目 | 值 |
+|------|----|
+| Workflow | CI |
+| Run ID | 28917240641 |
+| 触发方式 | push |
+| 分支 | main |
+| Head SHA | 1b30494 |
+| 触发提交 | chore(verify): run v3 compare behavior tests explicitly in acceptance |
+| 开始时间 | 2026-07-08 04:20:31 UTC |
+| 结束时间 | 2026-07-08 04:25:40 UTC |
+| 总耗时 | 约 5m09s |
+| 结论 | success |
+
+查看链接: https://github.com/dddd2024/course-learning-agent/actions/runs/28917240641
+
+### Jobs
+
+| Job | 结论 | 耗时 |
+|-----|------|------|
+| Backend Tests | success | 2m10s |
+| Frontend Build | success | 21s |
+| Acceptance Script | success | 2m52s |
+
+后端测试数：276 passed（基线 271 + v3 新增 5：evidence_hash 内容失效、列迁移器 3 个、user_focus 422）。
+
+### Artifacts
+
+| Artifact 名 | 大小(bytes) |
+|-------------|-------------|
+| backend-test-result | 4431 |
+| frontend-build-result | 1863 |
+| acceptance-result | 1433 |
+
+三个 artifact 均存在，工程证据闭环完成。
+
