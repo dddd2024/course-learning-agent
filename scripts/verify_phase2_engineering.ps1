@@ -268,6 +268,23 @@ if ($kgModelsContent -match 'evidence_hash' -and $kgModelsContent -match 'user_f
   Write-Bad 'ConceptCompareReport missing evidence_hash/user_focus columns'
 }
 
+# 13. P3: v3 收尾 — compare 关键行为测试显式运行
+Write-Step 'v3 compare behavior tests'
+Push-Location "$root\backend"
+& ".\.venv\Scripts\python.exe" -m pytest `
+    app/tests/test_concept_compare_agent.py::test_concept_compare_mock_returns_citations_when_evidence_given `
+    app/tests/test_concept_compare_agent.py::test_compare_prompt_contains_user_focus `
+    app/tests/test_concept_compare_agent.py::test_compare_cache_separates_user_focus `
+    app/tests/test_concept_compare_agent.py::test_compare_cache_invalidates_when_evidence_changes `
+    app/tests/test_concept_compare_agent.py::test_compare_cache_invalidates_when_evidence_text_changes `
+    app/tests/test_concept_compare_agent.py::test_compare_rejects_mismatched_edge_id `
+    app/tests/test_concept_graph_api.py::test_compare_mismatched_edge_returns_400 `
+    app/tests/test_concept_graph_api.py::test_compare_invalid_user_focus_returns_422 `
+    app/tests/test_db_migrations.py `
+    -q
+if ($LASTEXITCODE -eq 0) { Write-Ok 'v3 compare behavior tests passed' } else { Write-Bad 'v3 compare behavior tests failed' }
+Pop-Location
+
 Write-Host ''
 if ($failed) {
   Write-Host 'ACCEPTANCE FAILED' -ForegroundColor Red

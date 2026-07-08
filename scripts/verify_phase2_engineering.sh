@@ -172,5 +172,25 @@ else
   bad "ConceptCompareReport missing evidence_hash/user_focus columns"
 fi
 
+# 13. P3: v3 closure - compare behavior tests run explicitly
+step "v3 compare behavior tests"
+cd "$root/backend"
+if python -m pytest \
+    app/tests/test_concept_compare_agent.py::test_concept_compare_mock_returns_citations_when_evidence_given \
+    app/tests/test_concept_compare_agent.py::test_compare_prompt_contains_user_focus \
+    app/tests/test_concept_compare_agent.py::test_compare_cache_separates_user_focus \
+    app/tests/test_concept_compare_agent.py::test_compare_cache_invalidates_when_evidence_changes \
+    app/tests/test_concept_compare_agent.py::test_compare_cache_invalidates_when_evidence_text_changes \
+    app/tests/test_concept_compare_agent.py::test_compare_rejects_mismatched_edge_id \
+    app/tests/test_concept_graph_api.py::test_compare_mismatched_edge_returns_400 \
+    app/tests/test_concept_graph_api.py::test_compare_invalid_user_focus_returns_422 \
+    app/tests/test_db_migrations.py \
+    -q; then
+  ok "v3 compare behavior tests passed"
+else
+  bad "v3 compare behavior tests failed"
+fi
+cd "$root"
+
 echo ""
 if [ "$failed" -eq 0 ]; then echo "ACCEPTANCE PASSED"; exit 0; else echo "ACCEPTANCE FAILED"; exit 1; fi
