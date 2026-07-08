@@ -1,4 +1,6 @@
 """Pydantic schemas for concept graph API."""
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -51,7 +53,7 @@ class CompareRequest(BaseModel):
     source_node_id: int
     target_node_id: int
     edge_id: int | None = None
-    user_focus: str = "concept"
+    user_focus: Literal["concept", "exam", "transfer"] = "concept"
 
 
 class CompareReportResponse(BaseModel):

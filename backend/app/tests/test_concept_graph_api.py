@@ -216,3 +216,35 @@ def test_compare_mismatched_edge_returns_400(client):
     assert body["code"] == "BUSINESS_ERROR"
     assert "message" in body
     assert "detail" not in body
+
+
+def test_compare_invalid_user_focus_returns_422(client):
+    """非法 user_focus 必须返回 422 校验错误，且不产生 compare report 缓存。"""
+    from app.models import ConceptCompareReport
+
+    headers = auth_headers(client, username="alice")
+    _setup_two_courses_with_kps(client, headers)
+    client.post("/api/v1/concept-graph/rebuild", headers=headers)
+    graph = client.get("/api/v1/concept-graph", headers=headers).json()
+    edge = graph["edges"][0]
+
+    resp = client.post(
+        "/api/v1/concept-graph/compare", headers=headers,
+        json={
+            "source_node_id": edge["source_node_id"],
+            "target_node_id": edge["target_node_id"],
+            "edge_id": edge["id"],
+            "user_focus": "invalid_focus",
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    assert body["code"] == "VALIDATION_ERROR"
+
+    # 不得产生缓存行
+    db_gen = app.dependency_overrides[get_db]()
+    db: Session = next(db_gen)
+    try:
+        assert db.query(ConceptCompareReport).count() == 0
+    finally:
+        db.close()
