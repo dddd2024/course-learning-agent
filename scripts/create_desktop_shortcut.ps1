@@ -37,6 +37,22 @@ if (-not (Test-Path $iconPath)) {
 $desktopPath = [Environment]::GetFolderPath("Desktop")
 $shortcutPath = Join-Path $desktopPath "Course Learning Agent.lnk"
 
+# One-click-launch fix C1: if a shortcut already exists, show its current
+# target so the user can see WHY we are overwriting (old repo path, stale
+# script, etc.) before we replace it.
+if (Test-Path $shortcutPath) {
+    Write-Host "[INFO] Existing shortcut found at: $shortcutPath" -ForegroundColor Yellow
+    try {
+        $shellOld = New-Object -ComObject WScript.Shell
+        $old = $shellOld.CreateShortcut($shortcutPath)
+        Write-Host "  Current Target:       $($old.TargetPath) $($old.Arguments)" -ForegroundColor Gray
+        Write-Host "  Current WorkingDir:   $($old.WorkingDirectory)" -ForegroundColor Gray
+        Write-Host "  Overwriting with current repo: $repoRoot" -ForegroundColor Yellow
+    } catch {
+        Write-Host "  (could not read existing shortcut, overwriting anyway)" -ForegroundColor Gray
+    }
+}
+
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = "powershell.exe"

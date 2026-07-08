@@ -98,6 +98,9 @@ function pruneRecentReports(now: number) {
  * the item to avoid an unbounded queue of malformed reports.
  *
  * Same-signature errors within 60s are deduped to prevent flooding.
+ * Additionally, when the backend is unreachable, the pending queue
+ * itself is deduped by signature so a flapping endpoint cannot fill
+ * the panel with identical /logs errors.
  *
  * Returns true when the report (and any queued backlog) was flushed,
  * false when the backend was unreachable/401 and the payload was queued.
@@ -110,8 +113,8 @@ export async function reportFrontendError(
   pruneRecentReports(now)
   const sig = signature(payload)
   if (recentReports.has(sig)) {
-    // Already reported this signature within the window — skip to avoid
-    // flooding. Still keep any existing backlog.
+    // Already reported (or already queued) this signature within the
+    // window — skip to avoid flooding. Still keep any existing backlog.
     return readPendingQueue().length === 0
   }
 
@@ -119,18 +122,30 @@ export async function reportFrontendError(
   const backlog = readPendingQueue()
   const all = [...backlog, payload]
   const stillPending: FrontendErrorReportPayload[] = []
+  // Track signatures already retained so we don't queue the same error
+  // twice when the backend is down (one-call-per-second flapping would
+  // otherwise fill the panel with identical /logs entries).
+  const retainedSigs = new Set<string>()
 
   for (const item of all) {
+    const itemSig = signature(item)
     try {
       await reportErrorLog(item)
-      recentReports.set(signature(item), Date.now())
+      recentReports.set(itemSig, Date.now())
     } catch (err) {
       const e = err as { response?: { status?: number } }
       const status = e.response?.status
       if (status === 401) {
         // Auth not ready / expired — keep the item; main.ts will flush
-        // again after ensureAuthReady succeeds.
-        stillPending.push(item)
+        // again after ensureAuthReady succeeds. Dedupe by signature.
+        if (!retainedSigs.has(itemSig)) {
+          stillPending.push(item)
+          retainedSigs.add(itemSig)
+        }
+        // Record the signature so the next identical report within 60s
+        // is skipped at the top of this function instead of refilling
+        // the queue every second.
+        recentReports.set(itemSig, Date.now())
       } else if (e.response) {
         // Backend responded with a non-401 4xx/5xx — the report endpoint
         // itself rejected this payload. Drop it to avoid an unbounded
@@ -138,8 +153,12 @@ export async function reportFrontendError(
         continue
       } else {
         // No response => network error / backend unreachable. Keep this
-        // item in the queue for later replay.
-        stillPending.push(item)
+        // item in the queue for later replay, deduped by signature.
+        if (!retainedSigs.has(itemSig)) {
+          stillPending.push(item)
+          retainedSigs.add(itemSig)
+        }
+        recentReports.set(itemSig, Date.now())
       }
     }
   }
@@ -169,18 +188,28 @@ export async function flushPendingErrorReports(): Promise<void> {
   const backlog = readPendingQueue()
   if (backlog.length === 0) return
   const stillPending: FrontendErrorReportPayload[] = []
+  const retainedSigs = new Set<string>()
   for (const item of backlog) {
+    const itemSig = signature(item)
     try {
       await reportErrorLog(item)
     } catch (err) {
       const e = err as { response?: { status?: number } }
       const status = e.response?.status
       if (status === 401) {
-        stillPending.push(item)
+        // Dedupe by signature so a backlog with duplicate /logs entries
+        // (collected before the dedupe fix) collapses to one on replay.
+        if (!retainedSigs.has(itemSig)) {
+          stillPending.push(item)
+          retainedSigs.add(itemSig)
+        }
       } else if (e.response) {
         continue
       } else {
-        stillPending.push(item)
+        if (!retainedSigs.has(itemSig)) {
+          stillPending.push(item)
+          retainedSigs.add(itemSig)
+        }
       }
     }
   }

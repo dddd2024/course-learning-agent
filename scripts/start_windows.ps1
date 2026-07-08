@@ -51,6 +51,45 @@ function Test-PortInUse($port) {
     return $null -ne $conn
 }
 
+# One-click-launch fix B3: return owning process details for a port so the
+# user can see WHO is holding 8000/5173 and act on it (stop_windows or kill).
+function Get-PortOwner($port) {
+    $conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
+    if (-not $conn) { return $null }
+    $pids = $conn | Select-Object -ExpandProperty OwningProcess -Unique
+    $rows = @()
+    foreach ($procId in $pids) {
+        if (-not $procId) { continue }
+        try {
+            $proc = Get-Process -Id $procId -ErrorAction Stop
+            $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId=$procId").CommandLine
+            $rows += [PSCustomObject]@{
+                PID        = $procId
+                Name       = $proc.Name
+                CommandLine = $cmd
+            }
+        } catch {
+            $rows += [PSCustomObject]@{ PID = $procId; Name = '<exited>'; CommandLine = '' }
+        }
+    }
+    return $rows
+}
+
+# One-click-launch fix B2: print the last 40 lines of backend.log so the
+# user can see the real startup error (import fail, port bind, etc.) without
+# having to dig for the log file.
+function Show-BackendFailure($backendLog) {
+    Write-Host ""
+    Write-Host "=== backend.log (last 40 lines) ===" -ForegroundColor Red
+    if (Test-Path $backendLog) {
+        Get-Content $backendLog -Tail 40 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+    } else {
+        Write-Host "  (log file not found: $backendLog)" -ForegroundColor Gray
+    }
+    Write-Host "=== full log: $backendLog ===" -ForegroundColor Red
+    Write-Host ""
+}
+
 function Wait-ForUrl($url, $timeoutSec = 30) {
     $deadline = (Get-Date).AddSeconds($timeoutSec)
     while ((Get-Date) -lt $deadline) {
@@ -62,6 +101,14 @@ function Wait-ForUrl($url, $timeoutSec = 30) {
         }
     }
     return $false
+}
+
+# One-click-launch fix B5: write launch_status.json so the user (and any
+# future diagnostics tool) can inspect the last launch result without
+# scraping console output.
+function Write-LaunchStatus($status) {
+    $statusFile = Join-Path $logDir "launch_status.json"
+    $status | ConvertTo-Json -Depth 4 | Out-File -FilePath $statusFile -Encoding utf8 -Force
 }
 
 # --- Create log directory ---------------------------------------------------
@@ -144,9 +191,15 @@ if (-not (Test-Path $nodeModules)) {
 
 # --- Backend port 8000 ------------------------------------------------------
 $backendPort = 8000
-$backendUrl = "http://localhost:$backendPort/api/v1/health"
+# One-click-launch fix B1: health check uses 127.0.0.1 to match the uvicorn
+# bind address. Using `localhost` here previously produced a false failure
+# when localhost resolved to IPv6 ::1.
+$backendUrl = "http://127.0.0.1:$backendPort/api/v1/health"
 $backendLog = Join-Path $logDir "backend.log"
 $backendPidFile = Join-Path $logDir "backend.pid"
+
+$backendPidValue = $null
+$backendHealthOk = $false
 
 if (Test-PortInUse $backendPort) {
     Write-Step "Port $backendPort in use. Checking if it is our backend..."
@@ -155,12 +208,28 @@ if (Test-PortInUse $backendPort) {
         # Task C: only reuse if /health identifies this project, so a
         # different FastAPI app on 8000 is not silently reused.
         if ($resp.Content -notmatch "course-learning-agent") {
-            Write-Bad "Port $backendPort is serving a different backend (not course-learning-agent). Please free it."
+            Write-Bad "Port $backendPort is serving a different backend (not course-learning-agent)."
+            $owners = Get-PortOwner $backendPort
+            if ($owners) {
+                Write-Host "  Owning process(es):" -ForegroundColor Gray
+                $owners | Format-Table PID, Name, CommandLine -AutoSize | Out-Host
+                Write-Host "  Run: powershell.exe -File scripts\stop_windows.ps1" -ForegroundColor Cyan
+            }
             exit 1
         }
         Write-Ok "Backend already running on port $backendPort. Reusing."
+        $backendHealthOk = $true
+        # Record the existing PID if discoverable.
+        $owners = Get-PortOwner $backendPort
+        if ($owners) { $backendPidValue = $owners[0].PID }
     } catch {
-        Write-Bad "Port $backendPort is occupied by another process. Please free it or change the port."
+        Write-Bad "Port $backendPort is occupied but not serving our backend health endpoint."
+        $owners = Get-PortOwner $backendPort
+        if ($owners) {
+            Write-Host "  Owning process(es):" -ForegroundColor Gray
+            $owners | Format-Table PID, Name, CommandLine -AutoSize | Out-Host
+            Write-Host "  Run: powershell.exe -File scripts\stop_windows.ps1  (or free the port manually)" -ForegroundColor Cyan
+        }
         exit 1
     }
 } else {
@@ -174,19 +243,48 @@ if (Test-PortInUse $backendPort) {
     $backendProc = Start-Process -FilePath "powershell.exe" -ArgumentList $backendArgs -WindowStyle Hidden -PassThru
     # Stability Task D: record PID so stop_windows.ps1 can target it.
     $backendProc.Id | Out-File -FilePath $backendPidFile -Encoding ascii -Force
+    $backendPidValue = $backendProc.Id
     Write-Step "Waiting for backend health check..."
     if (-not (Wait-ForUrl $backendUrl 30)) {
-        Write-Bad "Backend failed to start within 30s. Check log: $backendLog"
+        Write-Bad "Backend failed to start within 30s. Backend will NOT be opened."
+        # One-click-launch fix B2: show the log tail so the user sees the
+        # real error, then exit WITHOUT opening the frontend — a visible
+        # frontend with no backend is the exact failure mode we are fixing.
+        Show-BackendFailure $backendLog
+        Write-LaunchStatus @{
+            launched = $false
+            reason = "backend_health_check_failed"
+            backend = @{ ok = $false; pid = $backendPidValue; log = $backendLog }
+            last_start_time = (Get-Date).ToString("o")
+        }
         exit 1
     }
+    $backendHealthOk = $true
     Write-Ok "Backend is up (PID $($backendProc.Id))."
 }
 
 # --- Frontend port 5173 -----------------------------------------------------
+# One-click-launch fix B4: re-verify the backend is still healthy BEFORE
+# starting the frontend. If the backend crashed between the health check
+# above and here (e.g. import error surfaced late), we must NOT open a
+# frontend that shows "后端服务不可达" — that is the exact failure mode.
+if (-not $backendHealthOk) {
+    Write-Bad "Backend is not healthy. Refusing to start frontend."
+    Show-BackendFailure $backendLog
+    Write-LaunchStatus @{
+        launched = $false
+        reason = "backend_not_healthy_before_frontend"
+        backend = @{ ok = $false; pid = $backendPidValue; log = $backendLog }
+        last_start_time = (Get-Date).ToString("o")
+    }
+    exit 1
+}
+
 $frontendPort = 5173
 $frontendUrl = "http://localhost:$frontendPort"
 $frontendLog = Join-Path $logDir "frontend.log"
 $frontendPidFile = Join-Path $logDir "frontend.pid"
+$frontendPidValue = $null
 
 if (Test-PortInUse $frontendPort) {
     Write-Step "Port $frontendPort in use. Verifying it serves Course Learning Agent..."
@@ -194,12 +292,26 @@ if (Test-PortInUse $frontendPort) {
         $resp = Invoke-WebRequest -Uri $frontendUrl -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
         # Stability Task E: only reuse if the page identifies this project.
         if ($resp.Content -notmatch "course-learning-agent" -and $resp.Content -notmatch "课程学习助手") {
-            Write-Bad "Port $frontendPort is serving a different project (not Course Learning Agent). Please free it."
+            Write-Bad "Port $frontendPort is serving a different project (not Course Learning Agent)."
+            $owners = Get-PortOwner $frontendPort
+            if ($owners) {
+                Write-Host "  Owning process(es):" -ForegroundColor Gray
+                $owners | Format-Table PID, Name, CommandLine -AutoSize | Out-Host
+                Write-Host "  Run: powershell.exe -File scripts\stop_windows.ps1" -ForegroundColor Cyan
+            }
             exit 1
         }
         Write-Ok "Frontend already running on port $frontendPort. Reusing."
+        $owners = Get-PortOwner $frontendPort
+        if ($owners) { $frontendPidValue = $owners[0].PID }
     } catch {
-        Write-Bad "Port $frontendPort is occupied by another process. Please free it."
+        Write-Bad "Port $frontendPort is occupied but not serving the frontend."
+        $owners = Get-PortOwner $frontendPort
+        if ($owners) {
+            Write-Host "  Owning process(es):" -ForegroundColor Gray
+            $owners | Format-Table PID, Name, CommandLine -AutoSize | Out-Host
+            Write-Host "  Run: powershell.exe -File scripts\stop_windows.ps1  (or free the port manually)" -ForegroundColor Cyan
+        }
         exit 1
     }
 } else {
@@ -212,9 +324,17 @@ if (Test-PortInUse $frontendPort) {
     )
     $frontendProc = Start-Process -FilePath "powershell.exe" -ArgumentList $frontendArgs -WindowStyle Hidden -PassThru
     $frontendProc.Id | Out-File -FilePath $frontendPidFile -Encoding ascii -Force
+    $frontendPidValue = $frontendProc.Id
     Write-Step "Waiting for frontend to be ready..."
     if (-not (Wait-ForUrl $frontendUrl 30)) {
         Write-Bad "Frontend failed to start within 30s. Check log: $frontendLog"
+        Write-LaunchStatus @{
+            launched = $false
+            reason = "frontend_health_check_failed"
+            backend = @{ ok = $true; pid = $backendPidValue; log = $backendLog }
+            frontend = @{ ok = $false; pid = $frontendPidValue; log = $frontendLog }
+            last_start_time = (Get-Date).ToString("o")
+        }
         exit 1
     }
     Write-Ok "Frontend is up (PID $($frontendProc.Id))."
@@ -250,8 +370,21 @@ if ($edgePath) {
 Write-Host ""
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host " Course Learning Agent is running!" -ForegroundColor Cyan
+Write-Host "  RepoRoot: $repoRoot" -ForegroundColor Cyan
 Write-Host "  Frontend: $frontendUrl" -ForegroundColor Cyan
-Write-Host "  Backend:  http://localhost:$backendPort/docs" -ForegroundColor Cyan
+Write-Host "  Backend:  http://127.0.0.1:$backendPort/docs" -ForegroundColor Cyan
 Write-Host "  Logs:     $logDir" -ForegroundColor Cyan
 Write-Host "  Stop:     powershell.exe -File scripts\stop_windows.ps1" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
+
+# One-click-launch fix B5: record a successful launch so the user can
+# verify "did the last one-click launch actually succeed?" by reading
+# logs/dev-server/launch_status.json.
+Write-LaunchStatus @{
+    launched = $true
+    reason = "ok"
+    backend = @{ ok = $true; pid = $backendPidValue; url = "http://127.0.0.1:$backendPort"; log = $backendLog }
+    frontend = @{ ok = $true; pid = $frontendPidValue; url = $frontendUrl; log = $frontendLog }
+    repo_root = $repoRoot
+    last_start_time = (Get-Date).ToString("o")
+}

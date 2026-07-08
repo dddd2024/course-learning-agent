@@ -1,9 +1,13 @@
 import axios from 'axios'
 import router from '../router'
 import { useAuthStore } from '../stores/auth'
+import { API_BASE_URL } from '../config/api'
 
 const request = axios.create({
-  baseURL: 'http://localhost:8000/api/v1',
+  // One-click-launch fix: use the unified address (default 127.0.0.1) so
+  // the browser hits the same host uvicorn binds to. `localhost` could
+  // resolve to IPv6 ::1 on Windows and produce a false unreachable.
+  baseURL: API_BASE_URL,
   timeout: 15000,
 })
 

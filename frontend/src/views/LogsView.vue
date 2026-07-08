@@ -15,7 +15,18 @@ import {
 } from '../api/logs'
 import { parseApiError } from '../utils/error'
 import { formatLocalDateTime } from '../utils/datetime'
-import { checkBackendHealth, type BackendHealth } from '../api/health'
+import {
+  checkBackendHealth,
+  checkBackendHealthByHost,
+  type BackendHealth,
+  type HostHealthResult,
+} from '../api/health'
+import {
+  API_BASE_URL,
+  DIAG_HOSTS,
+  BACKEND_LOG_PATH,
+  START_SCRIPT_PATH,
+} from '../config/api'
 import {
   readPendingQueue,
   flushPendingErrorReports,
@@ -37,6 +48,28 @@ const loadError = ref<string | null>(null)
 // Redo Task B: local pending reports (backend-unreachable backlog).
 const pendingLocalReports = ref<FrontendErrorReportPayload[]>([])
 const flushing = ref(false)
+
+// One-click-launch fix D1: launch-chain diagnostics — probe both 127.0.0.1
+// and localhost so the user can tell address-resolution failure from a
+// backend that is genuinely not running.
+const diagRunning = ref(false)
+const hostResults = ref<HostHealthResult[]>([])
+const diagCheckedAt = ref<string | null>(null)
+
+// D4: dedupe pending reports by signature for display so the panel never
+// shows a wall of identical /logs errors even if the queue grew before
+// the dedupe fix.
+const pendingDeduped = computed(() => {
+  const seen = new Set<string>()
+  const out: FrontendErrorReportPayload[] = []
+  for (const p of pendingLocalReports.value) {
+    const sig = `${p.title}|${p.request_path || ''}|${p.message}`
+    if (seen.has(sig)) continue
+    seen.add(sig)
+    out.push(p)
+  }
+  return out
+})
 
 const filterCategory = ref<ErrorLogCategory | ''>('')
 const filterLevel = ref<ErrorLogLevel | ''>('')
@@ -154,6 +187,43 @@ async function checkHealth() {
   }
 }
 
+// One-click-launch fix D1: probe both 127.0.0.1 and localhost so the user
+// can distinguish "localhost resolves to IPv6 ::1 but backend is on IPv4"
+// from "backend is genuinely not running". Uses checkBackendHealthByHost
+// which never throws and never triggers the error-report interceptor.
+async function runDiagnostics() {
+  diagRunning.value = true
+  try {
+    const results = await Promise.all(
+      DIAG_HOSTS.map((host) => checkBackendHealthByHost(host)),
+    )
+    hostResults.value = results
+    diagCheckedAt.value = new Date().toLocaleTimeString()
+  } finally {
+    diagRunning.value = false
+  }
+}
+
+// D1 helper: label the address-resolution verdict from hostResults.
+const diagVerdict = computed(() => {
+  if (hostResults.value.length === 0) return ''
+  const r127 = hostResults.value.find((r) => r.host === '127.0.0.1')
+  const rLocal = hostResults.value.find((r) => r.host === 'localhost')
+  if (r127 && rLocal) {
+    if (r127.ok && !rLocal.ok) {
+      return '127.0.0.1 可达但 localhost 不可达 — 这是地址解析问题（localhost 可能解析到 IPv6 ::1）。建议：前端已默认使用 127.0.0.1，请刷新页面。'
+    }
+    if (!r127.ok && rLocal.ok) {
+      return 'localhost 可达但 127.0.0.1 不可达 — 环境异常或代理/hosts 问题。'
+    }
+    if (r127.ok && rLocal.ok) {
+      return '两个地址均可达 — 后端健康，问题可能在前端缓存或登录态。'
+    }
+    return '两个地址均不可达 — 后端未启动或已崩溃。请运行 start_windows.ps1 并查看 backend.log。'
+  }
+  return ''
+})
+
 async function fetchLogs() {
   listLoading.value = true
   loadError.value = null
@@ -242,10 +312,15 @@ async function handleResolve(log: ErrorLog, nextStatus: ErrorLogStatus) {
   }
 }
 
-function handleRefresh() {
-  checkHealth()
-  fetchLogs()
+async function handleRefresh() {
+  await checkHealth()
+  await fetchLogs()
   refreshPending()
+  // D1: when the backend looks unreachable, auto-run the dual-host
+  // diagnostics so the user sees WHY without an extra click.
+  if (backendConn.value === 'unreachable') {
+    runDiagnostics()
+  }
 }
 
 function handleRowClick(row: ErrorLog) {
@@ -333,9 +408,19 @@ onMounted(() => {
       title="后端服务不可达"
       class="status-banner"
     >
-      无法连接后端服务（端口 8000）。请确认后端已启动：运行
-      <code>scripts/start_windows.ps1</code> 或
-      <code>uvicorn app.main:app --reload</code>。服务端日志无法加载，但前端错误已保存到下方"本地待上报日志"，后端恢复并登录后可补发。
+      <div>
+        无法连接后端服务。当前请求地址：<code>{{ API_BASE_URL }}</code>
+      </div>
+      <div style="margin-top: 6px">
+        请确认后端已启动：运行 <code>{{ START_SCRIPT_PATH }}</code> 或
+        <code>uvicorn app.main:app --reload --host 127.0.0.1 --port 8000</code>。
+      </div>
+      <div style="margin-top: 6px">
+        启动失败时请查看日志：<code>{{ BACKEND_LOG_PATH }}</code>
+      </div>
+      <div style="margin-top: 6px">
+        服务端日志无法加载，但前端错误已保存到下方"本地待上报日志"，后端恢复并登录后可补发。
+      </div>
     </el-alert>
     <el-alert
       v-else-if="backendConn === 'auth_failed'"
@@ -355,8 +440,54 @@ onMounted(() => {
       :title="`后端服务正常 · ${backendHealth.app} v${backendHealth.version}`"
       class="status-banner"
     >
-      最近检查时间：{{ healthCheckedAt }}
+      最近检查时间：{{ healthCheckedAt }} · 请求地址：{{ API_BASE_URL }}
     </el-alert>
+
+    <!-- One-click-launch fix D1: launch-chain diagnostics panel -->
+    <el-card class="diag-card" shadow="never">
+      <template #header>
+        <div class="diag-header">
+          <span class="diag-title">启动链路诊断</span>
+          <el-button
+            size="small"
+            :loading="diagRunning"
+            @click="runDiagnostics"
+          >
+            重新诊断
+          </el-button>
+        </div>
+      </template>
+      <div class="diag-row">
+        <span class="diag-label">当前 API 地址：</span>
+        <code>{{ API_BASE_URL }}</code>
+      </div>
+      <div v-for="r in hostResults" :key="r.host" class="diag-row">
+        <span class="diag-label">{{ r.host }}：</span>
+        <el-tag
+          :type="r.ok ? 'success' : 'danger'"
+          size="small"
+          style="margin-right: 8px"
+        >
+          {{ r.ok ? '可达' : '不可达' }}
+        </el-tag>
+        <span v-if="r.ok && r.health" class="diag-detail">
+          {{ r.health.app }} v{{ r.health.version }}
+        </span>
+        <span v-else class="diag-detail">{{ r.error }}</span>
+      </div>
+      <div v-if="diagCheckedAt" class="diag-row diag-time">
+        最近诊断时间：{{ diagCheckedAt }}
+      </div>
+      <el-alert
+        v-if="diagVerdict"
+        type="info"
+        :closable="false"
+        show-icon
+        class="diag-verdict"
+      >
+        {{ diagVerdict }}
+      </el-alert>
+    </el-card>
 
     <!-- Redo Task B: local pending reports panel -->
     <el-card
@@ -367,7 +498,7 @@ onMounted(() => {
       <template #header>
         <div class="pending-header">
           <span class="pending-title">
-            本地待上报日志（{{ pendingLocalReports.length }} 条）
+            本地待上报日志（{{ pendingLocalReports.length }} 条，去重后 {{ pendingDeduped.length }} 条）
           </span>
           <el-button
             type="primary"
@@ -379,7 +510,7 @@ onMounted(() => {
           </el-button>
         </div>
       </template>
-      <el-table :data="pendingLocalReports" size="small" stripe>
+      <el-table :data="pendingDeduped" size="small" stripe>
         <el-table-column label="分类" width="90">
           <template #default="{ row }">
             <el-tag size="small" :type="row.category === 'network' ? 'warning' : 'danger'">
@@ -586,6 +717,53 @@ onMounted(() => {
 
 .status-banner {
   margin-bottom: 16px;
+}
+
+/* One-click-launch fix D1: diagnostics panel */
+.diag-card {
+  margin-bottom: 16px;
+  border-left: 3px solid #409eff;
+}
+
+.diag-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.diag-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #409eff;
+}
+
+.diag-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.diag-label {
+  font-weight: 600;
+  color: #606266;
+  min-width: 120px;
+}
+
+.diag-detail {
+  color: #909399;
+  font-size: 12px;
+}
+
+.diag-time {
+  color: #c0c4cc;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.diag-verdict {
+  margin-top: 8px;
 }
 
 .pending-card {
