@@ -30,8 +30,13 @@ import {
 import {
   readPendingQueue,
   flushPendingErrorReports,
+  purgeLogsSelfErrors,
 } from '../utils/errorReport'
 import { useAuthStore } from '../stores/auth'
+import {
+  runLogsDiagnostics,
+  type LogsDiagnosticsResult,
+} from '../api/logsDiagnostics'
 
 const route = useRoute()
 const router = useRouter()
@@ -53,6 +58,12 @@ const loadError = ref<string | null>(null)
 // /logs was lumped into backendConn='auth_failed' and the UI only said
 // "日志加载失败" with no status code / server message. Now we record the
 // exact failure so the user can tell auth failure from server error.
+//
+// Closure fix Task A: add 'browser_no_response' for the case where health
+// is ok but the browser got no response from /logs (CORS preflight fail,
+// network interception, etc.). Previously this was misclassified as
+// backendConn='unreachable', which made the top banner lie "后端服务不可达"
+// even though /health was green.
 type LogsEndpointStatus =
   | 'unknown'
   | 'ok'
@@ -61,6 +72,7 @@ type LogsEndpointStatus =
   | 'server_error'
   | 'client_error'
   | 'unreachable'
+  | 'browser_no_response'
 const logsEndpointStatus = ref<LogsEndpointStatus>('unknown')
 interface LogsErrorDetail {
   statusCode: number | null
@@ -199,6 +211,9 @@ const emptyText = computed(() => {
   if (logsEndpointStatus.value === 'client_error') {
     return '日志接口请求参数有误'
   }
+  if (logsEndpointStatus.value === 'browser_no_response') {
+    return '后端健康，但浏览器未收到 /logs 响应（可能是 CORS 或网络拦截）'
+  }
   if (logsEndpointStatus.value === 'unreachable') {
     return '后端不可达，无法加载服务端日志'
   }
@@ -224,6 +239,8 @@ const logsStatusLabel = computed(() => {
       return '服务异常 (5xx)'
     case 'client_error':
       return '请求错误 (4xx)'
+    case 'browser_no_response':
+      return '浏览器无响应'
     case 'unreachable':
       return '不可达'
     default:
@@ -240,6 +257,7 @@ const logsStatusTagType = computed<'success' | 'danger' | 'warning' | 'info'>(()
     case 'server_error':
       return 'danger'
     case 'client_error':
+    case 'browser_no_response':
     case 'unreachable':
       return 'warning'
     default:
@@ -282,8 +300,25 @@ async function runDiagnostics() {
 // re-check the business endpoint without a full refresh. This reuses
 // fetchLogs (which records status + lastLogsError) so the result lands
 // in the same diagnostic surface.
+//
+// Closure fix Task B: also run the three-layer diagnostics (health / logs
+// no-token / logs with-token) so the user can see exactly which layer
+// failed (CORS, auth, server error) instead of just "不可达".
+const logsDiagResult = ref<LogsDiagnosticsResult | null>(null)
+const logsDiagRunning = ref(false)
+
 async function probeLogsEndpoint() {
-  await fetchLogs()
+  logsDiagRunning.value = true
+  try {
+    const token = auth.token
+    const result = await runLogsDiagnostics(token)
+    logsDiagResult.value = result
+    // Also refresh the /logs list status (populates logsEndpointStatus +
+    // lastLogsError) so the badge and the diagnostics panel stay in sync.
+    await fetchLogs()
+  } finally {
+    logsDiagRunning.value = false
+  }
 }
 
 // D1 helper: label the address-resolution verdict from hostResults.
@@ -343,6 +378,13 @@ async function fetchLogs() {
     // Task A1/A4: classify the /logs failure precisely and, on 401,
     // clear the token + redirect to login so the user is not stuck on
     // a page that says "后端正常但日志加载失败".
+    //
+    // Closure fix Task A: when /logs has no response (status === undefined),
+    // we MUST NOT overwrite backendConn to 'unreachable' if health was ok.
+    // health is a public endpoint that already proved the backend process
+    // is alive; a no-response on /logs is a browser/CORS/transport issue,
+    // not a backend-down issue. Misclassifying it made the top banner lie
+    // "后端服务不可达" even though /health was green.
     if (status === 401) {
       logsEndpointStatus.value = 'auth_failed'
       backendConn.value = 'ok' // health is public; it may still be up
@@ -353,8 +395,16 @@ async function fetchLogs() {
       logsEndpointStatus.value = 'forbidden'
       backendConn.value = 'ok'
     } else if (status === undefined) {
-      logsEndpointStatus.value = 'unreachable'
-      backendConn.value = 'unreachable'
+      // No HTTP response at all. If health was ok, this is a browser/
+      // CORS/transport issue — NOT a backend-down. Keep backendConn at
+      // its current value (ok if health passed, unreachable if not).
+      if (backendConn.value === 'ok') {
+        logsEndpointStatus.value = 'browser_no_response'
+        // Do NOT touch backendConn — it stays 'ok'.
+      } else {
+        logsEndpointStatus.value = 'unreachable'
+        backendConn.value = 'unreachable'
+      }
     } else if (status !== undefined && status >= 500) {
       logsEndpointStatus.value = 'server_error'
       backendConn.value = 'ok'
@@ -366,11 +416,12 @@ async function fetchLogs() {
       backendConn.value = 'unreachable'
     }
     loadError.value = parseApiError(err, '获取日志列表失败')
-    // Don't toast when the backend is down or auth is being handled —
-    // the banner / redirect explains it.
+    // Don't toast when the backend is down, auth is being handled, or
+    // the browser didn't get a response — the banner / redirect explains it.
     if (
       logsEndpointStatus.value !== 'unreachable' &&
-      logsEndpointStatus.value !== 'auth_failed'
+      logsEndpointStatus.value !== 'auth_failed' &&
+      logsEndpointStatus.value !== 'browser_no_response'
     ) {
       ElMessage.error(loadError.value)
     }
@@ -381,6 +432,20 @@ async function fetchLogs() {
 
 function refreshPending() {
   pendingLocalReports.value = readPendingQueue()
+}
+
+// Task E2: purge /logs self-errors from the pending queue. These are
+// recursive "/logs failed to report /logs failure" entries that are both
+// noisy and unactionable. The button is shown alongside the flush button
+// so the user can clean the panel without a successful backend round-trip.
+function handlePurgeLogsSelfErrors() {
+  const removed = purgeLogsSelfErrors()
+  refreshPending()
+  if (removed > 0) {
+    ElMessage.success(`已清理 ${removed} 条 /logs 自身历史错误`)
+  } else {
+    ElMessage.info('没有 /logs 自身历史错误可清理')
+  }
 }
 
 // Logs-endpoint fix Task B2: structured flush result so the UI can show
@@ -687,7 +752,7 @@ onMounted(async () => {
           <span class="diag-title">/logs 业务接口状态</span>
           <el-button
             size="small"
-            :loading="listLoading"
+            :loading="logsDiagRunning"
             @click="probeLogsEndpoint"
           >
             探测 /logs 接口
@@ -736,6 +801,86 @@ onMounted(async () => {
       >
         /logs 接口返回 5xx。请查看后端日志 <code>{{ BACKEND_LOG_PATH }}</code> 或重启后端。
       </el-alert>
+      <el-alert
+        v-else-if="logsEndpointStatus === 'browser_no_response'"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="diag-verdict"
+      >
+        后端 /health 可达，但浏览器未收到 /logs 响应。可能是 CORS 预检失败、浏览器网络拦截或代理配置问题。请点击下方"探测 /logs 接口"运行三层诊断，查看 axios 错误码与 message。
+      </el-alert>
+    </el-card>
+
+    <!-- Closure fix Task B: three-layer /logs diagnostics panel -->
+    <el-card v-if="logsDiagResult" class="logs-diag-card" shadow="never">
+      <template #header>
+        <div class="diag-header">
+          <span class="diag-title">/logs 三层诊断（检查时间：{{ logsDiagResult.checkedAt }}）</span>
+        </div>
+      </template>
+      <div class="diag-layer">
+        <span class="diag-label">① /health 裸请求（无认证）：</span>
+        <el-tag
+          :type="logsDiagResult.health.reachable ? 'success' : 'danger'"
+          size="small"
+        >
+          {{ logsDiagResult.health.reachable ? '可达' : '不可达' }}
+        </el-tag>
+        <span v-if="logsDiagResult.health.statusCode" class="diag-detail">
+          HTTP {{ logsDiagResult.health.statusCode }}
+        </span>
+        <span v-if="logsDiagResult.health.axiosCode" class="diag-detail">
+          axios: {{ logsDiagResult.health.axiosCode }} — {{ logsDiagResult.health.axiosMessage }}
+        </span>
+      </div>
+      <div class="diag-layer">
+        <span class="diag-label">② /logs 无 token（预期 401 = 路由可达）：</span>
+        <el-tag
+          :type="logsDiagResult.logsNoToken.reachable ? 'success' : 'danger'"
+          size="small"
+        >
+          {{ logsDiagResult.logsNoToken.reachable ? '可达' : '不可达' }}
+        </el-tag>
+        <span v-if="logsDiagResult.logsNoToken.statusCode" class="diag-detail">
+          HTTP {{ logsDiagResult.logsNoToken.statusCode }}
+          <span v-if="logsDiagResult.logsNoToken.statusCode === 401">
+            （接口存在，需登录 ✓）
+          </span>
+        </span>
+        <span v-if="logsDiagResult.logsNoToken.serverMessage" class="diag-detail">
+          {{ logsDiagResult.logsNoToken.serverMessage }}
+        </span>
+        <span v-if="logsDiagResult.logsNoToken.axiosCode" class="diag-detail">
+          axios: {{ logsDiagResult.logsNoToken.axiosCode }} — {{ logsDiagResult.logsNoToken.axiosMessage }}
+        </span>
+      </div>
+      <div class="diag-layer">
+        <span class="diag-label">③ /logs 带当前 token：</span>
+        <el-tag
+          v-if="logsDiagResult.logsWithToken.statusCode !== null"
+          :type="
+            logsDiagResult.logsWithToken.statusCode === 200
+              ? 'success'
+              : logsDiagResult.logsWithToken.statusCode === 401 || logsDiagResult.logsWithToken.statusCode === 403
+                ? 'danger'
+                : 'warning'
+          "
+          size="small"
+        >
+          HTTP {{ logsDiagResult.logsWithToken.statusCode }}
+        </el-tag>
+        <el-tag v-else type="warning" size="small">浏览器无响应</el-tag>
+        <span v-if="logsDiagResult.logsWithToken.serverMessage" class="diag-detail">
+          {{ logsDiagResult.logsWithToken.serverMessage }}
+        </span>
+        <span v-if="logsDiagResult.logsWithToken.axiosCode" class="diag-detail">
+          axios: {{ logsDiagResult.logsWithToken.axiosCode }} — {{ logsDiagResult.logsWithToken.axiosMessage }}
+        </span>
+        <span v-if="!auth.token" class="diag-detail">
+          （当前无 token，已跳过此层）
+        </span>
+      </div>
     </el-card>
 
     <!-- Redo Task B: local pending reports panel -->
@@ -749,14 +894,22 @@ onMounted(async () => {
           <span class="pending-title">
             本地待上报日志（{{ pendingLocalReports.length }} 条，去重后 {{ pendingDeduped.length }} 条）
           </span>
-          <el-button
-            type="primary"
-            size="small"
-            :loading="flushing"
-            @click="handleReconnectAndFlush"
-          >
-            重新连接并补发
-          </el-button>
+          <div class="pending-actions">
+            <el-button
+              size="small"
+              @click="handlePurgeLogsSelfErrors"
+            >
+              清理 /logs 自身历史错误
+            </el-button>
+            <el-button
+              type="primary"
+              size="small"
+              :loading="flushing"
+              @click="handleReconnectAndFlush"
+            >
+              重新连接并补发
+            </el-button>
+          </div>
         </div>
       </template>
       <el-table :data="pendingDeduped" size="small" stripe>
@@ -995,6 +1148,21 @@ onMounted(async () => {
   border-left: 3px solid #67c23a;
 }
 
+/* Closure fix Task B: three-layer /logs diagnostics panel */
+.logs-diag-card {
+  margin-bottom: 16px;
+  border-left: 3px solid #e6a23c;
+}
+
+.logs-diag-card .diag-layer {
+  margin-bottom: 8px;
+  line-height: 1.8;
+}
+
+.logs-diag-card .diag-layer:last-child {
+  margin-bottom: 0;
+}
+
 .logs-err-detail {
   margin-top: 6px;
 }
@@ -1053,6 +1221,11 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.pending-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .pending-title {

@@ -13,10 +13,21 @@
 import axios from 'axios'
 import { API_BASE_URL, API_PORT } from '../config/api'
 
+export interface BackendBuildInfo {
+  /** Git commit the backend process was launched with. Empty in dev. */
+  git_commit: string
+  /** Per-process launch id, so the launcher can detect restarts. */
+  launch_id: string
+  /** ISO timestamp captured at backend process start. */
+  started_at: string
+}
+
 export interface BackendHealth {
   status: string
   app: string
   version: string
+  /** Task D: build identity for stale-backend detection. */
+  build?: BackendBuildInfo
 }
 
 export interface HostHealthResult {

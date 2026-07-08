@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
 import { login, register } from '../api/auth'
@@ -9,8 +9,21 @@ import { readPendingQueue, flushPendingErrorReports } from '../utils/errorReport
 
 type TabName = 'login' | 'register'
 
+const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+
+// Closure fix Task C1: support ?redirect=/logs so a 401 on /logs can
+// return the user to the log center after re-authenticating. The redirect
+// target must be a same-site path (starts with '/' but not '//') to
+// prevent open-redirect attacks.
+function resolveRedirect(): string {
+  const raw = route.query.redirect
+  if (typeof raw === 'string' && raw.startsWith('/') && !raw.startsWith('//')) {
+    return raw
+  }
+  return '/dashboard'
+}
 
 const activeTab = ref<TabName>('login')
 const loading = ref(false)
@@ -70,7 +83,8 @@ async function handleLogin() {
         // best-effort; the queue is retained on failure
       })
     }
-    router.push('/dashboard')
+    // Closure fix Task C1: honor ?redirect so 401 on /logs returns here.
+    router.push(resolveRedirect())
   } catch (err) {
     ElMessage.error(parseApiError(err, '登录失败，请重试'))
   } finally {
@@ -105,7 +119,8 @@ async function handleRegister() {
         // best-effort; the queue is retained on failure
       })
     }
-    router.push('/dashboard')
+    // Closure fix Task C1: honor ?redirect on register-then-login too.
+    router.push(resolveRedirect())
   } catch (err) {
     ElMessage.error(parseApiError(err, '注册失败，请重试'))
   } finally {

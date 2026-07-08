@@ -52,14 +52,60 @@ function sanitizePayload(
 }
 
 // --- pending queue (sessionStorage) ----------------------------------------
+// Task E2: /logs self-errors (request_path starts with /api/v1/logs) are
+// filtered out on read so the pending panel never shows a wall of "failed
+// to report /logs failure" entries. These self-referential errors are both
+// noisy and useless — the user cannot act on "the error-report endpoint
+// failed to report that the error-report endpoint failed". We drop them
+// at read time (rather than write time) so the queue stays intact for
+// debugging but the UI stays clean.
+const LOGS_SELF_ERROR_PATH_PREFIX = '/api/v1/logs'
+
+function isLogsSelfError(p: FrontendErrorReportPayload): boolean {
+  const path = p.request_path
+  if (!path) return false
+  return path.startsWith(LOGS_SELF_ERROR_PATH_PREFIX)
+}
+
 export function readPendingQueue(): FrontendErrorReportPayload[] {
   try {
     const raw = sessionStorage.getItem(PENDING_QUEUE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
+    if (!Array.isArray(parsed)) return []
+    // Task E2: filter out /logs self-errors so the panel only shows
+    // actionable backend/agent errors, not recursive /logs failures.
+    return parsed.filter((p) => !isLogsSelfError(p))
   } catch {
     return []
+  }
+}
+
+/**
+ * Task E2: remove ALL pending entries whose request_path starts with
+ * /api/v1/logs. Called by the LogsView "清理 /logs 自身历史错误" button so
+ * the user can manually flush the recursive /logs noise without waiting
+ * for the next successful flush. Returns the number of removed entries.
+ */
+export function purgeLogsSelfErrors(): number {
+  let removed = 0
+  try {
+    const raw = sessionStorage.getItem(PENDING_QUEUE_KEY)
+    if (!raw) return 0
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return 0
+    const kept: FrontendErrorReportPayload[] = []
+    for (const p of parsed) {
+      if (isLogsSelfError(p)) {
+        removed++
+      } else {
+        kept.push(p)
+      }
+    }
+    writeQueue(kept)
+    return removed
+  } catch {
+    return 0
   }
 }
 

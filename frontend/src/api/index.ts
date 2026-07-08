@@ -32,7 +32,17 @@ request.interceptors.response.use(
     if (status === 401) {
       const auth = useAuthStore()
       auth.clearToken()
-      router.push('/login')
+      // Closure fix Task C2: preserve the current path as redirect so the
+      // user returns to the page they were on (e.g. /logs) after logging
+      // in. Skip the push if we're already on /login to avoid duplicate
+      // navigation warnings.
+      const currentPath = router.currentRoute.value.path
+      if (currentPath !== '/login') {
+        router.push({
+          path: '/login',
+          query: { redirect: router.currentRoute.value.fullPath },
+        })
+      }
     }
     // Task A: report non-401 failures to the log center. Skip the report
     // call itself (X-Skip-Error-Report header) to avoid infinite recursion.

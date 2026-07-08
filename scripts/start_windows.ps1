@@ -30,14 +30,44 @@ $frontendDir = Join-Path $repoRoot "frontend"
 $venvPython = Join-Path $backendDir ".venv\Scripts\python.exe"
 $logDir = Join-Path $repoRoot "logs\dev-server"
 
+# Task D: capture the current git commit so we can (a) inject it into the
+# backend process as APP_GIT_COMMIT for /health.build, and (b) detect when
+# port 8000 is held by a stale backend running an older commit. Falls back
+# to empty string if git is unavailable (e.g. exported zip) — the launcher
+# will then skip the commit-mismatch restart path.
+$currentCommit = ""
+try {
+    $gitCommit = git -C $repoRoot rev-parse HEAD 2>$null
+    if ($LASTEXITCODE -eq 0 -and $gitCommit) {
+        $currentCommit = $gitCommit.Trim()
+    }
+} catch {
+    # git not installed or not a git repo — leave $currentCommit empty.
+}
+if ($currentCommit) {
+    Write-Ok "Repo commit: $currentCommit"
+}
+
 # --- Verify project structure ----------------------------------------------
 if (-not (Test-Path (Join-Path $backendDir "app\main.py"))) {
     Write-Host "[FAIL] backend/app/main.py not found. Is the repo root correct?" -ForegroundColor Red
     Write-Host "  Expected: $repoRoot" -ForegroundColor Gray
+    Write-LaunchStatus @{
+        launched = $false
+        reason = "backend_main_missing"
+        repo_root = $repoRoot
+        last_start_time = (Get-Date).ToString("o")
+    }
     exit 1
 }
 if (-not (Test-Path (Join-Path $frontendDir "package.json"))) {
     Write-Host "[FAIL] frontend/package.json not found." -ForegroundColor Red
+    Write-LaunchStatus @{
+        launched = $false
+        reason = "frontend_package_missing"
+        repo_root = $repoRoot
+        last_start_time = (Get-Date).ToString("o")
+    }
     exit 1
 }
 
@@ -106,9 +136,26 @@ function Wait-ForUrl($url, $timeoutSec = 30) {
 # One-click-launch fix B5: write launch_status.json so the user (and any
 # future diagnostics tool) can inspect the last launch result without
 # scraping console output.
+# Task E1: ensure the log directory exists before writing — early exit
+# branches (project structure missing, Python/Node missing) run BEFORE
+# the log-dir creation block and must still record a launch_status.json
+# so the user can see "why did the last launch fail?".
 function Write-LaunchStatus($status) {
+    if (-not (Test-Path $logDir)) {
+        try {
+            New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+        } catch {
+            # If we cannot create the log dir we cannot record status —
+            # fail silently so the actual failure message still prints.
+            return
+        }
+    }
     $statusFile = Join-Path $logDir "launch_status.json"
-    $status | ConvertTo-Json -Depth 4 | Out-File -FilePath $statusFile -Encoding utf8 -Force
+    try {
+        $status | ConvertTo-Json -Depth 4 | Out-File -FilePath $statusFile -Encoding utf8 -Force
+    } catch {
+        # best-effort; never let status writing mask the real failure.
+    }
 }
 
 # --- Create log directory ---------------------------------------------------
@@ -120,6 +167,11 @@ if (-not (Test-Path $logDir)) {
 Write-Step "Checking Python..."
 if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
     Write-Bad "Python not found. Please install Python 3.10+ and add it to PATH."
+    Write-LaunchStatus @{
+        launched = $false
+        reason = "python_not_found"
+        last_start_time = (Get-Date).ToString("o")
+    }
     exit 1
 }
 Write-Ok "System Python found."
@@ -128,7 +180,15 @@ Write-Ok "System Python found."
 if (-not (Test-Path $venvPython)) {
     Write-Step "Creating backend/.venv..."
     & python -m venv (Join-Path $backendDir ".venv")
-    if ($LASTEXITCODE -ne 0) { Write-Bad "Failed to create backend/.venv"; exit 1 }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Bad "Failed to create backend/.venv"
+        Write-LaunchStatus @{
+            launched = $false
+            reason = "venv_creation_failed"
+            last_start_time = (Get-Date).ToString("o")
+        }
+        exit 1
+    }
     Write-Ok "backend/.venv created."
 } else {
     Write-Ok "backend/.venv exists."
@@ -151,7 +211,15 @@ if ($needInstall) {
     Write-Step "Installing backend dependencies (pip install -r requirements.txt)..."
     & $venvPython -m pip install --upgrade pip --quiet
     & $venvPython -m pip install -r $requirementsFile --quiet
-    if ($LASTEXITCODE -ne 0) { Write-Bad "Failed to install backend dependencies."; exit 1 }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Bad "Failed to install backend dependencies."
+        Write-LaunchStatus @{
+            launched = $false
+            reason = "pip_install_failed"
+            last_start_time = (Get-Date).ToString("o")
+        }
+        exit 1
+    }
     # Only write the marker on success so a failed install retries next launch.
     New-Item -ItemType File -Path $installMarker -Force | Out-Null
     Write-Ok "Backend dependencies installed."
@@ -162,17 +230,35 @@ if ($needInstall) {
 Write-Step "Initializing database (scripts/init_db.py)..."
 $initDb = Join-Path $repoRoot "scripts\init_db.py"
 & $venvPython $initDb
-if ($LASTEXITCODE -ne 0) { Write-Bad "Database initialization failed."; exit 1 }
+if ($LASTEXITCODE -ne 0) {
+    Write-Bad "Database initialization failed."
+    Write-LaunchStatus @{
+        launched = $false
+        reason = "db_init_failed"
+        last_start_time = (Get-Date).ToString("o")
+    }
+    exit 1
+}
 Write-Ok "Database initialized."
 
 # --- Check Node/npm ---------------------------------------------------------
 Write-Step "Checking Node.js..."
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Write-Bad "Node.js not found. Please install Node 18+ and add it to PATH."
+    Write-LaunchStatus @{
+        launched = $false
+        reason = "node_not_found"
+        last_start_time = (Get-Date).ToString("o")
+    }
     exit 1
 }
 if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
     Write-Bad "npm not found. Please install Node 18+."
+    Write-LaunchStatus @{
+        launched = $false
+        reason = "npm_not_found"
+        last_start_time = (Get-Date).ToString("o")
+    }
     exit 1
 }
 Write-Ok "Node.js and npm found."
@@ -182,8 +268,26 @@ $nodeModules = Join-Path $frontendDir "node_modules"
 if (-not (Test-Path $nodeModules)) {
     Write-Step "Installing frontend dependencies..."
     Push-Location $frontendDir
-    try { npm install } catch { Write-Bad "npm install failed."; exit 1 }
-    finally { Pop-Location }
+    try {
+        npm install
+        if ($LASTEXITCODE -ne 0) {
+            Write-Bad "npm install failed."
+            Write-LaunchStatus @{
+                launched = $false
+                reason = "npm_install_failed"
+                last_start_time = (Get-Date).ToString("o")
+            }
+            exit 1
+        }
+    } catch {
+        Write-Bad "npm install failed."
+        Write-LaunchStatus @{
+            launched = $false
+            reason = "npm_install_failed"
+            last_start_time = (Get-Date).ToString("o")
+        }
+        exit 1
+    } finally { Pop-Location }
     Write-Ok "Frontend dependencies installed."
 } else {
     Write-Ok "Frontend dependencies already installed."
@@ -215,13 +319,49 @@ if (Test-PortInUse $backendPort) {
                 $owners | Format-Table PID, Name, CommandLine -AutoSize | Out-Host
                 Write-Host "  Run: powershell.exe -File scripts\stop_windows.ps1" -ForegroundColor Cyan
             }
+            Write-LaunchStatus @{
+                launched = $false
+                reason = "backend_port_held_by_other_app"
+                backend = @{ ok = $false; port = $backendPort }
+                last_start_time = (Get-Date).ToString("o")
+            }
             exit 1
         }
-        Write-Ok "Backend already running on port $backendPort. Reusing."
-        $backendHealthOk = $true
-        # Record the existing PID if discoverable.
-        $owners = Get-PortOwner $backendPort
-        if ($owners) { $backendPidValue = $owners[0].PID }
+        # Task D: if the running backend's git_commit does not match the
+        # current repo commit, it is a stale process from before the last
+        # git pull. Stop it and restart so the user actually gets the new
+        # code. Skip this check when $currentCommit is empty (git missing).
+        $staleBackend = $false
+        if ($currentCommit) {
+            try {
+                $healthJson = $resp.Content | ConvertFrom-Json
+                $runningCommit = $healthJson.build.git_commit
+                if ($runningCommit -and $runningCommit -ne $currentCommit) {
+                    Write-Step "Stale backend detected: running commit $runningCommit, repo commit $currentCommit. Restarting..."
+                    $staleBackend = $true
+                }
+            } catch {
+                # Old backend without build field — treat as stale so it
+                # gets restarted into the new code.
+                Write-Step "Running backend has no build info (old version). Restarting..."
+                $staleBackend = $true
+            }
+        }
+        if ($staleBackend) {
+            $stopScript = Join-Path $PSScriptRoot "stop_windows.ps1"
+            if (Test-Path $stopScript) {
+                & powershell.exe -File $stopScript
+                Start-Sleep -Seconds 2
+            }
+            # Fall through to the fresh-start branch below by clearing the
+            # port-in-use state. Loop is not needed; we just continue.
+        } else {
+            Write-Ok "Backend already running on port $backendPort. Reusing."
+            $backendHealthOk = $true
+            # Record the existing PID if discoverable.
+            $owners = Get-PortOwner $backendPort
+            if ($owners) { $backendPidValue = $owners[0].PID }
+        }
     } catch {
         Write-Bad "Port $backendPort is occupied but not serving our backend health endpoint."
         $owners = Get-PortOwner $backendPort
@@ -230,10 +370,21 @@ if (Test-PortInUse $backendPort) {
             $owners | Format-Table PID, Name, CommandLine -AutoSize | Out-Host
             Write-Host "  Run: powershell.exe -File scripts\stop_windows.ps1  (or free the port manually)" -ForegroundColor Cyan
         }
+        Write-LaunchStatus @{
+            launched = $false
+            reason = "backend_port_occupied_unhealthy"
+            backend = @{ ok = $false; port = $backendPort }
+            last_start_time = (Get-Date).ToString("o")
+        }
         exit 1
     }
-} else {
+}
+
+if (-not $backendHealthOk) {
     Write-Step "Starting backend on port $backendPort..."
+    # Task D: inject the current git commit so /health.build.git_commit
+    # reflects the code actually running in this process.
+    $env:APP_GIT_COMMIT = $currentCommit
     $backendArgs = @(
         "-NoExit",
         "-WindowStyle", "Hidden",
@@ -302,6 +453,13 @@ if (Test-PortInUse $frontendPort) {
                 $owners | Format-Table PID, Name, CommandLine -AutoSize | Out-Host
                 Write-Host "  Run: powershell.exe -File scripts\stop_windows.ps1" -ForegroundColor Cyan
             }
+            Write-LaunchStatus @{
+                launched = $false
+                reason = "frontend_port_held_by_other_app"
+                backend = @{ ok = $true; pid = $backendPidValue }
+                frontend = @{ ok = $false; port = $frontendPort }
+                last_start_time = (Get-Date).ToString("o")
+            }
             exit 1
         }
         Write-Ok "Frontend already running on port $frontendPort. Reusing."
@@ -314,6 +472,13 @@ if (Test-PortInUse $frontendPort) {
             Write-Host "  Owning process(es):" -ForegroundColor Gray
             $owners | Format-Table PID, Name, CommandLine -AutoSize | Out-Host
             Write-Host "  Run: powershell.exe -File scripts\stop_windows.ps1  (or free the port manually)" -ForegroundColor Cyan
+        }
+        Write-LaunchStatus @{
+            launched = $false
+            reason = "frontend_port_occupied_unhealthy"
+            backend = @{ ok = $true; pid = $backendPidValue }
+            frontend = @{ ok = $false; port = $frontendPort }
+            last_start_time = (Get-Date).ToString("o")
         }
         exit 1
     }

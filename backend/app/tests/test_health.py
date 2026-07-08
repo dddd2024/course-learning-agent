@@ -27,6 +27,27 @@ def test_health_response_contains_project_identifier_for_launcher(client) -> Non
     assert "course-learning-agent" in response.text
 
 
+def test_health_returns_build_info(client) -> None:
+    """Task D: /health must expose a ``build`` object with git_commit,
+    launch_id and started_at so the Windows launcher can detect when port
+    8000 is held by a stale backend running an older commit.
+    """
+    response = client.get("/api/v1/health")
+    assert response.status_code == 200
+    body = response.json()
+    assert "build" in body
+    build = body["build"]
+    assert isinstance(build, dict)
+    # git_commit may be empty in dev, but the field must be present and a str.
+    assert "git_commit" in build
+    assert isinstance(build["git_commit"], str)
+    assert "launch_id" in build
+    assert isinstance(build["launch_id"], str)
+    assert "started_at" in build
+    assert isinstance(build["started_at"], str)
+    assert build["started_at"]  # non-empty ISO timestamp
+
+
 # T09: 生产环境硬化 — 默认密钥在生产环境应被拒绝
 
 

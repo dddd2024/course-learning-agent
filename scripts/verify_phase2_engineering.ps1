@@ -336,6 +336,109 @@ if ($startWindows -match 'http://127\.0\.0\.1:\$frontendPort') {
   Write-Bad 'start_windows.ps1 frontendUrl not unified to 127.0.0.1'
 }
 
+# 16. Health-Logs closure fix: browser_no_response + three-layer diagnostics +
+#     LoginView redirect + 401 redirect preservation + /health build info +
+#     start_windows commit check + pending /logs self-error filtering
+Write-Step 'Health-Logs closure fix checks'
+$logsViewClosure = Get-Content "$root\frontend\src\views\LogsView.vue" -Raw
+$logsDiagnosticsPath = "$root\frontend\src\api\logsDiagnostics.ts"
+$loginView = Get-Content "$root\frontend\src\views\LoginView.vue" -Raw
+$apiIndexClosure = Get-Content "$root\frontend\src\api\index.ts" -Raw
+$healthEndpoint = Get-Content "$root\backend\app\api\v1\endpoints\health.py" -Raw
+$configPy = Get-Content "$root\backend\app\core\config.py" -Raw
+$errorReportClosure = Get-Content "$root\frontend\src\utils\errorReport.ts" -Raw
+$healthTs = Get-Content "$root\frontend\src\api\health.ts" -Raw
+
+# Task A: browser_no_response status in LogsView
+if ($logsViewClosure -match 'browser_no_response') {
+  Write-Ok 'LogsView has browser_no_response status'
+} else {
+  Write-Bad 'LogsView missing browser_no_response status'
+}
+
+# Task B: logsDiagnostics.ts exists and exports probeLogsNoToken
+if (Test-Path $logsDiagnosticsPath) {
+  $logsDiag = Get-Content $logsDiagnosticsPath -Raw
+  if ($logsDiag -match 'export async function probeLogsNoToken' -and $logsDiag -match 'export async function probeHealthBare' -and $logsDiag -match 'export async function probeLogsWithToken') {
+    Write-Ok 'logsDiagnostics.ts exports probeHealthBare/probeLogsNoToken/probeLogsWithToken'
+  } else {
+    Write-Bad 'logsDiagnostics.ts missing one of probeHealthBare/probeLogsNoToken/probeLogsWithToken'
+  }
+} else {
+  Write-Bad 'logsDiagnostics.ts not found'
+}
+
+# Task C: LoginView reads route.query.redirect + whitelist (startsWith '/' but not '//')
+if ($loginView -match 'route\.query\.redirect' -and $loginView -match "startsWith\('/'\)" -and $loginView -match "startsWith\('//'\)") {
+  Write-Ok 'LoginView has redirect whitelist (starts with / but not //)'
+} else {
+  Write-Bad 'LoginView missing redirect whitelist'
+}
+
+# Task C: api/index.ts 401 interceptor preserves redirect query + skip-if-on-login
+if ($apiIndexClosure -match "status === 401" -and $apiIndexClosure -match "redirect:" -and $apiIndexClosure -match "currentRoute\.value\.fullPath" -and $apiIndexClosure -match "currentPath !== '/login'") {
+  Write-Ok 'api/index.ts 401 interceptor preserves redirect + skips if on /login'
+} else {
+  Write-Bad 'api/index.ts 401 interceptor missing redirect preservation or skip-if-on-login'
+}
+
+# Task D: /health returns build field
+if ($healthEndpoint -match 'build' -and $healthEndpoint -match 'app_build_info') {
+  Write-Ok 'health.py returns build field via app_build_info'
+} else {
+  Write-Bad 'health.py missing build field'
+}
+
+# Task D: config.py has APP_GIT_COMMIT + APP_LAUNCH_ID + app_build_info function
+if ($configPy -match 'APP_GIT_COMMIT' -and $configPy -match 'APP_LAUNCH_ID' -and $configPy -match 'def app_build_info') {
+  Write-Ok 'config.py has APP_GIT_COMMIT/APP_LAUNCH_ID + app_build_info'
+} else {
+  Write-Bad 'config.py missing APP_GIT_COMMIT/APP_LAUNCH_ID or app_build_info'
+}
+
+# Task D: start_windows.ps1 injects APP_GIT_COMMIT + commit validation on port reuse
+# Note: the actual call is `git -C $repoRoot rev-parse HEAD`, so we match
+# `rev-parse HEAD` (not `git rev-parse HEAD`) to allow the -C flag.
+if ($startWindows -match 'APP_GIT_COMMIT' -and $startWindows -match 'rev-parse HEAD' -and $startWindows -match 'staleBackend' -and $startWindows -match 'runningCommit') {
+  Write-Ok 'start_windows.ps1 injects APP_GIT_COMMIT + validates commit on port reuse'
+} else {
+  Write-Bad 'start_windows.ps1 missing APP_GIT_COMMIT injection or commit validation'
+}
+
+# Task D: frontend health.ts BackendBuildInfo interface
+if ($healthTs -match 'BackendBuildInfo' -and $healthTs -match 'git_commit' -and $healthTs -match 'launch_id' -and $healthTs -match 'started_at') {
+  Write-Ok 'health.ts has BackendBuildInfo interface'
+} else {
+  Write-Bad 'health.ts missing BackendBuildInfo interface'
+}
+
+# Task E: start_windows.ps1 all exit 1 branches write launch_status.json
+# Count exit 1 occurrences and Write-LaunchStatus occurrences — every exit 1
+# must be preceded by a Write-LaunchStatus call.
+$exitCount = ([regex]::Matches($startWindows, 'exit 1')).Count
+$statusCount = ([regex]::Matches($startWindows, 'Write-LaunchStatus')).Count
+# One Write-LaunchStatus is the function definition; the rest are calls.
+# Expected: statusCount >= exitCount + 1 (definition) for full coverage.
+if ($statusCount -ge $exitCount + 1) {
+  Write-Ok "start_windows.ps1 all $exitCount exit-1 branches have Write-LaunchStatus ($statusCount total calls+def)"
+} else {
+  Write-Bad "start_windows.ps1 only $statusCount Write-LaunchStatus for $exitCount exit-1 branches"
+}
+
+# Task E: errorReport.ts readPendingQueue filters /logs self-errors + purgeLogsSelfErrors
+if ($errorReportClosure -match 'isLogsSelfError' -and $errorReportClosure -match 'purgeLogsSelfErrors' -and $errorReportClosure -match "/api/v1/logs") {
+  Write-Ok 'errorReport.ts filters /logs self-errors in readPendingQueue + exports purgeLogsSelfErrors'
+} else {
+  Write-Bad 'errorReport.ts missing /logs self-error filtering or purgeLogsSelfErrors'
+}
+
+# Task E: LogsView has purge button
+if ($logsViewClosure -match 'handlePurgeLogsSelfErrors' -and $logsViewClosure -match '清理 /logs 自身历史错误') {
+  Write-Ok 'LogsView has 清理 /logs 自身历史错误 button'
+} else {
+  Write-Bad 'LogsView missing purge /logs self-errors button'
+}
+
 Write-Host ''
 if ($failed) {
   Write-Host 'ACCEPTANCE FAILED' -ForegroundColor Red
