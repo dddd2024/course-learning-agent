@@ -35,6 +35,9 @@ const categoryOptions: { value: ErrorLogCategory; label: string }[] = [
   { value: 'agent', label: 'Agent' },
   { value: 'search', label: '搜索' },
   { value: 'system', label: '系统' },
+  { value: 'frontend', label: '前端' },
+  { value: 'network', label: '网络' },
+  { value: 'api', label: '接口' },
 ]
 
 const levelOptions: { value: ErrorLogLevel; label: string }[] = [
@@ -54,6 +57,9 @@ const categoryLabel: Record<ErrorLogCategory, string> = {
   agent: 'Agent',
   search: '搜索',
   system: '系统',
+  frontend: '前端',
+  network: '网络',
+  api: '接口',
 }
 
 const categoryTagType: Record<ErrorLogCategory, 'info' | 'warning' | 'danger' | 'success' | ''> = {
@@ -62,6 +68,9 @@ const categoryTagType: Record<ErrorLogCategory, 'info' | 'warning' | 'danger' | 
   agent: 'danger',
   search: 'success',
   system: '',
+  frontend: 'info',
+  network: 'warning',
+  api: 'danger',
 }
 
 const levelTagType: Record<ErrorLogLevel, 'warning' | 'danger'> = {

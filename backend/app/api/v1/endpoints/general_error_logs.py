@@ -2,12 +2,13 @@
 
 ``GET  /logs``          paginated, filterable list (current user only)
 ``GET  /logs/{id}``     single log detail (current user only)
+``POST /logs``          frontend error reporting (Task A)
 ``POST /logs/{id}/resolve``  mark a log resolved/ignored
 
 All queries are scoped by ``current_user.id`` so cross-user access is
 impossible (404, no existence leak).
 """
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -19,7 +20,9 @@ from app.schemas.general_error_log import (
     ErrorLogListResponse,
     ErrorLogResolveRequest,
     ErrorLogResponse,
+    FrontendErrorReportRequest,
 )
+from app.services.error_logger import log_error
 
 router = APIRouter()
 
@@ -85,6 +88,49 @@ def list_logs(
         page=page,
         page_size=page_size,
     )
+
+
+@router.post("", response_model=ErrorLogResponse, status_code=status.HTTP_201_CREATED)
+def report_frontend_error(
+    body: FrontendErrorReportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ErrorLogResponse:
+    """Record a frontend-originated failure (Task A).
+
+    The frontend reports failed API/network requests so the log center
+    can show them alongside server-side failures. ``message`` and
+    ``technical_detail`` are redacted by :func:`log_error` before
+    persistence — the frontend must NOT be trusted to pre-redact.
+
+    Only failures/warnings are reported here; success flows never call
+    this endpoint (per the log-center design principle).
+    """
+    # Fold frontend-only context into the technical detail so the DB
+    # schema (which has no frontend_route / status_code columns) stays
+    # unchanged but the info is still diagnosable.
+    extra_bits = []
+    if body.frontend_route:
+        extra_bits.append(f"frontend_route={body.frontend_route}")
+    if body.status_code is not None:
+        extra_bits.append(f"status_code={body.status_code}")
+    technical_detail = body.technical_detail
+    if extra_bits:
+        prefix = "; ".join(extra_bits)
+        technical_detail = (
+            f"{prefix}\n{technical_detail}" if technical_detail else prefix
+        )
+    log = log_error(
+        db,
+        current_user.id,
+        category=body.category,
+        level=body.level,
+        title=body.title,
+        message=body.message,
+        technical_detail=technical_detail,
+        request_path=body.request_path,
+    )
+    return ErrorLogResponse.model_validate(log)
 
 
 @router.get("/{log_id}", response_model=ErrorLogResponse)

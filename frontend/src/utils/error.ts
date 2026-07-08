@@ -15,7 +15,7 @@ interface ApiErrorResponse {
  * - 404 -> 数据不存在或无权访问
  * - 401 -> 登录已过期
  * - 5xx -> 服务异常
- * - 无 response -> 网络异常
+ * - 无 response -> 后端不可达（提示后端可能未启动/端口被占用，而非"网络异常"误导用户以为是外网断了）
  *
  * 优先使用后端 `message` 字段（业务异常），其次按状态码归类，最后回退 fallback。
  */
@@ -28,7 +28,14 @@ export function parseApiError(err: unknown, fallback = '操作失败，请重试
   if (serverMessage) return serverMessage
 
   if (status === undefined) {
-    return '网络异常，请检查网络连接'
+    // Task E: 区分网络异常与后端不可达。axios 无 response 通常意味着
+    // 请求未到达后端（后端未启动、端口被占用、CORS 拦截），而不是用户
+    // 的外网断了。给出更具体的提示，引导用户排查后端或查看日志中心。
+    const msg = e?.message || ''
+    if (msg.includes('timeout') || msg.toLowerCase().includes('timeout')) {
+      return '请求超时，后端响应时间过长，请稍后重试或查看日志中心'
+    }
+    return '无法连接后端服务，请确认后端已启动或查看日志中心'
   }
   switch (status) {
     case 400:
@@ -42,7 +49,7 @@ export function parseApiError(err: unknown, fallback = '操作失败，请重试
     case 422:
       return '参数不合法，请检查输入'
     default:
-      if (status >= 500) return '服务异常，请稍后重试'
+      if (status >= 500) return '服务异常，请稍后重试或查看日志中心'
       return fallback
   }
 }

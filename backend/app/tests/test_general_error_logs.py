@@ -202,3 +202,128 @@ def test_resolve_log_cross_user_returns_404(client) -> None:
     headers_b = auth_headers(client, username="bob")
     resp = client.post(f"/api/v1/logs/{log_id}/resolve", headers=headers_b)
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /logs  (Task A: frontend error reporting)
+# ---------------------------------------------------------------------------
+
+def test_report_frontend_error_creates_log(client) -> None:
+    """POST /logs with a frontend error payload creates an open error log.
+
+    Task A: the frontend reports failed API/network requests so the log
+    center can show them. The endpoint must reuse ``log_error`` (which
+    applies redaction) and scope the log to the current user.
+    """
+    headers = auth_headers(client, username="alice")
+    resp = client.post(
+        "/api/v1/logs",
+        headers=headers,
+        json={
+            "category": "frontend",
+            "level": "error",
+            "title": "前端接口请求失败",
+            "message": "GET /llm-configs 请求失败：网络异常",
+            "request_path": "/api/v1/llm-configs",
+            "technical_detail": "Network Error",
+        },
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["id"] > 0
+    assert body["category"] == "frontend"
+    assert body["level"] == "error"
+    assert body["status"] == "open"
+    assert body["message"] == "GET /llm-configs 请求失败：网络异常"
+    assert body["request_path"] == "/api/v1/llm-configs"
+    assert body["technical_detail"] == "Network Error"
+
+
+def test_report_frontend_error_redacts_sensitive(client) -> None:
+    """POST /logs must redact Authorization/JWT/api_key in the payload."""
+    headers = auth_headers(client, username="alice")
+    resp = client.post(
+        "/api/v1/logs",
+        headers=headers,
+        json={
+            "category": "network",
+            "level": "warning",
+            "title": "前端接口请求失败",
+            "message": "Authorization: Bearer eyJabc.eyJdef.sig123 leaked",
+            "technical_detail": "api_key=sk-live-123456 password=secret123",
+            "request_path": "/api/v1/llm-configs",
+        },
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    # No raw secrets survive redaction.
+    assert "eyJabc" not in body["message"]
+    assert "sk-live-123456" not in body["technical_detail"]
+    assert "secret123" not in body["technical_detail"]
+
+
+def test_report_frontend_error_unauthenticated(client) -> None:
+    """POST /logs without a token returns 401 (no anonymous reporting)."""
+    resp = client.post(
+        "/api/v1/logs",
+        json={
+            "category": "frontend",
+            "level": "error",
+            "title": "x",
+            "message": "y",
+        },
+    )
+    assert resp.status_code == 401
+
+
+def test_report_frontend_error_rejects_invalid_category(client) -> None:
+    """POST /logs with a bogus category returns 422."""
+    headers = auth_headers(client, username="alice")
+    resp = client.post(
+        "/api/v1/logs",
+        headers=headers,
+        json={
+            "category": "not-a-real-category",
+            "level": "error",
+            "title": "x",
+            "message": "y",
+        },
+    )
+    assert resp.status_code == 422
+
+
+def test_report_frontend_error_defaults_level_and_status(client) -> None:
+    """POST /logs defaults level=error, status=open when omitted."""
+    headers = auth_headers(client, username="alice")
+    resp = client.post(
+        "/api/v1/logs",
+        headers=headers,
+        json={
+            "category": "frontend",
+            "title": "前端接口请求失败",
+            "message": "GET /llm-configs 请求失败",
+        },
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["level"] == "error"
+    assert body["status"] == "open"
+
+
+def test_report_frontend_error_appears_in_list(client) -> None:
+    """A reported frontend error is visible in GET /logs."""
+    headers = auth_headers(client, username="alice")
+    client.post(
+        "/api/v1/logs",
+        headers=headers,
+        json={
+            "category": "frontend",
+            "title": "前端接口请求失败",
+            "message": "GET /llm-configs 请求失败",
+        },
+    )
+    resp = client.get("/api/v1/logs?category=frontend", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["items"][0]["category"] == "frontend"

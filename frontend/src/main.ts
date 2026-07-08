@@ -17,4 +17,12 @@ app.use(pinia)
 app.use(router)
 app.use(ElementPlus)
 
+// Task A: replay any frontend error reports queued while the backend was
+// unreachable during the previous session. Fire-and-forget on boot.
+import('./utils/errorReport')
+  .then(({ flushPendingErrorReports }) => flushPendingErrorReports())
+  .catch(() => {
+    // best-effort
+  })
+
 app.mount('#app')

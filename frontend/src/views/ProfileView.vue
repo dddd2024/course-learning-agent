@@ -388,15 +388,9 @@ onMounted(() => {
             {{ securityStatus.environment }}
           </el-tag>
         </div>
-        <el-alert
-          v-if="securityStatus.using_default_secret"
-          type="warning"
-          :closable="false"
-          show-icon
-          title="开发环境默认密钥，仅用于本地演示"
-          description="生产环境请配置自定义 LLM_CONFIG_SECRET_KEY，否则后端将拒绝启动。"
-          class="security-warning"
-        />
+        <!-- Task C: the "default secret" warning is developer-facing and
+             removed from the normal user UI. The backend still refuses to
+             start with a default secret in production. -->
       </div>
     </el-card>
 
@@ -673,9 +667,5 @@ onMounted(() => {
   font-size: 12px;
   line-height: 1.5;
   color: #909399;
-}
-
-.security-warning {
-  margin-top: 8px;
 }
 </style>

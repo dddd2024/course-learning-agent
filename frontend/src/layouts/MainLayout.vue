@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
-import { Odometer, Reading, Tickets, Calendar, Monitor, EditPen, Share, Document } from '@element-plus/icons-vue'
+import { Odometer, Reading, Tickets, Calendar, EditPen, Share, Document } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -55,10 +55,9 @@ function handleLogout() {
           <el-icon><EditPen /></el-icon>
           <span>测验</span>
         </el-menu-item>
-        <el-menu-item index="/agent-runs">
-          <el-icon><Monitor /></el-icon>
-          <span>Agent 审计</span>
-        </el-menu-item>
+        <!-- Task D: the standalone "Agent 审计" menu entry is removed;
+             the /agent-runs route + AgentRunsView are preserved as an
+             internal detail-link surface from the log center. -->
         <el-menu-item index="/logs">
           <el-icon><Document /></el-icon>
           <span>日志中心</span>

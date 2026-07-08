@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import MainLayout from '../layouts/MainLayout.vue'
+import { useAuthStore } from '../stores/auth'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -118,9 +119,18 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
-  const token = localStorage.getItem('token')
-  if (to.meta.requiresAuth && !token) {
+  // Task B: read token from the auth store (sessionStorage by default,
+  // localStorage only when "记住登录" was chosen) instead of reading
+  // localStorage directly. A stale localStorage token must NOT bypass
+  // the login page.
+  const auth = useAuthStore()
+  if (to.meta.requiresAuth && !auth.token) {
+    auth.clearToken()
     return '/login'
+  }
+  if (to.meta.requiresAuth === false && auth.token) {
+    // Already logged in — skip the login page.
+    return '/dashboard'
   }
 })
 

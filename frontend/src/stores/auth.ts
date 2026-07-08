@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { getMe } from '../api/auth'
 
 const TOKEN_KEY = 'token'
 const USERNAME_KEY = 'username'
@@ -55,5 +56,22 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem(REMEMBER_KEY)
   }
 
-  return { token, username, isLoggedIn, remember, setToken, clearToken }
+  // Task B: validate the token against /auth/me on app boot. If the
+  // backend rejects it (401) the axios interceptor clears the token and
+  // the router guard redirects to /login. Returns true when the token
+  // is still valid.
+  async function validateToken(): Promise<boolean> {
+    if (!token.value) return false
+    try {
+      const { data } = await getMe()
+      // Keep the username in sync with the server-side truth.
+      if (data.username) username.value = data.username
+      return true
+    } catch {
+      clearToken()
+      return false
+    }
+  }
+
+  return { token, username, isLoggedIn, remember, setToken, clearToken, validateToken }
 })
