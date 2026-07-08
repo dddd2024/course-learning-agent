@@ -18,6 +18,7 @@ const loginFormRef = ref<FormInstance>()
 const loginForm = reactive({
   username: '',
   password: '',
+  remember: false,
 })
 
 const loginRules: FormRules<typeof loginForm> = {
@@ -57,7 +58,7 @@ async function handleLogin() {
       username: loginForm.username,
       password: loginForm.password,
     })
-    auth.setToken(data.access_token, loginForm.username)
+    auth.setToken(data.access_token, loginForm.username, loginForm.remember)
     ElMessage.success('登录成功')
     router.push('/dashboard')
   } catch (err) {
@@ -132,6 +133,11 @@ function switchTab(tab: string) {
                 show-password
                 @keyup.enter="handleLogin"
               />
+            </el-form-item>
+            <el-form-item class="remember-row">
+              <el-checkbox v-model="loginForm.remember">
+                记住登录（否则关闭浏览器后需重新登录）
+              </el-checkbox>
             </el-form-item>
             <el-button
               type="primary"
@@ -225,5 +231,13 @@ function switchTab(tab: string) {
 .submit-btn {
   width: 100%;
   margin-top: 8px;
+}
+
+.remember-row {
+  margin-bottom: 8px;
+}
+
+.remember-row :deep(.el-form-item__content) {
+  justify-content: flex-start;
 }
 </style>

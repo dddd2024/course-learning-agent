@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./course_assistant.db"
     JWT_SECRET_KEY: str = _DEFAULT_JWT_SECRET
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     UPLOAD_DIR: str = "../storage/uploads"
     PARSED_DIR: str = "../storage/parsed"
     LLM_PROVIDER: str = "mock"

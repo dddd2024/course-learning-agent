@@ -9,9 +9,12 @@ const request = axios.create({
 
 request.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
+    // Security Task D: read token from the auth store (sessionStorage by
+    // default, localStorage only when "记住登录" was chosen) instead of
+    // always reading localStorage directly.
+    const auth = useAuthStore()
+    if (auth.token) {
+      config.headers.Authorization = `Bearer ${auth.token}`
     }
     return config
   },

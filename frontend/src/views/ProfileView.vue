@@ -19,6 +19,7 @@ import {
   type LLMConfigCreate,
   type LLMConfigUpdate,
 } from '../api/llmConfig'
+import { getSecurityStatus, type SecurityStatus } from '../api/auth'
 import { parseApiError } from '../utils/error'
 
 const auth = useAuthStore()
@@ -28,6 +29,9 @@ const listLoading = ref(false)
 
 const activeConfig = ref<LLMConfig | null>(null)
 const activeLoading = ref(false)
+
+const securityStatus = ref<SecurityStatus | null>(null)
+const securityLoading = ref(false)
 
 const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
@@ -149,6 +153,24 @@ async function fetchActiveConfig() {
   } finally {
     activeLoading.value = false
   }
+}
+
+async function fetchSecurityStatus() {
+  securityLoading.value = true
+  try {
+    const { data } = await getSecurityStatus()
+    securityStatus.value = data
+  } catch {
+    // Non-fatal: the card simply stays hidden if the endpoint is unavailable.
+  } finally {
+    securityLoading.value = false
+  }
+}
+
+function securityLabel(value: string): string {
+  if (value === 'bcrypt_hash') return 'bcrypt 哈希'
+  if (value === 'fernet_encrypted') return 'Fernet 加密'
+  return value
 }
 
 function handleProviderChange(value: string) {
@@ -295,6 +317,7 @@ async function handleDelete(row: LLMConfig) {
 onMounted(() => {
   fetchConfigs()
   fetchActiveConfig()
+  fetchSecurityStatus()
 })
 </script>
 
@@ -325,6 +348,55 @@ onMounted(() => {
           </el-tag>
           <el-tag v-else type="info" size="small">Mock / 系统模式</el-tag>
         </div>
+      </div>
+    </el-card>
+
+    <el-card
+      v-if="securityStatus"
+      v-loading="securityLoading"
+      class="section-card"
+      shadow="never"
+    >
+      <template #header>
+        <div class="section-title">安全状态</div>
+      </template>
+      <div class="user-info">
+        <div class="info-row">
+          <span class="info-label">密码存储：</span>
+          <el-tag type="success" size="small">
+            {{ securityLabel(securityStatus.password_storage) }}
+          </el-tag>
+        </div>
+        <div class="info-row">
+          <span class="info-label">API Key 存储：</span>
+          <el-tag type="success" size="small">
+            {{ securityLabel(securityStatus.api_key_storage) }}
+          </el-tag>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Token 有效期：</span>
+          <span class="info-value">
+            {{ securityStatus.token_expiry_minutes }} 分钟
+          </span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">运行环境：</span>
+          <el-tag
+            :type="securityStatus.environment === 'production' ? 'warning' : 'info'"
+            size="small"
+          >
+            {{ securityStatus.environment }}
+          </el-tag>
+        </div>
+        <el-alert
+          v-if="securityStatus.using_default_secret"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="开发环境默认密钥，仅用于本地演示"
+          description="生产环境请配置自定义 LLM_CONFIG_SECRET_KEY，否则后端将拒绝启动。"
+          class="security-warning"
+        />
       </div>
     </el-card>
 
@@ -601,5 +673,9 @@ onMounted(() => {
   font-size: 12px;
   line-height: 1.5;
   color: #909399;
+}
+
+.security-warning {
+  margin-top: 8px;
 }
 </style>

@@ -44,3 +44,15 @@ export function register(payload: RegisterPayload): AxiosPromise<RegisterResult>
 export function getMe(): AxiosPromise<UserInfo> {
   return request.get('/auth/me')
 }
+
+export interface SecurityStatus {
+  password_storage: string
+  api_key_storage: string
+  token_expiry_minutes: number
+  environment: string
+  using_default_secret: boolean
+}
+
+export function getSecurityStatus(): AxiosPromise<SecurityStatus> {
+  return request.get('/auth/security-status')
+}
