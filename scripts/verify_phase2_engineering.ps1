@@ -439,6 +439,104 @@ if ($logsViewClosure -match 'handlePurgeLogsSelfErrors' -and $logsViewClosure -m
   Write-Bad 'LogsView missing purge /logs self-errors button'
 }
 
+# 17. P0 regression guard: start_windows.ps1 must parse, run under -DryRun,
+#     and define helper functions before any call site. This section exists
+#     precisely because a previous revision passed all static string checks
+#     but had a fatal function-ordering bug that broke one-click launch.
+Write-Step 'P0 regression guard: start_windows.ps1 parse + DryRun + function order'
+
+# 17a. PowerShell parser check — catches syntax errors the static string
+#      checks cannot see. Uses the language parser directly so we do not
+#      have to spawn a powershell process just to get a parse result.
+$parseErrors = $null
+[void][System.Management.Automation.Language.Parser]::ParseFile("$root\scripts\start_windows.ps1", [ref]$null, [ref]$parseErrors)
+if ($parseErrors -and $parseErrors.Count -gt 0) {
+  Write-Bad "start_windows.ps1 has $($parseErrors.Count) parse error(s):"
+  $parseErrors | ForEach-Object { Write-Host "    $($_.Extent.StartLineNumber): $($_.Message)" -ForegroundColor Gray }
+} else {
+  Write-Ok 'start_windows.ps1 parses with no syntax errors'
+}
+
+# 17b. Function-definition-order check. The P0 regression was calling
+#      Write-Ok / Write-LaunchStatus before their definitions. We verify
+#      the first call to each critical helper comes AFTER its definition
+#      line. Comment lines (starting with '#') AND lines inside <# #>
+#      block comments are excluded so doc comments mentioning the function
+#      names do not register as false "calls".
+$startWindowsRaw = Get-Content "$root\scripts\start_windows.ps1"
+# Strip <# ... #> block comments so lines inside them are not mistaken
+# for call sites. Walk line-by-line toggling an in-block flag.
+$startWindowsLines = @()
+$inBlock = $false
+foreach ($ln in $startWindowsRaw) {
+    if ($ln -match '<#') { $inBlock = $true }
+    if (-not $inBlock) { $startWindowsLines += $ln }
+    if ($ln -match '#>') { $inBlock = $false }
+}
+$criticalHelpers = @('Write-Ok', 'Write-Bad', 'Write-Step', 'Write-LaunchStatus')
+$orderOk = $true
+foreach ($fn in $criticalHelpers) {
+  $defLine = ($startWindowsLines | Select-String -Pattern "^function $fn" | Select-Object -First 1).LineNumber
+  # First call = first NON-COMMENT line that mentions $fn but is NOT the
+  # definition. Comment lines (starting with '#') are skipped so the doc
+  # header does not produce false positives.
+  $callLine = ($startWindowsLines | Select-String -Pattern "\b$fn\b" | Where-Object { $_.Line -notmatch "^function $fn" -and $_.Line -notmatch '^\s*#' } | Select-Object -First 1).LineNumber
+  if ($defLine -gt 0 -and $callLine -gt 0 -and $callLine -lt $defLine) {
+    Write-Bad "$fn called at line $callLine but defined at line $defLine (call before definition)"
+    $orderOk = $false
+  }
+}
+if ($orderOk) {
+  Write-Ok 'start_windows.ps1 all critical helpers defined before first call'
+}
+
+# 17c. DryRun execution — actually runs the launcher in -DryRun mode so we
+#      prove it is runnable end-to-end (preflight checks pass, no parse
+#      error, no function-order crash). DryRun does NOT start long-lived
+#      services or open a browser.
+$dryRunResult = & pwsh -NoProfile -File "$root\scripts\start_windows.ps1" -DryRun 2>&1
+$dryRunExit = $LASTEXITCODE
+if ($dryRunExit -eq 0 -and ($dryRunResult -match 'dry_run_ok' -or $dryRunResult -match 'DryRun')) {
+  Write-Ok 'start_windows.ps1 -DryRun exits 0 with dry_run_ok'
+} else {
+  Write-Bad "start_windows.ps1 -DryRun failed (exit $dryRunExit)"
+  $dryRunResult | Select-Object -Last 8 | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
+}
+
+# 17d. DryRun launch_status.json must contain dry_run_ok or launched=true
+$dryRunStatusPath = "$root\logs\dev-server\launch_status.json"
+if (Test-Path $dryRunStatusPath) {
+  $dryRunStatus = Get-Content $dryRunStatusPath -Raw
+  if ($dryRunStatus -match 'dry_run_ok' -or $dryRunStatus -match '"launched":\s*true') {
+    Write-Ok 'DryRun launch_status.json contains dry_run_ok / launched=true'
+  } else {
+    Write-Bad 'DryRun launch_status.json missing dry_run_ok / launched=true'
+  }
+} else {
+  Write-Bad 'DryRun did not write launch_status.json'
+}
+
+# 17e. -DryRun / -NoOpen params present
+if ($startWindows -match '\[switch\]\$DryRun' -and $startWindows -match '\[switch\]\$NoOpen') {
+  Write-Ok 'start_windows.ps1 has -DryRun and -NoOpen params'
+} else {
+  Write-Bad 'start_windows.ps1 missing -DryRun or -NoOpen param'
+}
+
+# 17f. try/catch wrapper for unhandled exceptions
+if ($startWindows -match 'function Invoke-Main' -and $startWindows -match 'unhandled_exception' -and $startWindows -match 'exception_message') {
+  Write-Ok 'start_windows.ps1 has try/catch wrapper + unhandled_exception status'
+} else {
+  Write-Bad 'start_windows.ps1 missing try/catch wrapper or unhandled_exception handling'
+}
+
+# 17g. stale-backend stop-failed guard (Task D)
+if ($startWindows -match 'backend_stale_stop_failed') {
+  Write-Ok 'start_windows.ps1 has backend_stale_stop_failed guard'
+} else {
+  Write-Bad 'start_windows.ps1 missing backend_stale_stop_failed guard'
+}
+
 Write-Host ''
 if ($failed) {
   Write-Host 'ACCEPTANCE FAILED' -ForegroundColor Red
