@@ -298,6 +298,44 @@ Push-Location "$root\backend"
 if ($LASTEXITCODE -eq 0) { Write-Ok 'material delete tests passed' } else { Write-Bad 'material delete tests failed' }
 Pop-Location
 
+# 15. Logs-endpoint fix: /logs business-endpoint diagnostics + auth-gated flush + no self-recursion
+Write-Step 'Logs-endpoint fix checks'
+$logsView = Get-Content "$root\frontend\src\views\LogsView.vue" -Raw
+$errorReport = Get-Content "$root\frontend\src\utils\errorReport.ts" -Raw
+$apiIndex = Get-Content "$root\frontend\src\api\index.ts" -Raw
+$startWindows = Get-Content "$root\scripts\start_windows.ps1" -Raw
+
+# Task A: logsEndpointStatus + lastLogsError + 401 redirect
+# Note: the redirect is implemented via router.push({ path: '/login', query: { redirect: '/logs' } })
+# rather than the literal string '/login?redirect=/logs', so we check for
+# both the path and the redirect query marker.
+if ($logsView -match 'logsEndpointStatus' -and $logsView -match 'lastLogsError' -and $logsView -match "auth_failed" -and $logsView -match "path: '/login'" -and $logsView -match "redirect: '/logs'") {
+  Write-Ok 'LogsView has logsEndpointStatus/lastLogsError/401-redirect'
+} else {
+  Write-Bad 'LogsView missing logsEndpointStatus/lastLogsError/401-redirect'
+}
+
+# Task B: flushPendingErrorReports returns structured result + handleReconnectAndFlush awaits auth
+if ($errorReport -match 'sentCount' -and $errorReport -match 'retainedCount' -and $errorReport -match 'retainedReasons' -and $logsView -match 'ensureAuthReady') {
+  Write-Ok 'flushPendingErrorReports returns structured result + auth-gated flush'
+} else {
+  Write-Bad 'flushPendingErrorReports structured result or auth-gated flush missing'
+}
+
+# Task C: /logs endpoint errors do not enter pending queue
+if ($apiIndex -match 'isLogsEndpoint' -and $apiIndex -match "startsWith\('/logs/'\)") {
+  Write-Ok '/logs self-errors excluded from pending queue'
+} else {
+  Write-Bad '/logs self-recursion guard missing in api/index.ts'
+}
+
+# Task D: start_windows.ps1 frontendUrl uses 127.0.0.1
+if ($startWindows -match 'http://127\.0\.0\.1:\$frontendPort') {
+  Write-Ok 'start_windows.ps1 frontendUrl uses 127.0.0.1'
+} else {
+  Write-Bad 'start_windows.ps1 frontendUrl not unified to 127.0.0.1'
+}
+
 Write-Host ''
 if ($failed) {
   Write-Host 'ACCEPTANCE FAILED' -ForegroundColor Red

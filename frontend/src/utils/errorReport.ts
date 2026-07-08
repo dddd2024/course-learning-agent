@@ -180,19 +180,45 @@ export async function reportFrontendError(
 }
 
 /**
+ * Structured result of a flush attempt. Lets the UI show "2 条中 0 条补发，
+ * 原因：auth_failed" instead of the vague "部分日志未能补发".
+ *
+ * - sentCount: items successfully POSTed this round
+ * - retainedCount: items kept in the queue (401 or backend unreachable)
+ * - droppedCount: items dropped (non-401 4xx/5xx — the endpoint rejected them)
+ * - retainedReasons: deduped reasons (auth_failed / server_5xx / unreachable)
+ */
+export interface FlushResult {
+  sentCount: number
+  retainedCount: number
+  droppedCount: number
+  retainedReasons: string[]
+}
+
+/**
  * Attempt to flush any pending reports. Safe to call on app boot or after
  * the user re-authenticates. 401 responses retain the queue; other 4xx/5xx
  * drop the offending item.
+ *
+ * Logs-endpoint fix Task B2: returns a structured result so the UI can
+ * show exactly why items were retained (auth_failed / server_5xx /
+ * unreachable) instead of the vague "部分日志未能补发".
  */
-export async function flushPendingErrorReports(): Promise<void> {
+export async function flushPendingErrorReports(): Promise<FlushResult> {
   const backlog = readPendingQueue()
-  if (backlog.length === 0) return
+  if (backlog.length === 0) {
+    return { sentCount: 0, retainedCount: 0, droppedCount: 0, retainedReasons: [] }
+  }
   const stillPending: FrontendErrorReportPayload[] = []
   const retainedSigs = new Set<string>()
+  const reasons = new Set<string>()
+  let sentCount = 0
+  let droppedCount = 0
   for (const item of backlog) {
     const itemSig = signature(item)
     try {
       await reportErrorLog(item)
+      sentCount++
     } catch (err) {
       const e = err as { response?: { status?: number } }
       const status = e.response?.status
@@ -203,15 +229,29 @@ export async function flushPendingErrorReports(): Promise<void> {
           stillPending.push(item)
           retainedSigs.add(itemSig)
         }
+        reasons.add('auth_failed')
       } else if (e.response) {
+        if (status && status >= 500) {
+          reasons.add('server_5xx')
+        } else {
+          reasons.add(`server_${status}`)
+        }
+        droppedCount++
         continue
       } else {
         if (!retainedSigs.has(itemSig)) {
           stillPending.push(item)
           retainedSigs.add(itemSig)
         }
+        reasons.add('unreachable')
       }
     }
   }
   writeQueue(stillPending)
+  return {
+    sentCount,
+    retainedCount: stillPending.length,
+    droppedCount,
+    retainedReasons: Array.from(reasons),
+  }
 }

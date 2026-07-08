@@ -38,7 +38,19 @@ request.interceptors.response.use(
     // call itself (X-Skip-Error-Report header) to avoid infinite recursion.
     // Dynamic import avoids a circular dependency (errorReport -> logs -> index).
     const skipReport = error.config?.headers?.['X-Skip-Error-Report'] === '1'
-    if (!skipReport && status !== 401) {
+    // Logs-endpoint fix Task C1: the log center's OWN endpoints (/logs,
+    // /logs/{id}, /logs/{id}/resolve) must never feed their own failures
+    // into the pending error-report queue — that created a self-recursing
+    // "log center errors enter the log center" loop. The reportErrorLog
+    // POST already sets X-Skip-Error-Report, but the GET/resolve calls
+    // did not, so a 401/500 on GET /logs spawned a new pending entry
+    // describing "GET /logs 请求失败", which then tried to POST /logs…
+    const reqUrl = (error.config?.url || '') as string
+    const isLogsEndpoint =
+      reqUrl === '/logs' ||
+      reqUrl.startsWith('/logs/') ||
+      reqUrl.includes('/logs?')
+    if (!skipReport && !isLogsEndpoint && status !== 401) {
       // Build a diagnostic payload. Avoid sending the request body (may
       // contain secrets); the backend redacts message/technical_detail too.
       const method = (error.config?.method || 'GET').toUpperCase()

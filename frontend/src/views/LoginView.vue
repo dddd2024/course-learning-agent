@@ -5,6 +5,7 @@ import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
 import { login, register } from '../api/auth'
 import { parseApiError } from '../utils/error'
+import { readPendingQueue, flushPendingErrorReports } from '../utils/errorReport'
 
 type TabName = 'login' | 'register'
 
@@ -60,6 +61,15 @@ async function handleLogin() {
     })
     auth.setToken(data.access_token, loginForm.username, loginForm.remember)
     ElMessage.success('登录成功')
+    // Logs-endpoint fix Task B3: if there are pending error reports from
+    // a previous session (collected while the backend was down or the
+    // token had expired), flush them now so they land in the log center
+    // instead of lingering in sessionStorage forever.
+    if (readPendingQueue().length > 0) {
+      flushPendingErrorReports().catch(() => {
+        // best-effort; the queue is retained on failure
+      })
+    }
     router.push('/dashboard')
   } catch (err) {
     ElMessage.error(parseApiError(err, '登录失败，请重试'))
@@ -89,6 +99,12 @@ async function handleRegister() {
       password: registerForm.password,
     })
     auth.setToken(data.access_token, registerForm.username)
+    // Logs-endpoint fix Task B3: same auto-flush as login.
+    if (readPendingQueue().length > 0) {
+      flushPendingErrorReports().catch(() => {
+        // best-effort; the queue is retained on failure
+      })
+    }
     router.push('/dashboard')
   } catch (err) {
     ElMessage.error(parseApiError(err, '注册失败，请重试'))

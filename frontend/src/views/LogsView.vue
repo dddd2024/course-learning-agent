@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import {
@@ -31,8 +31,11 @@ import {
   readPendingQueue,
   flushPendingErrorReports,
 } from '../utils/errorReport'
+import { useAuthStore } from '../stores/auth'
 
 const route = useRoute()
+const router = useRouter()
+const auth = useAuthStore()
 
 const logs = ref<ErrorLog[]>([])
 const listLoading = ref(false)
@@ -44,6 +47,28 @@ const backendConn = ref<ConnState>('unknown')
 const backendHealth = ref<BackendHealth | null>(null)
 const healthCheckedAt = ref<string | null>(null)
 const loadError = ref<string | null>(null)
+
+// Logs-endpoint fix Task A: separate /logs business-endpoint status from
+// backend health. health is public; /logs needs auth. Previously a 401 on
+// /logs was lumped into backendConn='auth_failed' and the UI only said
+// "日志加载失败" with no status code / server message. Now we record the
+// exact failure so the user can tell auth failure from server error.
+type LogsEndpointStatus =
+  | 'unknown'
+  | 'ok'
+  | 'auth_failed'
+  | 'forbidden'
+  | 'server_error'
+  | 'client_error'
+  | 'unreachable'
+const logsEndpointStatus = ref<LogsEndpointStatus>('unknown')
+interface LogsErrorDetail {
+  statusCode: number | null
+  serverMessage: string | null
+  serverDetail: string | null
+  requestUrl: string | null
+}
+const lastLogsError = ref<LogsErrorDetail | null>(null)
 
 // Redo Task B: local pending reports (backend-unreachable backlog).
 const pendingLocalReports = ref<FrontendErrorReportPayload[]>([])
@@ -158,19 +183,68 @@ function buildListParams() {
   return params
 }
 
-// Redo Task B/D: empty-text must reflect WHY the list is empty. "暂无异常日志"
-// only applies when the backend is reachable and returned an empty page.
+// Redo Task B/D + Logs-endpoint fix Task A: empty-text must reflect WHY
+// the list is empty. Prefer the /logs-specific status over backendConn
+// because health ok does NOT imply /logs ok (auth may have expired).
 const emptyText = computed(() => {
-  if (backendConn.value === 'unreachable') {
+  if (logsEndpointStatus.value === 'auth_failed') {
+    return '登录已失效，请重新登录后再查看日志'
+  }
+  if (logsEndpointStatus.value === 'forbidden') {
+    return '没有权限查看日志'
+  }
+  if (logsEndpointStatus.value === 'server_error') {
+    return '日志接口返回 5xx，请查看后端日志'
+  }
+  if (logsEndpointStatus.value === 'client_error') {
+    return '日志接口请求参数有误'
+  }
+  if (logsEndpointStatus.value === 'unreachable') {
     return '后端不可达，无法加载服务端日志'
   }
-  if (backendConn.value === 'auth_failed') {
-    return '登录已失效，请重新登录后再查看日志'
+  if (backendConn.value === 'unreachable') {
+    return '后端不可达，无法加载服务端日志'
   }
   if (loadError.value) {
     return '日志加载失败，请刷新重试'
   }
   return '暂无异常日志'
+})
+
+// Task A4: human-readable label for the /logs endpoint status badge.
+const logsStatusLabel = computed(() => {
+  switch (logsEndpointStatus.value) {
+    case 'ok':
+      return '正常'
+    case 'auth_failed':
+      return '登录失效 (401)'
+    case 'forbidden':
+      return '无权限 (403)'
+    case 'server_error':
+      return '服务异常 (5xx)'
+    case 'client_error':
+      return '请求错误 (4xx)'
+    case 'unreachable':
+      return '不可达'
+    default:
+      return '未知'
+  }
+})
+
+const logsStatusTagType = computed<'success' | 'danger' | 'warning' | 'info'>(() => {
+  switch (logsEndpointStatus.value) {
+    case 'ok':
+      return 'success'
+    case 'auth_failed':
+    case 'forbidden':
+    case 'server_error':
+      return 'danger'
+    case 'client_error':
+    case 'unreachable':
+      return 'warning'
+    default:
+      return 'info'
+  }
 })
 
 async function checkHealth() {
@@ -204,6 +278,14 @@ async function runDiagnostics() {
   }
 }
 
+// Logs-endpoint fix Task A3: explicit /logs probe so the user can
+// re-check the business endpoint without a full refresh. This reuses
+// fetchLogs (which records status + lastLogsError) so the result lands
+// in the same diagnostic surface.
+async function probeLogsEndpoint() {
+  await fetchLogs()
+}
+
 // D1 helper: label the address-resolution verdict from hostResults.
 const diagVerdict = computed(() => {
   if (hostResults.value.length === 0) return ''
@@ -231,18 +313,65 @@ async function fetchLogs() {
     const { data } = await listErrorLogs(buildListParams())
     logs.value = data.items
     backendConn.value = 'ok'
+    // Task A1: /logs succeeded → endpoint is healthy and authed.
+    logsEndpointStatus.value = 'ok'
+    lastLogsError.value = null
   } catch (err) {
-    const status = (err as { response?: { status?: number } }).response?.status
+    const e = err as {
+      response?: { status?: number; data?: { message?: string; detail?: unknown } }
+      config?: { url?: string }
+    }
+    const status = e.response?.status
+    const requestUrl = e.config?.url
+      ? `${API_BASE_URL}${e.config.url}`
+      : null
+    const serverMessage = e.response?.data?.message || null
+    const serverDetailRaw = e.response?.data?.detail
+    const serverDetail =
+      typeof serverDetailRaw === 'string'
+        ? serverDetailRaw
+        : serverDetailRaw != null
+          ? JSON.stringify(serverDetailRaw)
+          : null
+    lastLogsError.value = {
+      statusCode: status ?? null,
+      serverMessage,
+      serverDetail,
+      requestUrl,
+    }
+
+    // Task A1/A4: classify the /logs failure precisely and, on 401,
+    // clear the token + redirect to login so the user is not stuck on
+    // a page that says "后端正常但日志加载失败".
     if (status === 401) {
-      backendConn.value = 'auth_failed'
-    } else if (status === undefined) {
-      backendConn.value = 'unreachable'
-    } else {
+      logsEndpointStatus.value = 'auth_failed'
+      backendConn.value = 'ok' // health is public; it may still be up
+      auth.clearToken()
+      ElMessage.warning('登录已失效，正在跳转登录页')
+      router.push({ path: '/login', query: { redirect: '/logs' } })
+    } else if (status === 403) {
+      logsEndpointStatus.value = 'forbidden'
       backendConn.value = 'ok'
+    } else if (status === undefined) {
+      logsEndpointStatus.value = 'unreachable'
+      backendConn.value = 'unreachable'
+    } else if (status !== undefined && status >= 500) {
+      logsEndpointStatus.value = 'server_error'
+      backendConn.value = 'ok'
+    } else if (status !== undefined && status >= 400) {
+      logsEndpointStatus.value = 'client_error'
+      backendConn.value = 'ok'
+    } else {
+      logsEndpointStatus.value = 'unreachable'
+      backendConn.value = 'unreachable'
     }
     loadError.value = parseApiError(err, '获取日志列表失败')
-    // Don't toast when the backend is down — the banner explains it.
-    if (backendConn.value === 'ok') {
+    // Don't toast when the backend is down or auth is being handled —
+    // the banner / redirect explains it.
+    if (
+      logsEndpointStatus.value !== 'unreachable' &&
+      logsEndpointStatus.value !== 'auth_failed'
+    ) {
       ElMessage.error(loadError.value)
     }
   } finally {
@@ -254,21 +383,70 @@ function refreshPending() {
   pendingLocalReports.value = readPendingQueue()
 }
 
+// Logs-endpoint fix Task B2: structured flush result so the UI can show
+// "2 条中 0 条补发，原因：auth_failed" instead of the vague message.
+const lastFlushResult = ref<{
+  total: number
+  sent: number
+  retained: number
+  dropped: number
+  reasons: string[]
+} | null>(null)
+
 async function handleReconnectAndFlush() {
   flushing.value = true
   try {
+    // Task B1: verify auth FIRST. health is public, so a green health
+    // banner does NOT mean POST /logs will succeed — if the token
+    // expired, POST /logs returns 401 and the pending items would be
+    // retained with no clear reason. ensureAuthReady re-validates the
+    // token against /auth/me; if it fails we redirect to login and keep
+    // the queue intact for the next session.
+    const authed = await auth.ensureAuthReady()
+    if (!authed) {
+      lastFlushResult.value = {
+        total: pendingLocalReports.value.length,
+        sent: 0,
+        retained: pendingLocalReports.value.length,
+        dropped: 0,
+        reasons: ['auth_failed'],
+      }
+      ElMessage.warning('登录已失效，本地待上报日志已保留，请重新登录后补发')
+      router.push({ path: '/login', query: { redirect: '/logs' } })
+      return
+    }
+
     await checkHealth()
     if (backendConn.value !== 'ok') {
+      lastFlushResult.value = {
+        total: pendingLocalReports.value.length,
+        sent: 0,
+        retained: pendingLocalReports.value.length,
+        dropped: 0,
+        reasons: ['unreachable'],
+      }
       ElMessage.warning('后端仍不可达，本地待上报日志已保留，请稍后重试')
       return
     }
-    await flushPendingErrorReports()
+
+    const totalBefore = pendingLocalReports.value.length
+    const result = await flushPendingErrorReports()
     refreshPending()
-    if (pendingLocalReports.value.length === 0) {
-      ElMessage.success('本地待上报日志已补发至日志中心')
+    lastFlushResult.value = {
+      total: totalBefore,
+      sent: result.sentCount,
+      retained: result.retainedCount,
+      dropped: result.droppedCount,
+      reasons: result.retainedReasons,
+    }
+    if (result.retainedCount === 0) {
+      ElMessage.success(`本地待上报日志已补发至日志中心（${result.sentCount} 条）`)
       await fetchLogs()
     } else {
-      ElMessage.warning('部分日志仍未能补发，请确认登录状态后重试')
+      const reasonText = result.retainedReasons.join(' / ') || '未知'
+      ElMessage.warning(
+        `${totalBefore} 条中 ${result.sentCount} 条补发，${result.retainedCount} 条保留，原因：${reasonText}`,
+      )
     }
   } finally {
     flushing.value = false
@@ -327,13 +505,26 @@ function handleRowClick(row: ErrorLog) {
   openDetail(row)
 }
 
-onMounted(() => {
+// Logs-endpoint fix Task D1: sequential await so health and logs results
+// don't race and overwrite each other. Previously checkHealth() and
+// fetchLogs() ran concurrently; a slow health check could flip backendConn
+// to 'ok' AFTER fetchLogs had already classified the /logs 401 as
+// 'auth_failed', producing contradictory UI state.
+onMounted(async () => {
   if (presetMaterialId.value) {
     filterCategory.value = 'parse'
   }
-  checkHealth()
-  fetchLogs()
+  await checkHealth()
+  await fetchLogs()
   refreshPending()
+  // Only run the dual-host diagnostics if something is wrong — when
+  // everything is green they just add noise.
+  if (
+    backendConn.value === 'unreachable' ||
+    logsEndpointStatus.value === 'unreachable'
+  ) {
+    runDiagnostics()
+  }
 })
 </script>
 
@@ -489,6 +680,64 @@ onMounted(() => {
       </el-alert>
     </el-card>
 
+    <!-- Logs-endpoint fix Task A: /logs business-endpoint status panel -->
+    <el-card class="logs-status-card" shadow="never">
+      <template #header>
+        <div class="diag-header">
+          <span class="diag-title">/logs 业务接口状态</span>
+          <el-button
+            size="small"
+            :loading="listLoading"
+            @click="probeLogsEndpoint"
+          >
+            探测 /logs 接口
+          </el-button>
+        </div>
+      </template>
+      <div class="diag-row">
+        <span class="diag-label">接口状态：</span>
+        <el-tag :type="logsStatusTagType" size="small">
+          {{ logsStatusLabel }}
+        </el-tag>
+      </div>
+      <div v-if="lastLogsError" class="logs-err-detail">
+        <div v-if="lastLogsError.statusCode" class="diag-row">
+          <span class="diag-label">HTTP 状态码：</span>
+          <code>{{ lastLogsError.statusCode }}</code>
+        </div>
+        <div v-if="lastLogsError.requestUrl" class="diag-row">
+          <span class="diag-label">请求 URL：</span>
+          <code class="break-all">{{ lastLogsError.requestUrl }}</code>
+        </div>
+        <div v-if="lastLogsError.serverMessage" class="diag-row">
+          <span class="diag-label">后端 message：</span>
+          <span class="diag-detail">{{ lastLogsError.serverMessage }}</span>
+        </div>
+        <div v-if="lastLogsError.serverDetail" class="diag-row">
+          <span class="diag-label">后端 detail：</span>
+          <span class="diag-detail">{{ lastLogsError.serverDetail }}</span>
+        </div>
+      </div>
+      <el-alert
+        v-if="logsEndpointStatus === 'auth_failed'"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="diag-verdict"
+      >
+        登录已失效，已清理本地 token 并跳转登录页。本地待上报日志已保留，登录后可补发。
+      </el-alert>
+      <el-alert
+        v-else-if="logsEndpointStatus === 'server_error'"
+        type="error"
+        :closable="false"
+        show-icon
+        class="diag-verdict"
+      >
+        /logs 接口返回 5xx。请查看后端日志 <code>{{ BACKEND_LOG_PATH }}</code> 或重启后端。
+      </el-alert>
+    </el-card>
+
     <!-- Redo Task B: local pending reports panel -->
     <el-card
       v-if="pendingLocalReports.length > 0"
@@ -529,6 +778,21 @@ onMounted(() => {
       <div class="pending-hint">
         这些错误在后端不可达时产生，已暂存在本地（sessionStorage）。点击"重新连接并补发"将它们写入服务端日志中心。
       </div>
+      <!-- Logs-endpoint fix Task B2: structured flush result so the user
+           sees the exact reason instead of a vague "部分未能补发". -->
+      <el-alert
+        v-if="lastFlushResult"
+        :type="lastFlushResult.retained === 0 ? 'success' : 'warning'"
+        :closable="false"
+        show-icon
+        class="diag-verdict"
+      >
+        上次补发：共 {{ lastFlushResult.total }} 条 · 成功 {{ lastFlushResult.sent }} 条 ·
+        保留 {{ lastFlushResult.retained }} 条 · 丢弃 {{ lastFlushResult.dropped }} 条
+        <span v-if="lastFlushResult.reasons.length">
+          （原因：{{ lastFlushResult.reasons.join(' / ') }}）
+        </span>
+      </el-alert>
     </el-card>
 
     <el-card class="section-card" shadow="never">
@@ -723,6 +987,20 @@ onMounted(() => {
 .diag-card {
   margin-bottom: 16px;
   border-left: 3px solid #409eff;
+}
+
+/* Logs-endpoint fix Task A: /logs business-endpoint status panel */
+.logs-status-card {
+  margin-bottom: 16px;
+  border-left: 3px solid #67c23a;
+}
+
+.logs-err-detail {
+  margin-top: 6px;
+}
+
+.break-all {
+  word-break: break-all;
 }
 
 .diag-header {

@@ -281,7 +281,10 @@ if (-not $backendHealthOk) {
 }
 
 $frontendPort = 5173
-$frontendUrl = "http://localhost:$frontendPort"
+# Logs-endpoint fix Task D2: frontendUrl unified to 127.0.0.1 to match the
+# vite --host 127.0.0.1 bind below. Using localhost here could resolve to
+# IPv6 ::1 and produce a false "frontend not ready" during the health probe.
+$frontendUrl = "http://127.0.0.1:$frontendPort"
 $frontendLog = Join-Path $logDir "frontend.log"
 $frontendPidFile = Join-Path $logDir "frontend.pid"
 $frontendPidValue = $null
