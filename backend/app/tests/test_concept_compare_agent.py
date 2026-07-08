@@ -242,3 +242,33 @@ def test_concept_compare_mock_returns_citations_when_evidence_given(db_session):
     assert result["citation_chunk_ids"], "mock 模式有证据时必须返回 citation"
     assert ch1.id in result["citation_chunk_ids"]
     assert ch2.id in result["citation_chunk_ids"]
+
+
+def test_compare_prompt_contains_user_focus(db_session, monkeypatch):
+    """user_focus 必须进入 prompt，不允许只是请求字段。"""
+    user, n1, n2 = _setup_two_nodes(db_session)
+    captured = {}
+
+    def fake_call_llm_with_meta(prompt, agent_type, schema=None, user_config=None):
+        captured["prompt"] = prompt
+        return (
+            {
+                "concept_a": {"title": "A", "explanation": "x"},
+                "concept_b": {"title": "B", "explanation": "y"},
+                "similarities": [], "citations": [],
+            },
+            {"provider": "mock", "fallback_used": False,
+             "fallback_reason": None, "model_name": "mock"},
+        )
+
+    monkeypatch.setattr(
+        "app.agents.concept_compare.call_llm_with_meta", fake_call_llm_with_meta
+    )
+    generate_compare(
+        db_session, user.id,
+        concept_a={"title": n1.title, "summary": n1.summary or ""},
+        concept_b={"title": n2.title, "summary": n2.summary or ""},
+        evidence_chunks=[],
+        user_focus="exam",
+    )
+    assert "exam" in captured["prompt"], "user_focus 必须出现在 prompt 中"

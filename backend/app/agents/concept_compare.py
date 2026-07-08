@@ -30,6 +30,7 @@ def generate_compare(
     concept_b: dict,
     evidence_chunks: list[dict] | None = None,
     user_config: dict | None = None,
+    user_focus: str = "concept",
 ) -> dict:
     """Generate a structured compare report for two concepts.
 
@@ -60,6 +61,7 @@ def generate_compare(
             concept_b_title=concept_b.get("title", ""),
             concept_b_summary=concept_b.get("summary", ""),
             evidence=evidence_text,
+            user_focus=user_focus,
         )
 
         result, meta = call_llm_with_meta(

@@ -5,6 +5,7 @@
 概念 B: {concept_b_title}
 概念 B 摘要: {concept_b_summary}
 证据片段: {evidence}
+用户关注点: {user_focus}
 
 请输出严格的 JSON，包含以下字段:
 {{
