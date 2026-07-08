@@ -255,7 +255,14 @@ async function handleTest(row: LLMConfig) {
     if (data.status === 'success') {
       ElMessage.success('连接成功')
     } else {
-      ElMessage.error(`连接失败：${data.error || '未知错误'}`)
+      // Show the backend diagnostic error in a dialog so the full message
+      // is readable (HTTP status / non-JSON / missing-choices reasons can
+      // be longer than a toast).
+      await ElMessageBox.alert(
+        data.error || '未知错误',
+        `「${row.name}」连接失败`,
+        { type: 'error', confirmButtonText: '知道了' },
+      )
     }
     fetchConfigs()
   } catch (err) {
@@ -450,16 +457,29 @@ onMounted(() => {
           </el-select>
         </el-form-item>
         <el-form-item label="配置名称" prop="name">
-          <el-input v-model="form.name" placeholder="请输入配置名称" />
+          <el-input
+            v-model="form.name"
+            placeholder="例如：SenseNova DeepSeek V4 Flash"
+          />
+          <div class="form-help">仅用于区分配置，不是模型 ID。</div>
         </el-form-item>
         <el-form-item label="Base URL" prop="base_url">
-          <el-input v-model="form.base_url" placeholder="请输入 Base URL" />
+          <el-input
+            v-model="form.base_url"
+            placeholder="例如：https://token.sensenova.cn/v1"
+          />
+          <div class="form-help">
+            不要填写 /chat/completions，系统会自动拼接。
+          </div>
         </el-form-item>
         <el-form-item label="模型" prop="model">
           <el-input
             v-model="form.model"
-            placeholder="请输入模型名称，如 gpt-4o-mini"
+            placeholder="例如：deepseek-v4-flash"
           />
+          <div class="form-help">
+            填写供应商控制台显示的精确 Model ID。
+          </div>
         </el-form-item>
         <el-form-item label="API Key" prop="api_key">
           <el-input
@@ -470,6 +490,9 @@ onMounted(() => {
               dialogMode === 'edit' ? '留空则不修改' : '请输入 API Key'
             "
           />
+          <div class="form-help">
+            仅保存加密后的密文；编辑时留空表示不修改。
+          </div>
         </el-form-item>
         <el-form-item label="Temperature">
           <el-input-number
@@ -570,6 +593,13 @@ onMounted(() => {
 }
 
 .info-empty {
+  color: #909399;
+}
+
+.form-help {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
   color: #909399;
 }
 </style>

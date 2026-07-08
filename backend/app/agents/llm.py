@@ -418,7 +418,16 @@ def _real_response(
     }
     body = {
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "你必须只输出合法 JSON，不要输出 Markdown，"
+                    "不要输出解释文字，不要使用代码块标记。"
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
         "temperature": temperature,
         "max_tokens": max_tokens,
         "response_format": {"type": "json_object"},
@@ -434,9 +443,32 @@ def _real_response(
             resp = client.post(url, headers=headers, json=body)
         resp.raise_for_status()
 
-    data = resp.json()
-    content = data["choices"][0]["message"]["content"]
-    return json.loads(content)
+    try:
+        data = resp.json()
+    except Exception as exc:  # noqa: BLE001 - wrap any JSON parse failure
+        snippet = (resp.text or "")[:300]
+        raise RuntimeError(
+            "LLM 服务返回的不是 JSON，可能 Base URL 指向网页/鉴权页/错误页。"
+            f"响应片段: {snippet}"
+        ) from exc
+
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        snippet = str(data)[:300]
+        raise RuntimeError(
+            "LLM 响应不是 OpenAI Chat Completions 格式（缺少 choices）。"
+            f"响应片段: {snippet}"
+        ) from exc
+
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as exc:
+        snippet = (content or "")[:300]
+        raise RuntimeError(
+            "模型回复不是合法 JSON；请检查 prompt 约束或模型是否支持 JSON 输出。"
+            f"模型回复片段: {snippet}"
+        ) from exc
 
 
 __all__ = ["call_llm", "call_llm_with_meta"]

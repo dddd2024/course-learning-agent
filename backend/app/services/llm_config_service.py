@@ -8,9 +8,9 @@ surface the masked form via the ``UserLLMConfig.api_key_masked`` property.
 """
 from __future__ import annotations
 
+import httpx
 from sqlalchemy.orm import Session
 
-from app.agents.llm import _real_response
 from app.core.crypto import decrypt, encrypt
 from app.models.llm_config import UserLLMConfig
 
@@ -136,11 +136,16 @@ def enable_config(db: Session, config: UserLLMConfig) -> UserLLMConfig:
 def test_connection(config: UserLLMConfig) -> dict:
     """Probe the provider without mutating ``enabled`` state.
 
-    Builds the ``user_config`` dict expected by
-    :func:`app.agents.llm._real_response` from the stored (encrypted) API
-    key and the provider settings, then invokes the real path. Any
-    exception is swallowed and surfaced as ``status="failed"`` with the
-    error message so the caller can persist ``last_test_error``.
+    This performs a **low-level HTTP probe** against
+    ``{base_url}/chat/completions`` rather than reusing the Agent-facing
+    :func:`app.agents.llm._real_response` path. The probe only verifies
+    that the service is reachable, the API key authenticates, the model
+    name is accepted, and the response is an OpenAI Chat Completions
+    envelope. It does **not** require the model's reply body to be JSON
+    — a plain-text ``"OK"`` reply is enough to pass.
+
+    Success criteria: HTTP 2xx + ``resp.json()`` succeeds +
+    ``choices[0].message.content`` exists.
 
     Returns
     -------
@@ -148,29 +153,61 @@ def test_connection(config: UserLLMConfig) -> dict:
         ``{"status": "success" | "failed", "error": str | None,
         "provider": str, "model": str}``.
     """
-    user_config = {
-        "base_url": config.base_url,
+    url = f"{config.base_url.rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {decrypt(config.api_key_encrypted)}",
+        "Content-Type": "application/json",
+    }
+    body = {
         "model": config.model,
-        "api_key": decrypt(config.api_key_encrypted),
-        "temperature": config.temperature,
-        "max_tokens": config.max_tokens,
-        "timeout_seconds": config.timeout_seconds,
+        "messages": [{"role": "user", "content": "请回复 OK。"}],
+        "temperature": 0,
+        "max_tokens": 16,
     }
     try:
-        _real_response("test", "course_qa", None, user_config)
-        return {
-            "status": "success",
-            "error": None,
-            "provider": config.provider,
-            "model": config.model,
-        }
-    except Exception as exc:  # noqa: BLE001 - surface any failure to caller
-        return {
-            "status": "failed",
-            "error": str(exc)[:500],
-            "provider": config.provider,
-            "model": config.model,
-        }
+        with httpx.Client(timeout=config.timeout_seconds) as client:
+            resp = client.post(url, headers=headers, json=body)
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        snippet = (exc.response.text or "")[:300]
+        return _failed(config, f"HTTP {exc.response.status_code}: {snippet}")
+    except httpx.HTTPError as exc:
+        # Connection / timeout / DNS errors.
+        return _failed(config, f"网络请求失败：{exc}")
+
+    try:
+        data = resp.json()
+    except Exception:  # noqa: BLE001 - any JSON parse failure
+        snippet = (resp.text or "")[:300]
+        return _failed(
+            config,
+            f"LLM 服务返回的不是 JSON，可能 Base URL 指向网页/鉴权页/错误页。响应片段: {snippet}",
+        )
+
+    try:
+        _ = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        snippet = str(data)[:300]
+        return _failed(
+            config,
+            f"LLM 响应不是 OpenAI Chat Completions 格式（缺少 choices）。响应片段: {snippet}",
+        )
+
+    return {
+        "status": "success",
+        "error": None,
+        "provider": config.provider,
+        "model": config.model,
+    }
+
+
+def _failed(config: UserLLMConfig, error: str) -> dict:
+    return {
+        "status": "failed",
+        "error": error[:500],
+        "provider": config.provider,
+        "model": config.model,
+    }
 
 
 __all__ = [

@@ -16,6 +16,8 @@ Covers:
 """
 from unittest.mock import patch
 
+import httpx
+
 from app.tests.conftest import auth_headers
 
 PLAINTEXT_KEY = "sk-abcdef1234567890"
@@ -234,15 +236,23 @@ def test_enable_config(client) -> None:
 
 
 def test_test_connection(client) -> None:
-    """POST /llm-configs/{id}/test returns success when _real_response works."""
+    """POST /llm-configs/{id}/test returns success when the probe reaches the API.
+
+    The low-level HTTP probe is mocked so no real network call is made; a
+    valid OpenAI Chat Completions 2xx response yields status=success.
+    """
     headers = auth_headers(client, username="alice")
     body = _create_config(client, headers)
     config_id = body["id"]
 
-    with patch(
-        "app.services.llm_config_service._real_response",
-        return_value={"answer": "ok"},
-    ):
+    probe_resp = httpx.Response(
+        200,
+        json={"choices": [{"message": {"content": "OK"}}]},
+        request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"),
+    )
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = mock_client_cls.return_value.__enter__.return_value
+        mock_client.post.return_value = probe_resp
         resp = client.post(
             f"/api/v1/llm-configs/{config_id}/test", headers=headers
         )

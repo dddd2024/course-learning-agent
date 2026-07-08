@@ -196,3 +196,68 @@ def test_call_llm_no_user_config_real_provider(monkeypatch) -> None:
 
     assert result == payload
     mock_client.post.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# SubTask: _real_response wraps errors into readable messages
+# ---------------------------------------------------------------------------
+
+
+def test_real_response_wraps_content_json_error() -> None:
+    """When choices[0].message.content is not valid JSON, raise a readable error.
+
+    The raw ``json.JSONDecodeError`` (e.g. 'Expecting value') must NOT leak;
+    the message should explain the model reply is not valid JSON.
+    """
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = _client_from_patch(mock_client_cls)
+        # Body parses fine, but the message content is plain text, not JSON.
+        mock_client.post.return_value = _ok_response("OK, here is my answer")
+
+        with pytest.raises(RuntimeError) as exc_info:
+            _real_response("prompt", "course_qa", None, USER_CONFIG)
+
+    msg = str(exc_info.value)
+    assert "JSON" in msg or "json" in msg
+    # The raw json error must not leak verbatim.
+    assert "Expecting value" not in msg
+
+
+def test_real_response_wraps_response_json_error() -> None:
+    """When HTTP 2xx but the body is not JSON, raise a readable error.
+
+    The message should explain the service returned a non-JSON body (e.g. an
+    HTML login/error page), not leak the raw json.JSONDecodeError.
+    """
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = _client_from_patch(mock_client_cls)
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.text = "<html>login page</html>"
+        resp.json.side_effect = ValueError("Expecting value: line 1 column 1 (char 0)")
+        resp.raise_for_status = MagicMock()
+        mock_client.post.return_value = resp
+
+        with pytest.raises(RuntimeError) as exc_info:
+            _real_response("prompt", "course_qa", None, USER_CONFIG)
+
+    msg = str(exc_info.value)
+    assert "JSON" in msg or "json" in msg
+    assert "Expecting value" not in msg
+
+
+def test_real_response_wraps_missing_choices_error() -> None:
+    """When the response JSON lacks choices, raise a readable OpenAI-format error."""
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = _client_from_patch(mock_client_cls)
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"some_other_field": 1}
+        resp.raise_for_status = MagicMock()
+        mock_client.post.return_value = resp
+
+        with pytest.raises(RuntimeError) as exc_info:
+            _real_response("prompt", "course_qa", None, USER_CONFIG)
+
+    msg = str(exc_info.value)
+    assert "OpenAI" in msg or "choices" in msg
