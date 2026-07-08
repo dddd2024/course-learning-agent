@@ -234,6 +234,40 @@ if ($kgCompareContent -match 'user_config') {
   Write-Bad 'concept_compare_service missing user_config support'
 }
 
+# 12. P3: v2 audit remediation static checks
+Write-Step 'v2 audit remediation checks'
+
+# 12a. concept_compare mock builder registered in llm.py
+$llmPy = Get-Content "$root\backend\app\agents\llm.py" -Raw
+if ($llmPy -match '"concept_compare":\s*_mock_concept_compare') {
+  Write-Ok 'concept_compare mock builder registered'
+} else {
+  Write-Bad 'concept_compare mock builder not registered'
+}
+
+# 12b. compare service loads evidence (never hardcodes evidence_chunks=[])
+if ($kgCompareContent -match 'evidence_chunks=evidence_chunks' -and $kgCompareContent -notmatch 'evidence_chunks=\[\]') {
+  Write-Ok 'compare service loads evidence (no hardcoded [])'
+} else {
+  Write-Bad 'compare service may hardcode evidence_chunks=[]'
+}
+
+# 12c. compare prompt template has user_focus placeholder
+$comparePrompt = Get-Content "$root\backend\app\agents\prompts\concept_compare_v1.md" -Raw
+if ($comparePrompt -match '\{user_focus\}') {
+  Write-Ok 'compare prompt has user_focus placeholder'
+} else {
+  Write-Bad 'compare prompt missing user_focus placeholder'
+}
+
+# 12d. ConceptCompareReport model has evidence_hash + user_focus columns
+$kgModelsContent = Get-Content "$root\backend\app\models\concept_graph.py" -Raw
+if ($kgModelsContent -match 'evidence_hash' -and $kgModelsContent -match 'user_focus') {
+  Write-Ok 'ConceptCompareReport has evidence_hash + user_focus columns'
+} else {
+  Write-Bad 'ConceptCompareReport missing evidence_hash/user_focus columns'
+}
+
 Write-Host ''
 if ($failed) {
   Write-Host 'ACCEPTANCE FAILED' -ForegroundColor Red

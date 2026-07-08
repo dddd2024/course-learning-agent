@@ -143,5 +143,34 @@ else
   bad "concept_compare_service missing user_config support"
 fi
 
+# 12. P3: v2 audit remediation static checks
+step "v2 audit remediation checks"
+llm_py="$root/backend/app/agents/llm.py"
+compare_prompt="$root/backend/app/agents/prompts/concept_compare_v1.md"
+
+if grep -Eq '"concept_compare":[[:space:]]*_mock_concept_compare' "$llm_py"; then
+  ok "concept_compare mock builder registered"
+else
+  bad "concept_compare mock builder not registered"
+fi
+
+if grep -q 'evidence_chunks=evidence_chunks' "$kg_compare_service" && ! grep -q 'evidence_chunks=\[\]' "$kg_compare_service"; then
+  ok "compare service loads evidence (no hardcoded [])"
+else
+  bad "compare service may hardcode evidence_chunks=[]"
+fi
+
+if grep -q '{user_focus}' "$compare_prompt"; then
+  ok "compare prompt has user_focus placeholder"
+else
+  bad "compare prompt missing user_focus placeholder"
+fi
+
+if grep -q 'evidence_hash' "$kg_models" && grep -q 'user_focus' "$kg_models"; then
+  ok "ConceptCompareReport has evidence_hash + user_focus columns"
+else
+  bad "ConceptCompareReport missing evidence_hash/user_focus columns"
+fi
+
 echo ""
 if [ "$failed" -eq 0 ]; then echo "ACCEPTANCE PASSED"; exit 0; else echo "ACCEPTANCE FAILED"; exit 1; fi
