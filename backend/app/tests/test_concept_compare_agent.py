@@ -301,3 +301,83 @@ def test_compare_service_passes_user_focus(db_session, monkeypatch):
         db_session, user.id, n1.id, n2.id, user_focus="exam"
     )
     assert captured["user_focus"] == "exam", "service 必须把 user_focus 传给 agent"
+
+
+def test_compare_cache_separates_user_focus(db_session, monkeypatch):
+    """不同 user_focus 的请求不应命中同一缓存。"""
+    user, n1, n2 = _setup_two_nodes(db_session)
+    call_count = {"n": 0}
+
+    def fake_generate(db, uid, concept_a, concept_b, evidence_chunks=None,
+                      user_config=None, user_focus="concept"):
+        call_count["n"] += 1
+        return {
+            "report_json": {"concept_a": {}, "concept_b": {}, "similarities": []},
+            "citation_chunk_ids": [],
+            "provider": "mock",
+            "model_name": "mock",
+            "fallback_used": False,
+            "fallback_reason": "",
+            "audit_run_id": 1,
+        }
+
+    monkeypatch.setattr(
+        "app.services.concept_compare_service.generate_compare", fake_generate
+    )
+    get_or_create_compare_report(
+        db_session, user.id, n1.id, n2.id, user_focus="concept"
+    )
+    get_or_create_compare_report(
+        db_session, user.id, n1.id, n2.id, user_focus="exam"
+    )
+    reports = db_session.query(ConceptCompareReport).all()
+    assert len(reports) == 2, "不同 user_focus 必须生成不同报告"
+    assert call_count["n"] == 2
+
+
+def test_compare_cache_invalidates_when_evidence_changes(db_session, monkeypatch):
+    """证据片段变化时缓存失效，必须重新生成。"""
+    from app.models import MaterialChunk
+
+    user, n1, n2 = _setup_two_nodes(db_session)
+    ch1 = MaterialChunk(
+        material_id=1, course_id=n1.course_id, chunk_index=0,
+        title="证据1", page_no=1, text="证据1内容",
+    )
+    ch2 = MaterialChunk(
+        material_id=1, course_id=n1.course_id, chunk_index=1,
+        title="证据2", page_no=1, text="证据2内容",
+    )
+    db_session.add_all([ch1, ch2])
+    db_session.commit()
+    n1.source_chunk_ids = json.dumps([ch1.id])
+    db_session.commit()
+
+    call_count = {"n": 0}
+
+    def fake_generate(db, uid, concept_a, concept_b, evidence_chunks=None,
+                      user_config=None, user_focus="concept"):
+        call_count["n"] += 1
+        return {
+            "report_json": {"concept_a": {}, "concept_b": {}, "similarities": []},
+            "citation_chunk_ids": [],
+            "provider": "mock",
+            "model_name": "mock",
+            "fallback_used": False,
+            "fallback_reason": "",
+            "audit_run_id": 1,
+        }
+
+    monkeypatch.setattr(
+        "app.services.concept_compare_service.generate_compare", fake_generate
+    )
+    # 第一次：证据 = [ch1.id]
+    get_or_create_compare_report(db_session, user.id, n1.id, n2.id)
+    # 改证据
+    n1.source_chunk_ids = json.dumps([ch2.id])
+    db_session.commit()
+    # 第二次：证据变了，应该重新生成
+    get_or_create_compare_report(db_session, user.id, n1.id, n2.id)
+    reports = db_session.query(ConceptCompareReport).all()
+    assert len(reports) == 2, "证据变化必须使缓存失效"
+    assert call_count["n"] == 2

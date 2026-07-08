@@ -93,6 +93,8 @@ class ConceptCompareReport(Base, TimestampMixin):
     prompt_version = Column(String(50), default="v1")
     provider = Column(String(50), default="mock")
     model_name = Column(String(50), default="mock")
+    user_focus = Column(String(50), default="concept", nullable=False, index=True)
+    evidence_hash = Column(String(64), default="", nullable=False, index=True)
     config_id = Column(
         Integer, ForeignKey("user_llm_configs.id"), nullable=True
     )

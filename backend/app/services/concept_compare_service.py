@@ -6,6 +6,7 @@ and returns a dict shaped for the CompareReportResponse schema.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -74,6 +75,14 @@ def _collect_chunk_ids(
     return unique
 
 
+def _compute_evidence_hash(chunk_ids: list[int]) -> str:
+    """SHA1 of sorted chunk ids, truncated to 16 chars for cache keying."""
+    if not chunk_ids:
+        return ""
+    payload = ",".join(str(cid) for cid in sorted(chunk_ids))
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+
+
 def get_or_create_compare_report(
     db: Session,
     user_id: int,
@@ -112,23 +121,31 @@ def get_or_create_compare_report(
         if edge_pair != req_pair:
             return None
 
-    # Cache lookup: same user + same node pair in either order.
+    # Collect evidence chunk ids up front so the cache key can include them.
+    chunk_ids = _collect_chunk_ids(n1, n2, edge)
+    evidence_hash = _compute_evidence_hash(chunk_ids)
+
+    # Cache lookup: same user + same node pair (either order)
+    # + same user_focus + same evidence_hash.
     cached = db.query(ConceptCompareReport).filter_by(
         user_id=user_id,
         source_node_id=source_node_id,
         target_node_id=target_node_id,
+        user_focus=user_focus,
+        evidence_hash=evidence_hash,
     ).first()
     if cached is None:
         cached = db.query(ConceptCompareReport).filter_by(
             user_id=user_id,
             source_node_id=target_node_id,
             target_node_id=source_node_id,
+            user_focus=user_focus,
+            evidence_hash=evidence_hash,
         ).first()
     if cached is not None:
         return _report_to_dict(cached)
 
-    # Collect evidence chunks from nodes and edge.
-    chunk_ids = _collect_chunk_ids(n1, n2, edge)
+    # Load evidence chunks from nodes and edge.
     evidence_chunks = _load_evidence_chunks(db, user_id, chunk_ids)
 
     # Generate a fresh report via the compare agent.
@@ -154,6 +171,8 @@ def get_or_create_compare_report(
         prompt_version="v1",
         provider=result["provider"],
         model_name=result["model_name"],
+        user_focus=user_focus,
+        evidence_hash=evidence_hash,
         audit_run_id=result["audit_run_id"],
     )
     db.add(report)
