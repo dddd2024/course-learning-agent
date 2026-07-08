@@ -1,7 +1,10 @@
 """Concept compare agent + service tests."""
 import json
 
+import pytest
+
 from app.agents.concept_compare import generate_compare
+from app.core.exceptions import BusinessException
 from app.models import (
     ConceptCompareReport,
     ConceptNode,
@@ -186,7 +189,7 @@ def test_compare_rejects_foreign_edge_id(db_session):
 
 
 def test_compare_rejects_mismatched_edge_id(db_session):
-    """edge 连接的节点对与请求不一致时返回 None。"""
+    """edge 连接的节点对与请求不一致时抛 BusinessException（400）。"""
     from app.models import ConceptEdge
 
     user, n1, n2 = _setup_two_nodes(db_session)
@@ -206,10 +209,10 @@ def test_compare_rejects_mismatched_edge_id(db_session):
     )
     db_session.add(mismatch_edge)
     db_session.commit()
-    result = get_or_create_compare_report(
-        db_session, user.id, n1.id, n2.id, edge_id=mismatch_edge.id
-    )
-    assert result is None
+    with pytest.raises(BusinessException):
+        get_or_create_compare_report(
+            db_session, user.id, n1.id, n2.id, edge_id=mismatch_edge.id
+        )
 
 
 def test_concept_compare_mock_returns_citations_when_evidence_given(db_session):

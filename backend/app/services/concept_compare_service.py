@@ -13,6 +13,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.agents.concept_compare import generate_compare
+from app.core.exceptions import BusinessException
 from app.models import (
     ConceptCompareReport,
     ConceptEdge,
@@ -119,7 +120,9 @@ def get_or_create_compare_report(
         edge_pair = {edge.source_node_id, edge.target_node_id}
         req_pair = {source_node_id, target_node_id}
         if edge_pair != req_pair:
-            return None
+            raise BusinessException(
+                message="edge 与请求的节点对不匹配"
+            )
 
     # Collect evidence chunk ids up front so the cache key can include them.
     chunk_ids = _collect_chunk_ids(n1, n2, edge)

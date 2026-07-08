@@ -121,7 +121,8 @@ def compare(
     """Generate (or return cached) compare report for two nodes.
 
     404 if either node does not exist, belongs to another user, or
-    edge_id is invalid/mismatched.
+    edge_id does not belong to the user. 400 if edge_id exists but
+    does not connect the requested node pair.
     """
     active_config = get_active_config(db, current_user.id)
     user_config = build_user_config(active_config) if active_config else None

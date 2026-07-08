@@ -187,3 +187,32 @@ def test_compare_404_uses_unified_error_format(client):
     assert "code" in body
     assert "message" in body
     assert "detail" not in body
+
+
+def test_compare_mismatched_edge_returns_400(client):
+    """edge 与请求节点对不匹配时返回 400，不是 404。"""
+    headers = auth_headers(client, username="alice")
+    _setup_two_courses_with_kps(client, headers)
+    client.post("/api/v1/concept-graph/rebuild", headers=headers)
+    graph = client.get("/api/v1/concept-graph", headers=headers).json()
+    assert graph["edges"], "expected at least one candidate edge"
+    edge = graph["edges"][0]
+    edge_nodes = {edge["source_node_id"], edge["target_node_id"]}
+    other_node = next(
+        (n["id"] for n in graph["nodes"] if n["id"] not in edge_nodes),
+        None,
+    )
+    assert other_node is not None, "需要一个不在 edge 上的节点"
+    resp = client.post(
+        "/api/v1/concept-graph/compare", headers=headers,
+        json={
+            "source_node_id": edge["source_node_id"],
+            "target_node_id": other_node,
+            "edge_id": edge["id"],
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    body = resp.json()
+    assert body["code"] == "BUSINESS_ERROR"
+    assert "message" in body
+    assert "detail" not in body
