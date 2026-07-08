@@ -139,6 +139,7 @@ def get_or_create_compare_report(
         concept_b={"title": n2.title, "summary": n2.summary or ""},
         evidence_chunks=evidence_chunks,
         user_config=user_config,
+        user_focus=user_focus,
     )
 
     report = ConceptCompareReport(

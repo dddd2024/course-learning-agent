@@ -108,7 +108,8 @@ def test_compare_uses_evidence_chunks(db_session, monkeypatch):
 
     captured = {}
 
-    def fake_generate(db, uid, concept_a, concept_b, evidence_chunks=None, user_config=None):
+    def fake_generate(db, uid, concept_a, concept_b, evidence_chunks=None,
+                      user_config=None, user_focus="concept"):
         captured["evidence_chunks"] = evidence_chunks
         captured["user_config"] = user_config
         return {
@@ -140,7 +141,8 @@ def test_compare_passes_user_config(db_session, monkeypatch):
     user, n1, n2 = _setup_two_nodes(db_session)
     captured = {}
 
-    def fake_generate(db, uid, concept_a, concept_b, evidence_chunks=None, user_config=None):
+    def fake_generate(db, uid, concept_a, concept_b, evidence_chunks=None,
+                      user_config=None, user_focus="concept"):
         captured["user_config"] = user_config
         return {
             "report_json": {"concept_a": {}, "concept_b": {}, "similarities": []},
@@ -272,3 +274,30 @@ def test_compare_prompt_contains_user_focus(db_session, monkeypatch):
         user_focus="exam",
     )
     assert "exam" in captured["prompt"], "user_focus 必须出现在 prompt 中"
+
+
+def test_compare_service_passes_user_focus(db_session, monkeypatch):
+    """compare service 应把 user_focus 传给 generate_compare。"""
+    user, n1, n2 = _setup_two_nodes(db_session)
+    captured = {}
+
+    def fake_generate(db, uid, concept_a, concept_b, evidence_chunks=None,
+                      user_config=None, user_focus="concept"):
+        captured["user_focus"] = user_focus
+        return {
+            "report_json": {"concept_a": {}, "concept_b": {}, "similarities": []},
+            "citation_chunk_ids": [],
+            "provider": "mock",
+            "model_name": "mock",
+            "fallback_used": False,
+            "fallback_reason": "",
+            "audit_run_id": 1,
+        }
+
+    monkeypatch.setattr(
+        "app.services.concept_compare_service.generate_compare", fake_generate
+    )
+    get_or_create_compare_report(
+        db_session, user.id, n1.id, n2.id, user_focus="exam"
+    )
+    assert captured["user_focus"] == "exam", "service 必须把 user_focus 传给 agent"
