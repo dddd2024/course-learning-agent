@@ -4,6 +4,7 @@ All queries are scoped by ``current_user.id`` to enforce per-user data
 isolation. A course owned by another user is invisible (returned as 404)
 so existence is never leaked.
 """
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
@@ -13,14 +14,21 @@ from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.exceptions import BusinessException, NotFoundException
+from app.core.timezone import utc_now
 from app.models.course import Course
 from app.models.material import Material
 from app.models.user import User
 from app.schemas.material import MaterialListResponse, MaterialResponse
+from app.services.error_logger import log_error
 
 router = APIRouter()
 
 ALLOWED_FILE_TYPES = {"txt", "pdf", "docx", "pptx", "md"}
+
+# A parse task stuck in ``processing`` longer than this is considered
+# timed out (e.g. the worker crashed mid-parse). list_materials flips
+# such rows to ``failed`` and writes an error_log so the user can retry.
+PARSE_TIMEOUT_SECONDS = 300
 
 
 def _get_owned_course(db: Session, course_id: int, user_id: int) -> Course:
@@ -37,6 +45,58 @@ def _get_owned_course(db: Session, course_id: int, user_id: int) -> Course:
     if course is None:
         raise NotFoundException(message="课程不存在")
     return course
+
+
+def _recover_timed_out_materials(db: Session, user_id: int) -> None:
+    """Flip processing materials past the timeout to ``failed`` + error_log.
+
+    A parse task can get stuck in ``processing`` if the worker crashes
+    mid-parse or the process is killed. Without recovery, the material
+    stays ``processing`` forever and the user cannot re-parse it. This
+    helper runs before list_materials returns so the UI always reflects
+    a recoverable state.
+
+    Only materials owned by ``user_id`` are touched (per-user isolation).
+    """
+    threshold = utc_now() - timedelta(seconds=PARSE_TIMEOUT_SECONDS)
+    stuck = (
+        db.query(Material)
+        .filter(
+            Material.user_id == user_id,
+            Material.status == "processing",
+            Material.parse_started_at.isnot(None),
+            Material.parse_started_at < threshold,
+        )
+        .all()
+    )
+    for mat in stuck:
+        mat.status = "failed"
+        mat.parse_finished_at = utc_now()
+        err = (
+            f"解析任务超时（>{PARSE_TIMEOUT_SECONDS}s 未完成），"
+            "可重新解析；若仍失败请检查文件大小或格式。"
+        )
+        mat.last_parse_error = err
+        mat.error_message = err
+        log_error(
+            db,
+            user_id,
+            category="parse",
+            level="error",
+            title="资料解析超时",
+            message=err,
+            technical_detail=(
+                f"parse_started_at={mat.parse_started_at.isoformat()} "
+                f"timeout_seconds={PARSE_TIMEOUT_SECONDS}"
+            ),
+            course_id=mat.course_id,
+            material_id=mat.id,
+            retry_count=mat.parse_attempts or 0,
+            max_retries=3,
+            commit=False,
+        )
+    if stuck:
+        db.commit()
 
 
 @router.post(
@@ -111,8 +171,13 @@ def list_materials(
 
     Optional ``type`` and ``status`` query parameters filter by file
     extension (e.g. ``txt``) and processing status respectively.
+
+    Before returning, any ``processing`` material past the parse timeout
+    is flipped to ``failed`` and an error_log is written, so the UI never
+    shows a forever-processing row.
     """
     _get_owned_course(db, course_id, current_user.id)
+    _recover_timed_out_materials(db, current_user.id)
 
     query = db.query(Material).filter(
         Material.course_id == course_id,

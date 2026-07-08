@@ -12,6 +12,7 @@ from app.api.v1.endpoints import (
     courses,
     dashboard,
     error_logs,
+    general_error_logs,
     health,
     knowledge_points,
     llm_configs,
@@ -57,6 +58,9 @@ api_router.include_router(
 )
 api_router.include_router(
     error_logs.router, prefix="/agent-error-logs", tags=["error_logs"]
+)
+api_router.include_router(
+    general_error_logs.router, prefix="/logs", tags=["logs"]
 )
 api_router.include_router(
     concept_graph.router, prefix="/concept-graph", tags=["concept_graph"]

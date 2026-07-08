@@ -255,7 +255,7 @@ def test_parse_scanner_failure_rolls_back_and_preserves_old_chunks(
         return chunks
 
     monkeypatch.setattr(
-        "app.api.v1.endpoints.parse.build_chunks", marker_build
+        "app.services.material_parser.build_chunks", marker_build
     )
 
     # Scanner raises during the re-parse.

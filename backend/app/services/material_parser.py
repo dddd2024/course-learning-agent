@@ -1,0 +1,193 @@
+"""Material parse service with bounded retry.
+
+Extracted from the parse endpoint so the retry policy, status tracking,
+and error logging live in one place. The endpoint keeps doing auth +
+ownership checks and returns the response; this service owns the parse
+state machine.
+
+State machine
+-------------
+uploaded -> parse requested -> processing
+  - success                          -> ready   (parse_attempts reset)
+  - retryable error, attempts < max  -> processing (retry)
+  - retryable error, attempts == max -> failed  (error log written)
+  - non-retryable error              -> failed  (error log written)
+
+Re-parse of a ready material:
+  - success -> ready (new chunks)
+  - failure with old chunks -> stays ready + warning + error log
+  - failure with no old chunks -> failed + error log
+"""
+from __future__ import annotations
+
+import logging
+import time
+from pathlib import Path
+from typing import Callable
+
+from sqlalchemy.orm import Session
+
+from app.core.config import settings
+from app.core.timezone import utc_now
+from app.models.material import Material
+from app.models.material_chunk import MaterialChunk
+from app.models.security_finding import MaterialSecurityFinding
+from app.retrieval.chunker import build_chunks, clean_keyword_text
+from app.retrieval.parsers import parse_file
+from app.services import security_scanner
+from app.services.error_logger import log_error
+
+logger = logging.getLogger(__name__)
+
+MAX_PARSE_RETRIES = 3
+RETRY_DELAYS_SECONDS = (0, 2, 5)  # course-project-friendly; not too slow
+
+# Errors that mean "retrying won't help" — fail immediately.
+_NON_RETRYABLE_HINTS = ("unsupported file type", "file not found", "permission")
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Heuristic: retry on parser/runtime errors, not on config errors."""
+    msg = (str(exc) or "").lower()
+    return not any(h in msg for h in _NON_RETRYABLE_HINTS)
+
+
+def _count_existing_chunks(db: Session, material_id: int) -> int:
+    return (
+        db.query(MaterialChunk)
+        .filter(MaterialChunk.material_id == material_id)
+        .count()
+    )
+
+
+def parse_with_retry(
+    db: Session,
+    material: Material,
+    user_id: int,
+    *,
+    max_retries: int = MAX_PARSE_RETRIES,
+    parse_fn: Callable[[str, str], list] | None = None,
+    sleep_fn: Callable[[float], None] | None = None,
+) -> tuple[str, int]:
+    """Run the parse with bounded retry.
+
+    Returns ``(final_status, chunk_count)``. Writes an error_log row on
+    every failed attempt (warning level while retries remain, error level
+    once exhausted). Mutates ``material`` status / parse_* fields.
+
+    ``parse_fn`` / ``sleep_fn`` are injectable for tests. When
+    ``parse_fn`` is ``None`` the current ``parse_file`` module attribute
+    is used (so tests can monkeypatch ``app.services.material_parser.parse_file``).
+    """
+    if parse_fn is None:
+        parse_fn = parse_file
+    sleep = sleep_fn or time.sleep
+    material_id = material.id
+    existing_chunk_count = _count_existing_chunks(db, material_id)
+
+    material.status = "processing"
+    material.error_message = None
+    material.parse_started_at = utc_now()
+    material.parse_attempts = 0
+    db.commit()
+
+    last_exc: Exception | None = None
+    for attempt in range(1, max_retries + 1):
+        material.parse_attempts = attempt
+        db.commit()
+        try:
+            file_path = Path(settings.UPLOAD_DIR) / material.file_path
+            pages = parse_fn(str(file_path), material.file_type)
+            chunks = build_chunks(pages, chunk_size=600, overlap=100)
+
+            # Replace previous chunks + findings (idempotent re-parse).
+            db.query(MaterialChunk).filter(
+                MaterialChunk.material_id == material_id
+            ).delete(synchronize_session=False)
+            db.query(MaterialSecurityFinding).filter(
+                MaterialSecurityFinding.material_id == material_id
+            ).delete(synchronize_session=False)
+
+            saved_chunks: list[MaterialChunk] = []
+            for chunk in chunks:
+                text = chunk["text"]
+                mc = MaterialChunk(
+                    material_id=material_id,
+                    course_id=material.course_id,
+                    chunk_index=chunk["chunk_index"],
+                    title=chunk.get("title"),
+                    page_no=chunk.get("page_no"),
+                    text=text,
+                    token_count=len(text),
+                    keyword_text=clean_keyword_text(text),
+                )
+                db.add(mc)
+                saved_chunks.append(mc)
+
+            db.flush()
+            for f in security_scanner.scan_material_chunks(saved_chunks):
+                db.add(f)
+
+            material.status = "ready"
+            material.error_message = None
+            material.last_parse_error = None
+            material.parse_attempts = 0  # reset on success
+            material.parse_finished_at = utc_now()
+            db.commit()
+            return "ready", len(chunks)
+        except Exception as exc:  # noqa: BLE001 - any parse failure
+            db.rollback()
+            material = (
+                db.query(Material)
+                .filter(Material.id == material_id)
+                .first()
+            )
+            last_exc = exc
+            attempts_so_far = attempt
+            # Write a warning log for this attempt (still retrying) unless
+            # this is the last attempt or the error is non-retryable.
+            is_last = attempt >= max_retries or not _is_retryable(exc)
+            log_error(
+                db,
+                user_id,
+                category="parse",
+                level="error" if is_last else "warning",
+                title="资料解析失败",
+                message=(
+                    f"「{material.filename}」第 {attempt}/{max_retries} 次解析失败："
+                    f"{str(exc) or exc.__class__.__name__}"
+                ),
+                technical_detail=f"{exc.__class__.__name__}: {exc}",
+                course_id=material.course_id,
+                material_id=material_id,
+                retry_count=attempts_so_far,
+                max_retries=max_retries,
+            )
+            if is_last:
+                break
+            # Sleep before the next retry (skip on attempt 1's 0s delay).
+            delay = RETRY_DELAYS_SECONDS[min(attempt, len(RETRY_DELAYS_SECONDS) - 1)]
+            if delay > 0:
+                sleep(delay)
+
+    # All retries exhausted (or non-retryable): finalize the failure.
+    material = db.query(Material).filter(Material.id == material_id).first()
+    material.parse_finished_at = utc_now()
+    err_msg = str(last_exc) or (
+        last_exc.__class__.__name__ if last_exc else "解析失败"
+    )
+    material.last_parse_error = err_msg
+
+    if existing_chunk_count > 0:
+        # Keep the old chunks usable; surface a stale-ready warning.
+        material.status = "ready"
+        material.error_message = (
+            f"最近一次重新解析失败，已保留上一版解析结果：{err_msg}"
+        )
+        db.commit()
+        return "ready", existing_chunk_count
+
+    material.status = "failed"
+    material.error_message = err_msg
+    db.commit()
+    return "failed", 0

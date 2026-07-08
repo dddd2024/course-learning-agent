@@ -20,6 +20,7 @@ import {
   type SearchItem,
 } from '../api/material'
 import { parseApiError } from '../utils/error'
+import { formatLocalDateTime, secondsSince } from '../utils/datetime'
 
 const route = useRoute()
 const router = useRouter()
@@ -270,6 +271,10 @@ async function handleParse(material: Material) {
   }
 }
 
+function goToLogs(material: Material) {
+  router.push({ path: '/logs', query: { material_id: String(material.id) } })
+}
+
 async function handleDelete(material: Material) {
   try {
     await ElMessageBox.confirm(
@@ -502,7 +507,7 @@ onUnmounted(() => {
       >
         <el-table-column prop="filename" label="文件名" min-width="220" show-overflow-tooltip />
         <el-table-column prop="file_type" label="类型" width="100" />
-        <el-table-column label="状态" width="160">
+        <el-table-column label="状态" width="180">
           <template #default="{ row }">
             <el-tooltip
               v-if="row.status === 'failed' && row.error_message"
@@ -522,6 +527,14 @@ onUnmounted(() => {
                 {{ staleReadyLabel() }}
               </el-tag>
             </el-tooltip>
+            <template v-else-if="row.status === 'processing'">
+              <el-tag :type="statusTagType[row.status as MaterialStatus]">
+                {{ statusLabel[row.status as MaterialStatus] }}
+              </el-tag>
+              <span v-if="row.parse_started_at" class="elapsed-hint">
+                已耗时 {{ secondsSince(row.parse_started_at) }} 秒
+              </span>
+            </template>
             <el-tag v-else :type="statusTagType[row.status as MaterialStatus]">
               {{ statusLabel[row.status as MaterialStatus] }}
             </el-tag>
@@ -530,10 +543,10 @@ onUnmounted(() => {
         <el-table-column prop="version" label="版本" width="80" align="center" />
         <el-table-column label="上传时间" width="180">
           <template #default="{ row }">
-            {{ new Date(row.uploaded_at).toLocaleString() }}
+            {{ formatLocalDateTime(row.uploaded_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="280" fixed="right">
+        <el-table-column label="操作" width="340" fixed="right">
           <template #default="{ row }">
             <el-button
               size="small"
@@ -550,6 +563,14 @@ onUnmounted(() => {
               @click="openChunksDialog(row)"
             >
               查看片段
+            </el-button>
+            <el-button
+              v-if="row.status === 'failed'"
+              size="small"
+              type="warning"
+              @click="goToLogs(row)"
+            >
+              查看原因
             </el-button>
             <el-button
               size="small"
@@ -743,6 +764,13 @@ onUnmounted(() => {
   background: #fff;
   padding: 24px;
   border-radius: 4px;
+}
+
+.elapsed-hint {
+  display: block;
+  font-size: 12px;
+  color: #e6a23c;
+  margin-top: 4px;
 }
 
 .header {

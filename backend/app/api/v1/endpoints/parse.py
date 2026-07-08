@@ -27,13 +27,12 @@ from app.core.exceptions import BusinessException, NotFoundException
 from app.models.material import Material
 from app.models.material_chunk import MaterialChunk
 from app.models.user import User
-from app.retrieval.chunker import build_chunks, clean_keyword_text
-from app.retrieval.parsers import parse_file
 from app.schemas.material import (
     ChunkListResponse,
     ChunkResponse,
     ParseResponse,
 )
+from app.services.material_parser import parse_with_retry
 
 router = APIRouter()
 
@@ -67,110 +66,18 @@ def parse_material(
 ) -> ParseResponse:
     """Parse a material, build chunks, and update its status.
 
-    The flow is: mark ``processing`` -> parse file -> build chunks ->
-    replace any existing chunks -> mark ``ready``. On any exception the
-    material is marked ``failed`` with the error message and an empty
-    chunk list is reported back.
+    Delegates to :func:`app.services.material_parser.parse_with_retry`
+    which owns the retry policy, status tracking, and error logging.
     """
     material = _get_owned_material(db, material_id, current_user.id)
-
-    # P0: record whether a previous successful parse produced chunks.
-    # If a re-parse fails, we keep the old chunks visible (status="ready")
-    # instead of clobbering them with "failed", so the user can still use
-    # the last known good result. Only first-time failures (no old chunks)
-    # are marked "failed".
-    existing_chunk_count = (
-        db.query(MaterialChunk)
-        .filter(MaterialChunk.material_id == material_id)
-        .count()
+    final_status, chunk_count = parse_with_retry(
+        db, material, current_user.id
     )
-
-    material.status = "processing"
-    material.error_message = None
-    db.commit()
-
-    try:
-        file_path = Path(settings.UPLOAD_DIR) / material.file_path
-        pages = parse_file(str(file_path), material.file_type)
-        chunks = build_chunks(pages, chunk_size=600, overlap=100)
-
-        # Re-parsing replaces previous chunks so the operation is idempotent.
-        db.query(MaterialChunk).filter(
-            MaterialChunk.material_id == material_id
-        ).delete(synchronize_session=False)
-
-        # Also clear previous security findings (idempotent re-parse).
-        from app.models.security_finding import MaterialSecurityFinding
-
-        db.query(MaterialSecurityFinding).filter(
-            MaterialSecurityFinding.material_id == material_id
-        ).delete(synchronize_session=False)
-
-        saved_chunks: list[MaterialChunk] = []
-        for chunk in chunks:
-            text = chunk["text"]
-            mc = MaterialChunk(
-                material_id=material_id,
-                course_id=material.course_id,
-                chunk_index=chunk["chunk_index"],
-                title=chunk.get("title"),
-                page_no=chunk.get("page_no"),
-                text=text,
-                token_count=len(text),
-                keyword_text=clean_keyword_text(text),
-            )
-            db.add(mc)
-            saved_chunks.append(mc)
-
-        db.flush()  # populate chunk ids for the scanner
-
-        # Phase 2 Task D: scan chunks for prompt-injection patterns.
-        from app.services.security_scanner import scan_material_chunks
-
-        findings = scan_material_chunks(saved_chunks)
-        for f in findings:
-            db.add(f)
-
-        material.status = "ready"
-        material.error_message = None
-        db.commit()
-
-        return ParseResponse(
-            material_id=material_id,
-            status="ready",
-            chunk_count=len(chunks),
-        )
-    except Exception as exc:  # noqa: BLE001 - record any parse failure
-        # Phase 2 bugfix P1-3: roll back the half-finished transaction
-        # (old chunks were deleted, new chunks may have been flushed)
-        # before marking the material failed. Without rollback the
-        # db.commit() below would persist the partial delete+insert,
-        # destroying the last known good chunks.
-        db.rollback()
-        material = _get_owned_material(db, material_id, current_user.id)
-        # P0: if a previous successful parse left chunks, keep them visible
-        # (status="ready") and only record the failure in error_message.
-        # This lets the user continue using the last known good result.
-        if existing_chunk_count > 0:
-            material.status = "ready"
-            material.error_message = (
-                f"最近一次重新解析失败，已保留上一版解析结果："
-                f"{str(exc) or exc.__class__.__name__}"
-            )
-            db.commit()
-            return ParseResponse(
-                material_id=material_id,
-                status="ready",
-                chunk_count=existing_chunk_count,
-            )
-        material.status = "failed"
-        material.error_message = str(exc) or exc.__class__.__name__
-        db.commit()
-        return ParseResponse(
-            material_id=material_id,
-            status="failed",
-            chunk_count=0,
-        )
+    return ParseResponse(
+        material_id=material_id,
+        status=final_status,
+        chunk_count=chunk_count,
+    )
 
 
 @router.get(

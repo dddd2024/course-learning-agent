@@ -11,6 +11,10 @@ export interface Material {
   version: number
   error_message?: string | null
   uploaded_at: string
+  parse_started_at?: string | null
+  parse_finished_at?: string | null
+  parse_attempts?: number
+  last_parse_error?: string | null
 }
 
 export interface MaterialListResult {

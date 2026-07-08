@@ -14,6 +14,7 @@ from app.models.concept_graph import (
 from app.models.conversation import Conversation, Message
 from app.models.course import Course
 from app.models.error_log import AgentErrorLog
+from app.models.general_error_log import ErrorLog
 from app.models.knowledge_point import KnowledgePoint
 from app.models.llm_config import UserLLMConfig
 from app.models.material import Material
@@ -29,6 +30,7 @@ __all__ = [
     "AgentRun",
     "AgentStep",
     "AgentErrorLog",
+    "ErrorLog",
     "Citation",
     "ConceptCompareReport",
     "ConceptEdge",

@@ -1,8 +1,7 @@
 """Material ORM model."""
-from datetime import datetime
-
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 
+from app.core.timezone import utc_now
 from app.models.base import Base, TimestampMixin
 
 
@@ -20,7 +19,17 @@ class Material(Base, TimestampMixin):
     status = Column(String(30), default="uploaded")  # uploaded/processing/ready/failed
     version = Column(Integer, default=1)
     error_message = Column(Text)
-    uploaded_at = Column(DateTime, default=datetime.utcnow)
+    # timezone-aware upload time (replaces the old naive datetime.utcnow).
+    uploaded_at = Column(DateTime(timezone=True), default=utc_now)
+    # Parse-task tracking for retry + timeout recovery.
+    # parse_started_at: when the current/last parse attempt began (timezone-aware).
+    # parse_finished_at: when the current/last parse attempt ended.
+    # parse_attempts: how many tries the current parse run has used (resets on success).
+    # last_parse_error: human-readable reason for the most recent failure.
+    parse_started_at = Column(DateTime(timezone=True), nullable=True)
+    parse_finished_at = Column(DateTime(timezone=True), nullable=True)
+    parse_attempts = Column(Integer, default=0, nullable=False)
+    last_parse_error = Column(Text)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (

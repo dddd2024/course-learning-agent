@@ -22,6 +22,10 @@ class MaterialResponse(BaseModel):
     version: int
     error_message: Optional[str] = None
     uploaded_at: datetime
+    parse_started_at: Optional[datetime] = None
+    parse_finished_at: Optional[datetime] = None
+    parse_attempts: int = 0
+    last_parse_error: Optional[str] = None
 
 
 class MaterialListResponse(BaseModel):

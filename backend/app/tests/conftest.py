@@ -16,6 +16,18 @@ from app.main import app
 from app.models.base import Base
 
 
+@pytest.fixture(autouse=True)
+def _fast_parse_retries(monkeypatch):
+    """Skip time.sleep in material_parser retries to keep tests fast.
+
+    The parse retry service uses real time.sleep(2)/sleep(5) delays
+    between retries. In tests these delays are pointless (the parse_fn
+    is always a mock or a fast in-memory operation) so we patch
+    ``time.sleep`` in the material_parser module to a no-op.
+    """
+    monkeypatch.setattr("app.services.material_parser.time.sleep", lambda _: None)
+
+
 @pytest.fixture()
 def client() -> Iterator[TestClient]:
     """Return a TestClient backed by an in-memory SQLite database.

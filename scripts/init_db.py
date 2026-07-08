@@ -43,9 +43,13 @@ def init_db() -> None:
     # Legacy-DB compat: add user_focus/evidence_hash to existing
     # concept_compare_reports tables that predate v3. create_all does not
     # alter existing tables, so we patch them explicitly.
-    from app.db.migrations import ensure_concept_compare_report_columns
+    from app.db.migrations import (
+        ensure_concept_compare_report_columns,
+        ensure_material_parse_columns,
+    )
 
     ensure_concept_compare_report_columns(engine)
+    ensure_material_parse_columns(engine)
     print("数据库表已创建（如已存在则跳过）。")
 
 

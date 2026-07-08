@@ -42,3 +42,35 @@ def ensure_concept_compare_report_columns(engine: Engine) -> None:
                         f"ADD COLUMN {col} {ddl}"
                     )
                 )
+
+
+# Material parse-tracking columns added by the error-log/parse-reliability
+# plan. create_all adds them on fresh DBs; this patches existing dev DBs.
+_MATERIAL_PARSE_COLUMNS = {
+    "parse_started_at": "DATETIME",
+    "parse_finished_at": "DATETIME",
+    "parse_attempts": "INTEGER DEFAULT 0 NOT NULL",
+    "last_parse_error": "TEXT",
+}
+
+
+def ensure_material_parse_columns(engine: Engine) -> None:
+    """Add parse-tracking columns to ``materials`` if missing (legacy dev DBs).
+
+    Safe to call on: fresh DB (table absent -> skipped), legacy DB (table
+    present, columns absent -> ALTER ADD), modern DB (columns present -> no-op).
+    """
+    insp = inspect(engine)
+    if "materials" not in insp.get_table_names():
+        return
+
+    existing = {c["name"] for c in insp.get_columns("materials")}
+    with engine.begin() as conn:
+        for col, ddl in _MATERIAL_PARSE_COLUMNS.items():
+            if col not in existing:
+                logger.info("adding column %s to materials", col)
+                conn.execute(
+                    text(
+                        f"ALTER TABLE materials ADD COLUMN {col} {ddl}"
+                    )
+                )

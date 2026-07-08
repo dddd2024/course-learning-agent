@@ -86,6 +86,12 @@ const routes: RouteRecordRaw[] = [
         meta: { requiresAuth: true },
       },
       {
+        path: 'logs',
+        name: 'logs',
+        component: () => import('../views/LogsView.vue'),
+        meta: { requiresAuth: true },
+      },
+      {
         path: 'knowledge-graph',
         name: 'knowledge-graph',
         component: () => import('../views/KnowledgeGraphView.vue'),
