@@ -28,14 +28,14 @@ export function parseApiError(err: unknown, fallback = '操作失败，请重试
   if (serverMessage) return serverMessage
 
   if (status === undefined) {
-    // Task E: 区分网络异常与后端不可达。axios 无 response 通常意味着
-    // 请求未到达后端（后端未启动、端口被占用、CORS 拦截），而不是用户
-    // 的外网断了。给出更具体的提示，引导用户排查后端或查看日志中心。
+    // Redo Task C: distinguish backend-unreachable from a real network
+    // outage. The report is saved to the local pending queue and replayed
+    // after the backend comes back and the user is authenticated.
     const msg = e?.message || ''
     if (msg.includes('timeout') || msg.toLowerCase().includes('timeout')) {
-      return '请求超时，后端响应时间过长，请稍后重试或查看日志中心'
+      return '请求超时，后端响应时间过长，已保存到本地待上报日志，后端恢复并登录后补发'
     }
-    return '无法连接后端服务，请确认后端已启动或查看日志中心'
+    return '无法连接后端服务，已保存到本地待上报日志，后端恢复并登录后补发'
   }
   switch (status) {
     case 400:

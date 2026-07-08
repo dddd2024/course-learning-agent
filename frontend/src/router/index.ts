@@ -118,19 +118,20 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to) => {
-  // Task B: read token from the auth store (sessionStorage by default,
-  // localStorage only when "记住登录" was chosen) instead of reading
-  // localStorage directly. A stale localStorage token must NOT bypass
-  // the login page.
+router.beforeEach(async (to) => {
+  // Redo Task A: the guard must await /auth/me validation before trusting
+  // the token. A stale localStorage token that the backend rejects (401)
+  // is cleared by ensureAuthReady and the user is sent to /login.
   const auth = useAuthStore()
-  if (to.meta.requiresAuth && !auth.token) {
-    auth.clearToken()
-    return '/login'
+  const ok = await auth.ensureAuthReady()
+  if (to.meta.requiresAuth) {
+    if (!ok) {
+      return { path: '/login', query: { redirect: to.fullPath } }
+    }
   }
-  if (to.meta.requiresAuth === false && auth.token) {
-    // Already logged in — skip the login page.
-    return '/dashboard'
+  if (to.meta.requiresAuth === false && ok) {
+    // Already authenticated — skip the login/register page.
+    if (to.path === '/login') return '/dashboard'
   }
 })
 

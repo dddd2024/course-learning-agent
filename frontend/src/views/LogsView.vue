@@ -11,14 +11,32 @@ import {
   type ErrorLogCategory,
   type ErrorLogLevel,
   type ErrorLogStatus,
+  type FrontendErrorReportPayload,
 } from '../api/logs'
 import { parseApiError } from '../utils/error'
 import { formatLocalDateTime } from '../utils/datetime'
+import { checkBackendHealth, type BackendHealth } from '../api/health'
+import {
+  readPendingQueue,
+  flushPendingErrorReports,
+} from '../utils/errorReport'
 
 const route = useRoute()
 
 const logs = ref<ErrorLog[]>([])
 const listLoading = ref(false)
+
+// Redo Task B: backend connection + load state so the empty table no
+// longer lies ("暂无异常日志") when the backend is actually down.
+type ConnState = 'unknown' | 'ok' | 'unreachable' | 'auth_failed'
+const backendConn = ref<ConnState>('unknown')
+const backendHealth = ref<BackendHealth | null>(null)
+const healthCheckedAt = ref<string | null>(null)
+const loadError = ref<string | null>(null)
+
+// Redo Task B: local pending reports (backend-unreachable backlog).
+const pendingLocalReports = ref<FrontendErrorReportPayload[]>([])
+const flushing = ref(false)
 
 const filterCategory = ref<ErrorLogCategory | ''>('')
 const filterLevel = ref<ErrorLogLevel | ''>('')
@@ -107,15 +125,83 @@ function buildListParams() {
   return params
 }
 
+// Redo Task B/D: empty-text must reflect WHY the list is empty. "暂无异常日志"
+// only applies when the backend is reachable and returned an empty page.
+const emptyText = computed(() => {
+  if (backendConn.value === 'unreachable') {
+    return '后端不可达，无法加载服务端日志'
+  }
+  if (backendConn.value === 'auth_failed') {
+    return '登录已失效，请重新登录后再查看日志'
+  }
+  if (loadError.value) {
+    return '日志加载失败，请刷新重试'
+  }
+  return '暂无异常日志'
+})
+
+async function checkHealth() {
+  try {
+    const h = await checkBackendHealth()
+    backendHealth.value = h
+    healthCheckedAt.value = new Date().toLocaleTimeString()
+    // Only treat our own backend as "ok"; a different app on 8000 is a misconfig.
+    backendConn.value = h.app === 'course-learning-agent' ? 'ok' : 'unreachable'
+  } catch {
+    backendHealth.value = null
+    healthCheckedAt.value = new Date().toLocaleTimeString()
+    backendConn.value = 'unreachable'
+  }
+}
+
 async function fetchLogs() {
   listLoading.value = true
+  loadError.value = null
   try {
     const { data } = await listErrorLogs(buildListParams())
     logs.value = data.items
+    backendConn.value = 'ok'
   } catch (err) {
-    ElMessage.error(parseApiError(err, '获取日志列表失败'))
+    const status = (err as { response?: { status?: number } }).response?.status
+    if (status === 401) {
+      backendConn.value = 'auth_failed'
+    } else if (status === undefined) {
+      backendConn.value = 'unreachable'
+    } else {
+      backendConn.value = 'ok'
+    }
+    loadError.value = parseApiError(err, '获取日志列表失败')
+    // Don't toast when the backend is down — the banner explains it.
+    if (backendConn.value === 'ok') {
+      ElMessage.error(loadError.value)
+    }
   } finally {
     listLoading.value = false
+  }
+}
+
+function refreshPending() {
+  pendingLocalReports.value = readPendingQueue()
+}
+
+async function handleReconnectAndFlush() {
+  flushing.value = true
+  try {
+    await checkHealth()
+    if (backendConn.value !== 'ok') {
+      ElMessage.warning('后端仍不可达，本地待上报日志已保留，请稍后重试')
+      return
+    }
+    await flushPendingErrorReports()
+    refreshPending()
+    if (pendingLocalReports.value.length === 0) {
+      ElMessage.success('本地待上报日志已补发至日志中心')
+      await fetchLogs()
+    } else {
+      ElMessage.warning('部分日志仍未能补发，请确认登录状态后重试')
+    }
+  } finally {
+    flushing.value = false
   }
 }
 
@@ -157,7 +243,9 @@ async function handleResolve(log: ErrorLog, nextStatus: ErrorLogStatus) {
 }
 
 function handleRefresh() {
+  checkHealth()
   fetchLogs()
+  refreshPending()
 }
 
 function handleRowClick(row: ErrorLog) {
@@ -168,7 +256,9 @@ onMounted(() => {
   if (presetMaterialId.value) {
     filterCategory.value = 'parse'
   }
+  checkHealth()
   fetchLogs()
+  refreshPending()
 })
 </script>
 
@@ -234,12 +324,88 @@ onMounted(() => {
       </div>
     </div>
 
+    <!-- Redo Task D: backend service status banner -->
+    <el-alert
+      v-if="backendConn === 'unreachable'"
+      type="error"
+      :closable="false"
+      show-icon
+      title="后端服务不可达"
+      class="status-banner"
+    >
+      无法连接后端服务（端口 8000）。请确认后端已启动：运行
+      <code>scripts/start_windows.ps1</code> 或
+      <code>uvicorn app.main:app --reload</code>。服务端日志无法加载，但前端错误已保存到下方"本地待上报日志"，后端恢复并登录后可补发。
+    </el-alert>
+    <el-alert
+      v-else-if="backendConn === 'auth_failed'"
+      type="warning"
+      :closable="false"
+      show-icon
+      title="登录已失效"
+      class="status-banner"
+    >
+      请重新登录后再查看服务端日志。本地待上报日志已保留，登录后可补发。
+    </el-alert>
+    <el-alert
+      v-else-if="backendConn === 'ok' && backendHealth"
+      type="success"
+      :closable="false"
+      show-icon
+      :title="`后端服务正常 · ${backendHealth.app} v${backendHealth.version}`"
+      class="status-banner"
+    >
+      最近检查时间：{{ healthCheckedAt }}
+    </el-alert>
+
+    <!-- Redo Task B: local pending reports panel -->
+    <el-card
+      v-if="pendingLocalReports.length > 0"
+      class="pending-card"
+      shadow="never"
+    >
+      <template #header>
+        <div class="pending-header">
+          <span class="pending-title">
+            本地待上报日志（{{ pendingLocalReports.length }} 条）
+          </span>
+          <el-button
+            type="primary"
+            size="small"
+            :loading="flushing"
+            @click="handleReconnectAndFlush"
+          >
+            重新连接并补发
+          </el-button>
+        </div>
+      </template>
+      <el-table :data="pendingLocalReports" size="small" stripe>
+        <el-table-column label="分类" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.category === 'network' ? 'warning' : 'danger'">
+              {{ row.category }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="title" label="标题" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="message" label="消息" min-width="220" show-overflow-tooltip />
+        <el-table-column label="请求路径" width="180" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.request_path || '-' }}
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="pending-hint">
+        这些错误在后端不可达时产生，已暂存在本地（sessionStorage）。点击"重新连接并补发"将它们写入服务端日志中心。
+      </div>
+    </el-card>
+
     <el-card class="section-card" shadow="never">
       <el-table
         v-loading="listLoading"
         :data="logs"
         stripe
-        empty-text="暂无异常日志"
+        :empty-text="emptyText"
         @row-click="handleRowClick"
         :row-style="{ cursor: 'pointer' }"
       >
@@ -416,6 +582,34 @@ onMounted(() => {
 
 .section-card {
   margin-bottom: 16px;
+}
+
+.status-banner {
+  margin-bottom: 16px;
+}
+
+.pending-card {
+  margin-bottom: 16px;
+  border-left: 3px solid #e6a23c;
+}
+
+.pending-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pending-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e6a23c;
+}
+
+.pending-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
 }
 
 .drawer-body {

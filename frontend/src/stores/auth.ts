@@ -6,21 +6,43 @@ const TOKEN_KEY = 'token'
 const USERNAME_KEY = 'username'
 const REMEMBER_KEY = 'auth_remember'
 
+/**
+ * Read the initial token at store creation.
+ *
+ * Redo Task A: when the user did NOT choose "记住登录" we must NOT fall
+ * back to localStorage — a stale localStorage token was bypassing the
+ * login page. We also proactively clear any leftover localStorage token
+ * so the bad state cannot reappear.
+ */
+function readInitialToken(): string {
+  const remembered = localStorage.getItem(REMEMBER_KEY) === '1'
+  if (remembered) {
+    return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || ''
+  }
+  // Not remembered: a leftover localStorage token is invalid — purge it.
+  localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(USERNAME_KEY)
+  return sessionStorage.getItem(TOKEN_KEY) || ''
+}
+
+function readInitialUsername(): string {
+  const remembered = localStorage.getItem(REMEMBER_KEY) === '1'
+  if (remembered) {
+    return localStorage.getItem(USERNAME_KEY) || sessionStorage.getItem(USERNAME_KEY) || ''
+  }
+  return sessionStorage.getItem(USERNAME_KEY) || ''
+}
+
 export const useAuthStore = defineStore('auth', () => {
-  // Security Task D: prefer sessionStorage so the token is cleared when
-  // the browser closes (mitigates XSS token theft). Only use localStorage
-  // when the user explicitly chose "记住登录" (remember me).
   const remember = ref<boolean>(localStorage.getItem(REMEMBER_KEY) === '1')
 
-  function readStorage(key: string): string {
-    if (remember.value) {
-      return localStorage.getItem(key) || sessionStorage.getItem(key) || ''
-    }
-    return sessionStorage.getItem(key) || localStorage.getItem(key) || ''
-  }
+  const token = ref<string>(readInitialToken())
+  const username = ref<string>(readInitialUsername())
 
-  const token = ref<string>(readStorage(TOKEN_KEY))
-  const username = ref<string>(readStorage(USERNAME_KEY))
+  // Redo Task A: authReady gates the router guard. Until ensureAuthReady
+  // resolves we don't know whether the token is valid, so the guard must
+  // wait (await) rather than trust token.value alone.
+  const authReady = ref<boolean>(false)
 
   const isLoggedIn = computed(() => !!token.value)
 
@@ -43,6 +65,7 @@ export const useAuthStore = defineStore('auth', () => {
     if (username.value) {
       store.setItem(USERNAME_KEY, username.value)
     }
+    authReady.value = true
   }
 
   function clearToken() {
@@ -54,18 +77,30 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(USERNAME_KEY)
     localStorage.removeItem(REMEMBER_KEY)
+    authReady.value = true
   }
 
-  // Task B: validate the token against /auth/me on app boot. If the
-  // backend rejects it (401) the axios interceptor clears the token and
-  // the router guard redirects to /login. Returns true when the token
-  // is still valid.
-  async function validateToken(): Promise<boolean> {
-    if (!token.value) return false
+  /**
+   * Ensure the auth state has been validated against the backend.
+   *
+   * Redo Task A: the router guard awaits this before deciding to allow a
+   * protected route. If there is no token we mark authReady and return
+   * false (guard redirects to /login). If a token exists we call
+   * /auth/me; on 401 we clear it and return false.
+   *
+   * Idempotent: once authReady is true the stored token verdict is
+   * reused until setToken/clearToken reset it.
+   */
+  async function ensureAuthReady(): Promise<boolean> {
+    if (authReady.value) return !!token.value
+    if (!token.value) {
+      authReady.value = true
+      return false
+    }
     try {
       const { data } = await getMe()
-      // Keep the username in sync with the server-side truth.
       if (data.username) username.value = data.username
+      authReady.value = true
       return true
     } catch {
       clearToken()
@@ -73,5 +108,5 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  return { token, username, isLoggedIn, remember, setToken, clearToken, validateToken }
+  return { token, username, isLoggedIn, remember, authReady, setToken, clearToken, ensureAuthReady }
 })

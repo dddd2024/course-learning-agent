@@ -51,7 +51,7 @@ request.interceptors.response.use(
         ? `${method} ${url} 请求失败：${serverMessage}`
         : hasResponse
           ? `${method} ${url} 请求失败：服务返回 ${statusCode}`
-          : `${method} ${url} 请求失败：无法连接后端（后端可能未启动或端口被占用）`
+          : `${method} ${url} 请求失败：无法连接后端（已保存到本地待上报日志，后端恢复并登录后补发）`
       const frontendRoute = router.currentRoute.value.path
 
       // Fire-and-forget; never let reporting break the original call.
