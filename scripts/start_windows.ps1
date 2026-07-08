@@ -256,8 +256,20 @@ function Invoke-Main {
 
     Write-Step "Initializing database (scripts/init_db.py)..."
     $initDb = Join-Path $repoRoot "scripts\init_db.py"
-    & $venvPython $initDb
-    if ($LASTEXITCODE -ne 0) {
+    # CRITICAL: run init_db.py with CWD = $backendDir so that the relative
+    # DATABASE_URL "sqlite:///./course_assistant.db" resolves to the SAME
+    # file that uvicorn (which also runs from $backendDir) will use.
+    # Without this, init_db creates/migrates <repo>/course_assistant.db
+    # while uvicorn uses <repo>/backend/course_assistant.db — the backend
+    # DB never gets the migration columns and /api/v1/logs returns 500.
+    Push-Location $backendDir
+    try {
+        & $venvPython $initDb
+        $initExit = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    if ($initExit -ne 0) {
         Write-Bad "Database initialization failed."
         Write-LaunchStatus @{
             launched        = $false
@@ -390,24 +402,71 @@ function Invoke-Main {
                     & powershell.exe -File $stopScript
                     Start-Sleep -Seconds 2
                 }
-                # Task D hardening: re-check the port after stop. If stop
-                # failed to release 8000, do NOT continue — opening a new
-                # backend would just fail to bind. Fail with a clear reason.
+                # P0 fix: re-check the port after stop. Test-PortInUse
+                # returns true for zombie/TIME_WAIT entries whose
+                # OwningProcess has exited, AND for inherited-socket orphans
+                # (a multiprocessing worker whose parent died but which keeps
+                # the listening socket — Get-NetTCPConnection reports the
+                # dead parent as owner). Distinguish three cases:
+                #  (a) LIVE owner process      -> stop failed, refuse.
+                #  (b) Dead owner but port ACCEPTS TCP connects -> inherited-
+                #      socket orphan. Re-run stop (its Fallback 3 kills such
+                #      workers) and re-probe; if still held, fail.
+                #  (c) Dead owner and port REFUSES connects -> genuine
+                #      zombie/TIME_WAIT; uvicorn will bind. Proceed.
                 if (Test-PortInUse $backendPort) {
-                    Write-Bad "stop_windows.ps1 ran but port $backendPort is still in use. Refusing to start a conflicting backend."
-                    $owners = Get-PortOwner $backendPort
-                    if ($owners) {
-                        $owners | Format-Table PID, Name, CommandLine -AutoSize | Out-Host
+                    $liveOwners = Get-PortOwner $backendPort | Where-Object {
+                        $_.Name -ne '<exited>'
                     }
-                    Write-LaunchStatus @{
-                        launched        = $false
-                        reason          = "backend_stale_stop_failed"
-                        backend         = @{ ok = $false; port = $backendPort; stale = $true }
-                        last_start_time = (Get-Date).ToString("o")
+                    if ($liveOwners) {
+                        # Case (a): genuinely still held by a live process.
+                        Write-Bad "stop_windows.ps1 ran but port $backendPort is still held by a live process. Refusing to start a conflicting backend."
+                        $liveOwners | Format-Table PID, Name, CommandLine -AutoSize | Out-Host
+                        Write-LaunchStatus @{
+                            launched        = $false
+                            reason          = "backend_stale_stop_failed"
+                            backend         = @{ ok = $false; port = $backendPort; stale = $true }
+                            last_start_time = (Get-Date).ToString("o")
+                        }
+                        exit 1
+                    } else {
+                        # Dead owner — probe whether an inherited socket is live.
+                        $inheritedHeld = $false
+                        try {
+                            $probe = New-Object System.Net.Sockets.TcpClient
+                            $probe.Connect('127.0.0.1', $backendPort)
+                            $inheritedHeld = $true
+                            $probe.Close()
+                        } catch { }
+                        if ($inheritedHeld) {
+                            # Case (b): re-run stop to kill the inherited-socket worker, then re-probe.
+                            Write-Step "Port $backendPort still accepts connections (inherited-socket orphan). Re-running stop to clear it..."
+                            & powershell.exe -File $stopScript
+                            Start-Sleep -Seconds 2
+                            $stillHeld = $false
+                            try {
+                                $probe2 = New-Object System.Net.Sockets.TcpClient
+                                $probe2.Connect('127.0.0.1', $backendPort)
+                                $stillHeld = $true
+                                $probe2.Close()
+                            } catch { }
+                            if ($stillHeld) {
+                                Write-Bad "Port $backendPort STILL held by inherited-socket orphan after second stop. Refusing to start a conflicting backend. Run scripts/stop_windows.ps1 manually or reboot."
+                                Write-LaunchStatus @{
+                                    launched        = $false
+                                    reason          = "backend_inherited_socket_orphan"
+                                    backend         = @{ ok = $false; port = $backendPort; stale = $true }
+                                    last_start_time = (Get-Date).ToString("o")
+                                }
+                                exit 1
+                            }
+                            Write-Ok "Inherited-socket orphan cleared. Port $backendPort now free."
+                        } else {
+                            Write-Step "Port $backendPort has only zombie/TIME_WAIT entries (no live owner, refuses connects). Proceeding — uvicorn will bind."
+                        }
                     }
-                    exit 1
                 }
-                Write-Ok "Stale backend stopped, port released. Starting fresh backend."
+                Write-Ok "Stale backend stopped. Starting fresh backend."
             } else {
                 Write-Ok "Backend already running on port $backendPort. Reusing."
                 $backendHealthOk = $true
@@ -415,35 +474,58 @@ function Invoke-Main {
                 if ($owners) { $backendPidValue = $owners[0].PID }
             }
         } catch {
-            Write-Bad "Port $backendPort is occupied but not serving our backend health endpoint."
-            $owners = Get-PortOwner $backendPort
-            if ($owners) {
-                Write-Host "  Owning process(es):" -ForegroundColor Gray
-                $owners | Format-Table PID, Name, CommandLine -AutoSize | Out-Host
+            # The health probe failed. This can mean two things:
+            #   1. A different app IS listening but returned a non-200 /
+            #      non-course-learning-agent response  -> genuinely occupied.
+            #   2. No app is listening at all — the Test-PortInUse hit
+            #      TIME_WAIT / zombie entries left over after stop_windows.
+            #      In this case uvicorn can bind fine; we must NOT exit.
+            # Distinguish by checking for a LIVE owning process on the port.
+            $liveOwners = Get-PortOwner $backendPort | Where-Object { $_.Name -ne '<exited>' }
+            if ($liveOwners) {
+                Write-Bad "Port $backendPort is occupied by a live process but not serving our backend health endpoint."
+                $liveOwners | Format-Table PID, Name, CommandLine -AutoSize | Out-Host
                 Write-Host "  Run: powershell.exe -File scripts\stop_windows.ps1  (or free the port manually)" -ForegroundColor Cyan
+                Write-LaunchStatus @{
+                    launched        = $false
+                    reason          = "backend_port_occupied_unhealthy"
+                    backend         = @{ ok = $false; port = $backendPort }
+                    last_start_time = (Get-Date).ToString("o")
+                }
+                exit 1
+            } else {
+                # No live owner — the port has only TIME_WAIT/zombie entries.
+                # uvicorn will bind (SO_REUSEADDR). Proceed to start.
+                Write-Step "Port $backendPort has no live listener (TIME_WAIT/zombie after stop). Proceeding to start backend."
             }
-            Write-LaunchStatus @{
-                launched        = $false
-                reason          = "backend_port_occupied_unhealthy"
-                backend         = @{ ok = $false; port = $backendPort }
-                last_start_time = (Get-Date).ToString("o")
-            }
-            exit 1
         }
     }
 
     if (-not $backendHealthOk) {
         Write-Step "Starting backend on port $backendPort..."
-        # Task D: inject the current git commit so /health.build.git_commit
-        # reflects the code actually running in this process.
+        # Inject the current git commit so /health.build.git_commit reflects
+        # the code actually running in this process. The env var is inherited
+        # by the child python process launched directly below.
         $env:APP_GIT_COMMIT = $currentCommit
-        $backendArgs = @(
-            "-NoExit",
-            "-WindowStyle", "Hidden",
-            "-Command",
-            "cd '$backendDir'; & '$venvPython' -m uvicorn app.main:app --reload --host 127.0.0.1 --port $backendPort 2>&1 | Tee-Object -FilePath '$backendLog'"
-        )
-        $backendProc = Start-Process -FilePath "powershell.exe" -ArgumentList $backendArgs -WindowStyle Hidden -PassThru
+        # P0 fix: direct-launch uvicorn (no --reload, no powershell wrapper).
+        #  - Records the REAL python.exe PID (== the single uvicorn server
+        #    process) so stop_windows.ps1 can kill it precisely. The previous
+        #    wrapper approach recorded the powershell.exe wrapper PID; when
+        #    that wrapper died the PID went stale and stop missed the real
+        #    uvicorn, leaving it orphaned on port 8000 -> stale-restart loop.
+        #  - No --reload: avoids the reloader-parent + worker-child split
+        #    that made tree-killing and PID tracking ambiguous. The launcher
+        #    runs the app for end-users, not dev hot-reload.
+        #  - uvicorn writes all logs (INFO + access) to stderr by default, so
+        #    redirect stderr to backend.log; stdout (rare) to backend.out.log.
+        $backendOutLog = Join-Path $logDir "backend.out.log"
+        $backendProc = Start-Process -FilePath $venvPython `
+            -ArgumentList "-m","uvicorn","app.main:app","--host","127.0.0.1","--port",$backendPort `
+            -WorkingDirectory $backendDir `
+            -WindowStyle Hidden `
+            -RedirectStandardError $backendLog `
+            -RedirectStandardOutput $backendOutLog `
+            -PassThru
         $backendProc.Id | Out-File -FilePath $backendPidFile -Encoding ascii -Force
         $backendPidValue = $backendProc.Id
         Write-Step "Waiting for backend health check..."
@@ -481,6 +563,7 @@ function Invoke-Main {
     $frontendPidFile = Join-Path $logDir "frontend.pid"
     $frontendPidValue = $null
 
+    $frontendNeedsStart = $false
     if (Test-PortInUse $frontendPort) {
         Write-Step "Port $frontendPort in use. Verifying it serves Course Learning Agent..."
         try {
@@ -506,23 +589,32 @@ function Invoke-Main {
             $owners = Get-PortOwner $frontendPort
             if ($owners) { $frontendPidValue = $owners[0].PID }
         } catch {
-            Write-Bad "Port $frontendPort is occupied but not serving the frontend."
-            $owners = Get-PortOwner $frontendPort
-            if ($owners) {
-                Write-Host "  Owning process(es):" -ForegroundColor Gray
-                $owners | Format-Table PID, Name, CommandLine -AutoSize | Out-Host
+            # Same TIME_WAIT logic as the backend port check: the probe
+            # failed, but that may be because no app is listening (only
+            # TIME_WAIT entries). Distinguish by checking for a LIVE owner.
+            $liveOwners = Get-PortOwner $frontendPort | Where-Object { $_.Name -ne '<exited>' }
+            if ($liveOwners) {
+                Write-Bad "Port $frontendPort is occupied by a live process but not serving the frontend."
+                $liveOwners | Format-Table PID, Name, CommandLine -AutoSize | Out-Host
                 Write-Host "  Run: powershell.exe -File scripts\stop_windows.ps1  (or free the port manually)" -ForegroundColor Cyan
+                Write-LaunchStatus @{
+                    launched        = $false
+                    reason          = "frontend_port_occupied_unhealthy"
+                    backend         = @{ ok = $true; pid = $backendPidValue }
+                    frontend        = @{ ok = $false; port = $frontendPort }
+                    last_start_time = (Get-Date).ToString("o")
+                }
+                exit 1
+            } else {
+                Write-Step "Port $frontendPort has no live listener (TIME_WAIT/zombie after stop). Proceeding to start frontend."
+                $frontendNeedsStart = $true
             }
-            Write-LaunchStatus @{
-                launched        = $false
-                reason          = "frontend_port_occupied_unhealthy"
-                backend         = @{ ok = $true; pid = $backendPidValue }
-                frontend        = @{ ok = $false; port = $frontendPort }
-                last_start_time = (Get-Date).ToString("o")
-            }
-            exit 1
         }
     } else {
+        $frontendNeedsStart = $true
+    }
+
+    if ($frontendNeedsStart) {
         Write-Step "Starting frontend on port $frontendPort..."
         # ERR_NETWORK fix: clear any inherited VITE_API_BASE_URL so the
         # frontend defaults to '/api/v1' (same-origin via Vite proxy).
@@ -535,13 +627,22 @@ function Invoke-Main {
         }
         $apiMode = if ($env:VITE_API_BASE_URL) { "cross-origin ($env:VITE_API_BASE_URL)" } else { "same-origin proxy (/api/v1 -> 127.0.0.1:8000)" }
         Write-Ok "Frontend API mode: $apiMode"
-        $frontendArgs = @(
-            "-NoExit",
-            "-WindowStyle", "Hidden",
-            "-Command",
-            "cd '$frontendDir'; npm run dev -- --host 127.0.0.1 --port $frontendPort 2>&1 | Tee-Object -FilePath '$frontendLog'"
-        )
-        $frontendProc = Start-Process -FilePath "powershell.exe" -ArgumentList $frontendArgs -WindowStyle Hidden -PassThru
+        # P0 fix: direct-launch via cmd.exe /c npm run dev (no powershell
+        # wrapper, no -NoExit). The previous wrapper recorded the
+        # powershell.exe wrapper PID; when it died the PID went stale and
+        # stop missed the real vite/node process. cmd /c stays alive while
+        # npm -> node (vite) runs; tree-killing the recorded cmd PID in
+        # stop_windows.ps1 kills the whole npm->node chain.
+        # vite writes the "ready" banner + URL to stdout, so redirect stdout
+        # to frontend.log; stderr (rare errors) to frontend.err.log.
+        $frontendErrLog = Join-Path $logDir "frontend.err.log"
+        $frontendProc = Start-Process -FilePath "cmd.exe" `
+            -ArgumentList "/c","npm","run","dev","--","--host","127.0.0.1","--port",$frontendPort `
+            -WorkingDirectory $frontendDir `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $frontendLog `
+            -RedirectStandardError $frontendErrLog `
+            -PassThru
         $frontendProc.Id | Out-File -FilePath $frontendPidFile -Encoding ascii -Force
         $frontendPidValue = $frontendProc.Id
         Write-Step "Waiting for frontend to be ready..."
@@ -558,6 +659,51 @@ function Invoke-Main {
         }
         Write-Ok "Frontend is up (PID $($frontendProc.Id))."
     }
+
+    # --- Post-launch liveness re-check (catches "starts then dies") --------
+    # Some failures only surface seconds after startup (uvicorn crashes on
+    # first request, vite exits after initial compile, the direct-launched
+    # process fails to bind and dies right after the health check window).
+    # The Wait-ForUrl checks above passed during the startup window but the
+    # process may have died by now. Re-verify BOTH services are STILL alive
+    # before declaring success, so launch_status.json never claims ok for a
+    # dead launch and the browser never opens onto a broken app.
+    Write-Step "Liveness re-check (3s settle)..."
+    Start-Sleep -Seconds 3
+    $backendAlive = $false
+    try {
+        $beRecheck = Invoke-WebRequest -Uri $backendUrl -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+        $backendAlive = ($beRecheck.StatusCode -eq 200)
+    } catch { }
+    if (-not $backendAlive) {
+        Write-Bad "Backend died shortly after startup. Backend will NOT be usable."
+        Show-BackendFailure $backendLog
+        Write-LaunchStatus @{
+            launched        = $false
+            reason          = "backend_died_after_startup"
+            backend         = @{ ok = $false; pid = $backendPidValue; log = $backendLog }
+            frontend        = @{ ok = $true; pid = $frontendPidValue; log = $frontendLog }
+            last_start_time = (Get-Date).ToString("o")
+        }
+        exit 1
+    }
+    $frontendAlive = $false
+    try {
+        $feRecheck = Invoke-WebRequest -Uri $frontendUrl -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+        $frontendAlive = ($feRecheck.StatusCode -eq 200)
+    } catch { }
+    if (-not $frontendAlive) {
+        Write-Bad "Frontend died shortly after startup."
+        Write-LaunchStatus @{
+            launched        = $false
+            reason          = "frontend_died_after_startup"
+            backend         = @{ ok = $true; pid = $backendPidValue; log = $backendLog }
+            frontend        = @{ ok = $false; pid = $frontendPidValue; log = $frontendLog }
+            last_start_time = (Get-Date).ToString("o")
+        }
+        exit 1
+    }
+    Write-Ok "Liveness re-check passed: both services still up after 3s."
 
     # --- Open in browser app mode (skipped with -NoOpen) -------------------
     if (-not $NoOpen) {
