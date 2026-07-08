@@ -40,6 +40,12 @@ from app.models import Base  # noqa: E402
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    # Legacy-DB compat: add user_focus/evidence_hash to existing
+    # concept_compare_reports tables that predate v3. create_all does not
+    # alter existing tables, so we patch them explicitly.
+    from app.db.migrations import ensure_concept_compare_report_columns
+
+    ensure_concept_compare_report_columns(engine)
     print("数据库表已创建（如已存在则跳过）。")
 
 
