@@ -25,7 +25,7 @@ export interface RegisterResult {
 export interface UserInfo {
   id: number
   username: string
-  email: string
+  email_masked: string | null
 }
 
 export interface ApiError {

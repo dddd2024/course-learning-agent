@@ -3,11 +3,28 @@ import pytest
 
 
 def test_health_returns_ok(client) -> None:
-    """GET /api/v1/health should return 200 with body {"status": "ok"}."""
+    """GET /api/v1/health should return 200 with status=ok and app identity."""
     response = client.get("/api/v1/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["app"] == "course-learning-agent"
+    assert "version" in body
+    assert isinstance(body["version"], str)
+    assert body["version"]  # non-empty
+
+
+def test_health_response_contains_project_identifier_for_launcher(client) -> None:
+    """The launcher reuses port 8000 only if /health identifies this project.
+
+    Task C: the response body must contain the literal ``course-learning-agent``
+    string so ``start_windows.ps1`` can distinguish this backend from other
+    FastAPI projects that happen to bind the same port.
+    """
+    response = client.get("/api/v1/health")
+    assert response.status_code == 200
+    assert "course-learning-agent" in response.text
 
 
 # T09: 生产环境硬化 — 默认密钥在生产环境应被拒绝

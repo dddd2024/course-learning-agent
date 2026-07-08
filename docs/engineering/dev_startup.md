@@ -19,6 +19,15 @@
 5. 在两个新 PowerShell 窗口中分别启动后端（Uvicorn `--reload`）和前端（Vite）。
 6. 打印访问地址与 demo 账号；按任意键关闭前后端进程并退出。
 
+### Windows 启动器依赖安装去重（`scripts/start_windows.ps1`）
+
+`start_windows.ps1` 不再每次启动都执行 `pip install`，避免断网环境启动耗时与失败：
+
+- 首次创建 `backend/.venv` 时安装 `requirements.txt`，安装成功后写入标记文件 `backend/.venv/.requirements_installed`。
+- 后续启动比较 `requirements.txt` 与标记文件的 `LastWriteTime`：仅当标记缺失或 `requirements.txt` 更新时才重新安装。
+- 安装失败不写标记，下次启动自动重试。
+- 输出 `Backend dependencies already installed, skipping pip install.` 表示已跳过安装。
+
 ### 执行策略提示
 
 若 PowerShell 执行策略阻止脚本运行，在当前会话临时放行即可（仅对当前进程生效，不会修改系统设置）：

@@ -83,6 +83,63 @@ def test_me_returns_email_masked(client) -> None:
     assert "alice" not in masked
 
 
+def test_me_does_not_return_raw_email(client) -> None:
+    """GET /auth/me must NOT expose the raw `email` field (Task A).
+
+    Only `email_masked` is returned so the API cannot leak the plaintext
+    address even if the frontend logs the response body.
+    """
+    client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "nomail1",
+            "password": "secret123",
+            "email": "alice@example.com",
+        },
+    )
+    token = client.post(
+        "/api/v1/auth/login",
+        json={"username": "nomail1", "password": "secret123"},
+    ).json()["access_token"]
+    body = client.get(
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
+    ).json()
+    assert "email" not in body
+    assert body["email_masked"] == "a***@e***.com"
+
+
+def test_register_does_not_return_raw_email(client) -> None:
+    """POST /auth/register must NOT expose the raw `email` field (Task A)."""
+    body = client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "nomail2",
+            "password": "secret123",
+            "email": "bob@example.com",
+        },
+    ).json()
+    assert "email" not in body
+    assert body["email_masked"] == "b***@e***.com"
+
+
+def test_me_raw_email_absent_for_empty_email(client) -> None:
+    """Users registered without an email must not see an `email` key either."""
+    client.post(
+        "/api/v1/auth/register",
+        json={"username": "nomail3", "password": "secret123"},
+    )
+    token = client.post(
+        "/api/v1/auth/login",
+        json={"username": "nomail3", "password": "secret123"},
+    ).json()["access_token"]
+    body = client.get(
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
+    ).json()
+    assert "email" not in body
+    # email_masked is None when the user has no email.
+    assert body["email_masked"] is None
+
+
 def test_register_returns_email_masked(client) -> None:
     """POST /auth/register returns a masked email."""
     resp = client.post(

@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # T09: environment + CORS hardening.
     ENVIRONMENT: str = "development"  # development | production
     CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Task C: project identity exposed by /api/v1/health so the Windows
+    # launcher can verify port 8000 actually serves this backend.
+    APP_NAME: str = "course-learning-agent"
+    APP_VERSION: str = "0.1.0"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

@@ -87,11 +87,30 @@ if (-not (Test-Path $venvPython)) {
     Write-Ok "backend/.venv exists."
 }
 
-Write-Step "Installing backend dependencies (pip install -r requirements.txt)..."
-& $venvPython -m pip install --upgrade pip --quiet
-& $venvPython -m pip install -r (Join-Path $backendDir "requirements.txt") --quiet
-if ($LASTEXITCODE -ne 0) { Write-Bad "Failed to install backend dependencies."; exit 1 }
-Write-Ok "Backend dependencies installed."
+# Task B: skip `pip install -r requirements.txt` when the marker file is
+# newer than requirements.txt. Avoids re-running pip on every launch (slow
+# and brittle on offline machines). Marker is only written on success.
+$requirementsFile = Join-Path $backendDir "requirements.txt"
+$installMarker = Join-Path $backendDir ".venv\.requirements_installed"
+$needInstall = $true
+if (Test-Path $installMarker) {
+    $needInstall = $false
+    if ((Get-Item $requirementsFile).LastWriteTime -gt (Get-Item $installMarker).LastWriteTime) {
+        $needInstall = $true
+    }
+}
+
+if ($needInstall) {
+    Write-Step "Installing backend dependencies (pip install -r requirements.txt)..."
+    & $venvPython -m pip install --upgrade pip --quiet
+    & $venvPython -m pip install -r $requirementsFile --quiet
+    if ($LASTEXITCODE -ne 0) { Write-Bad "Failed to install backend dependencies."; exit 1 }
+    # Only write the marker on success so a failed install retries next launch.
+    New-Item -ItemType File -Path $installMarker -Force | Out-Null
+    Write-Ok "Backend dependencies installed."
+} else {
+    Write-Ok "Backend dependencies already installed, skipping pip install."
+}
 
 Write-Step "Initializing database (scripts/init_db.py)..."
 $initDb = Join-Path $repoRoot "scripts\init_db.py"
@@ -131,9 +150,16 @@ $backendPidFile = Join-Path $logDir "backend.pid"
 
 if (Test-PortInUse $backendPort) {
     Write-Step "Port $backendPort in use. Checking if it is our backend..."
-    if (Wait-ForUrl $backendUrl 5) {
+    try {
+        $resp = Invoke-WebRequest -Uri $backendUrl -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+        # Task C: only reuse if /health identifies this project, so a
+        # different FastAPI app on 8000 is not silently reused.
+        if ($resp.Content -notmatch "course-learning-agent") {
+            Write-Bad "Port $backendPort is serving a different backend (not course-learning-agent). Please free it."
+            exit 1
+        }
         Write-Ok "Backend already running on port $backendPort. Reusing."
-    } else {
+    } catch {
         Write-Bad "Port $backendPort is occupied by another process. Please free it or change the port."
         exit 1
     }

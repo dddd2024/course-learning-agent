@@ -1,7 +1,7 @@
 """Pydantic schemas for the auth endpoints."""
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 def mask_email(email: str | None) -> str | None:
@@ -50,21 +50,15 @@ class UserLogin(BaseModel):
 class UserResponse(BaseModel):
     """User fields returned by register / me.
 
-    Security Task C1: ``email_masked`` exposes a redacted form of the
-    email for display. The raw ``email`` field is retained for backward
-    compatibility but frontend surfaces should prefer ``email_masked``.
+    Security Task A (stage-finishing hardening): the raw ``email`` is
+    intentionally NOT exposed on this response model. Only the
+    ``email_masked`` form is returned, so the API cannot leak the
+    plaintext address even if a caller logs the response body.
     """
 
     user_id: int
     username: str
-    email: str | None = None
     email_masked: str | None = None
-
-    @model_validator(mode="after")
-    def _fill_email_masked(self) -> "UserResponse":
-        if self.email_masked is None and self.email is not None:
-            self.email_masked = mask_email(self.email)
-        return self
 
 
 class TokenResponse(BaseModel):

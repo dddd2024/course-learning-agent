@@ -14,6 +14,7 @@ from app.schemas.user import (
     UserCreate,
     UserLogin,
     UserResponse,
+    mask_email,
 )
 
 router = APIRouter()
@@ -35,7 +36,11 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> UserResponse
     db.commit()
     db.refresh(user)
 
-    return UserResponse(user_id=user.id, username=user.username, email=user.email)
+    return UserResponse(
+        user_id=user.id,
+        username=user.username,
+        email_masked=mask_email(user.email),
+    )
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -55,7 +60,7 @@ def me(current_user: User = Depends(get_current_user)) -> UserResponse:
     return UserResponse(
         user_id=current_user.id,
         username=current_user.username,
-        email=current_user.email,
+        email_masked=mask_email(current_user.email),
     )
 
 
