@@ -26,6 +26,8 @@ import {
   DIAG_HOSTS,
   BACKEND_LOG_PATH,
   START_SCRIPT_PATH,
+  BACKEND_PROXY_TARGET,
+  IS_SAME_ORIGIN,
 } from '../config/api'
 import {
   readPendingQueue,
@@ -819,6 +821,20 @@ onMounted(async () => {
           <span class="diag-title">/logs 三层诊断（检查时间：{{ logsDiagResult.checkedAt }}）</span>
         </div>
       </template>
+      <!-- ERR_NETWORK fix: explain the same-origin proxy mode so the user
+           understands WHY a browser request to /api/v1/logs is same-origin. -->
+      <div class="diag-proxy-hint">
+        <el-tag type="info" size="small" effect="plain">
+          {{ IS_SAME_ORIGIN ? '同源代理模式' : '跨源直连模式' }}
+        </el-tag>
+        <span v-if="IS_SAME_ORIGIN" class="diag-detail">
+          浏览器请求同源 <code>{{ API_BASE_URL }}/logs</code>，由 Vite 代理到
+          <code>{{ BACKEND_PROXY_TARGET }}</code>。Authorization 头不触发跨源预检。
+        </span>
+        <span v-else class="diag-detail">
+          浏览器直接请求 <code>{{ API_BASE_URL }}/logs</code>（跨源）。如遇 ERR_NETWORK 请检查后端 CORS 配置。
+        </span>
+      </div>
       <div class="diag-layer">
         <span class="diag-label">① /health 裸请求（无认证）：</span>
         <el-tag
@@ -1161,6 +1177,22 @@ onMounted(async () => {
 
 .logs-diag-card .diag-layer:last-child {
   margin-bottom: 0;
+}
+
+.logs-diag-card .diag-proxy-hint {
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  background: #f4f4f5;
+  border-radius: 4px;
+  line-height: 1.8;
+  font-size: 13px;
+}
+
+.logs-diag-card .diag-proxy-hint code {
+  background: #e9e9eb;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
 }
 
 .logs-err-detail {

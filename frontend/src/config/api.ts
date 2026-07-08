@@ -1,36 +1,57 @@
 /**
  * Unified backend API address configuration.
  *
- * One-click-launch fix: the previous code hardcoded `http://localhost:8000`
- * in api/index.ts and api/health.ts, while start_windows.ps1 binds uvicorn
- * to 127.0.0.1. On Windows, `localhost` may resolve to IPv6 ::1 first; if
- * the backend only listens on IPv4 127.0.0.1, the browser gets a false
- * "unreachable" even though the backend is up. Centralising the address
- * here lets us default to 127.0.0.1 and override via VITE_API_BASE_URL.
+ * ERR_NETWORK fix (same-origin proxy): API_BASE_URL now defaults to the
+ * relative path '/api/v1'. In dev, the Vite dev-server proxy forwards
+ * /api -> http://127.0.0.1:8000, so the browser only ever makes
+ * same-origin requests to http://127.0.0.1:5173/api/v1/... — the
+ * Authorization header no longer triggers a cross-origin preflight,
+ * which was the root cause of /logs-with-token returning ERR_NETWORK.
  *
- * DIAG_HOSTS is used by the log center's launch-chain diagnostics panel
- * to probe both 127.0.0.1 and localhost and surface the difference to
- * the user instead of a bare "服务不可达".
+ * Set VITE_API_BASE_URL to force a cross-origin absolute URL (e.g. when
+ * targeting a remote backend that is NOT behind the Vite proxy). In that
+ * mode the browser will make cross-origin requests again and CORS must
+ * be configured on the backend.
+ *
+ * DIAG_HOSTS / API_HOST / API_PORT are still derived for the log
+ * center's diagnostics panel, which probes the backend DIRECTLY (bypassing
+ * the proxy) to tell address-resolution failure from backend-down. When
+ * API_BASE_URL is relative, they fall back to 127.0.0.1:8000 which matches
+ * the uvicorn bind in start_windows.ps1.
  */
 
 const ENV_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || ''
 
 /**
- * Base URL for all business API calls. Defaults to 127.0.0.1 to match the
- * uvicorn bind in start_windows.ps1. Override with VITE_API_BASE_URL when
- * the backend runs elsewhere (e.g. remote dev box, tunnel).
+ * Base URL for all business API calls. Defaults to '/api/v1' (same-origin
+ * via the Vite dev-server proxy). Override with VITE_API_BASE_URL when
+ * the backend is NOT behind the proxy (remote dev box, tunnel, etc.).
  */
-export const API_BASE_URL: string =
-  ENV_BASE_URL || 'http://127.0.0.1:8000/api/v1'
+export const API_BASE_URL: string = ENV_BASE_URL || '/api/v1'
 
 /**
- * Host portion of API_BASE_URL — used by the diagnostics panel to label
+ * The backend origin that the Vite dev-server proxy forwards /api to.
+ * Used by the LogsView diagnostics panel so the user can see "browser
+ * request is same-origin /api/v1, Vite proxies to 127.0.0.1:8000".
+ */
+export const BACKEND_PROXY_TARGET = 'http://127.0.0.1:8000'
+
+/**
+ * Whether API_BASE_URL is a relative path (same-origin via proxy) vs.
+ * an absolute URL (cross-origin). Used to decide whether to show the
+ * "same-origin proxy" hint in the diagnostics panel.
+ */
+export const IS_SAME_ORIGIN: boolean = !ENV_BASE_URL
+
+/**
+ * Host portion of the backend, used by the diagnostics panel to label
  * the "current" probe and to pick the default host for checkBackendHealth.
+ * Falls back to 127.0.0.1 when API_BASE_URL is relative.
  */
 export const API_HOST: string = extractHost(API_BASE_URL)
 
-/** Port portion of API_BASE_URL. */
+/** Backend port. Falls back to 8000 when API_BASE_URL is relative. */
 export const API_PORT: number = extractPort(API_BASE_URL)
 
 /**

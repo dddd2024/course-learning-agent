@@ -524,6 +524,17 @@ function Invoke-Main {
         }
     } else {
         Write-Step "Starting frontend on port $frontendPort..."
+        # ERR_NETWORK fix: clear any inherited VITE_API_BASE_URL so the
+        # frontend defaults to '/api/v1' (same-origin via Vite proxy).
+        # A leftover VITE_API_BASE_URL=http://127.0.0.1:8000/api/v1 from
+        # a previous session would re-introduce cross-origin preflight and
+        # the /logs ERR_NETWORK-with-token failure we just fixed.
+        if ($env:VITE_API_BASE_URL) {
+            Write-Step "Clearing inherited VITE_API_BASE_URL='$env:VITE_API_BASE_URL' (using same-origin proxy default)."
+            Remove-Item Env:VITE_API_BASE_URL -ErrorAction SilentlyContinue
+        }
+        $apiMode = if ($env:VITE_API_BASE_URL) { "cross-origin ($env:VITE_API_BASE_URL)" } else { "same-origin proxy (/api/v1 -> 127.0.0.1:8000)" }
+        Write-Ok "Frontend API mode: $apiMode"
         $frontendArgs = @(
             "-NoExit",
             "-WindowStyle", "Hidden",

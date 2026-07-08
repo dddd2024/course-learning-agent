@@ -537,6 +537,74 @@ if ($startWindows -match 'backend_stale_stop_failed') {
   Write-Bad 'start_windows.ps1 missing backend_stale_stop_failed guard'
 }
 
+# 18. ERR_NETWORK fix: same-origin Vite proxy + relative API_BASE_URL.
+#     Root cause of /logs-with-token ERR_NETWORK was cross-origin preflight
+#     on Authorization header. Fix: default API_BASE_URL='/api/v1' (relative)
+#     + Vite proxy /api -> http://127.0.0.1:8000. These checks ensure the
+#     fix is in place and cannot silently regress.
+Write-Step 'ERR_NETWORK fix: same-origin proxy + relative API_BASE_URL'
+
+$viteConfig = Get-Content "$root\frontend\vite.config.ts" -Raw
+$apiConfig = Get-Content "$root\frontend\src\config\api.ts" -Raw
+
+# 18a. vite.config.ts has proxy for /api
+if ($viteConfig -match "proxy:\s*\{" -and $viteConfig -match "'/api'") {
+  Write-Ok 'vite.config.ts has /api proxy'
+} else {
+  Write-Bad 'vite.config.ts missing /api proxy'
+}
+
+# 18b. vite proxy target is 127.0.0.1:8000 (not localhost:8000)
+if ($viteConfig -match "target:\s*'http://127\.0\.0\.1:8000'") {
+  Write-Ok 'vite proxy target is http://127.0.0.1:8000'
+} else {
+  Write-Bad "vite proxy target is not http://127.0.0.1:8000 (check for localhost:8000)"
+}
+
+# 18c. vite dev server binds to 127.0.0.1
+if ($viteConfig -match "host:\s*'127\.0\.0\.1'") {
+  Write-Ok 'vite dev server binds to 127.0.0.1'
+} else {
+  Write-Bad 'vite dev server does not bind to 127.0.0.1'
+}
+
+# 18d. API_BASE_URL defaults to /api/v1 (relative, same-origin)
+if ($apiConfig -match "ENV_BASE_URL \|\| '/api/v1'") {
+  Write-Ok "config/api.ts API_BASE_URL defaults to /api/v1"
+} else {
+  Write-Bad "config/api.ts API_BASE_URL does not default to /api/v1"
+}
+
+# 18e. No longer defaults to http://127.0.0.1:8000/api/v1 as the primary
+#      default (it can still appear in comments/fallbacks, but NOT as the
+#      ENV_BASE_URL || 'http://...' primary default).
+if ($apiConfig -notmatch "ENV_BASE_URL \|\| 'http://127\.0\.0\.1:8000/api/v1'") {
+  Write-Ok 'config/api.ts no longer defaults to cross-origin http://127.0.0.1:8000/api/v1'
+} else {
+  Write-Bad 'config/api.ts still defaults to cross-origin http://127.0.0.1:8000/api/v1'
+}
+
+# 18f. BACKEND_PROXY_TARGET exported
+if ($apiConfig -match 'export const BACKEND_PROXY_TARGET') {
+  Write-Ok 'config/api.ts exports BACKEND_PROXY_TARGET'
+} else {
+  Write-Bad 'config/api.ts missing BACKEND_PROXY_TARGET export'
+}
+
+# 18g. start_windows.ps1 clears inherited VITE_API_BASE_URL
+if ($startWindows -match 'Remove-Item Env:VITE_API_BASE_URL') {
+  Write-Ok 'start_windows.ps1 clears inherited VITE_API_BASE_URL'
+} else {
+  Write-Bad 'start_windows.ps1 does not clear inherited VITE_API_BASE_URL'
+}
+
+# 18h. start_windows.ps1 prints API mode
+if ($startWindows -match 'Frontend API mode') {
+  Write-Ok 'start_windows.ps1 prints Frontend API mode'
+} else {
+  Write-Bad 'start_windows.ps1 does not print Frontend API mode'
+}
+
 Write-Host ''
 if ($failed) {
   Write-Host 'ACCEPTANCE FAILED' -ForegroundColor Red
