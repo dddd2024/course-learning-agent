@@ -384,3 +384,44 @@ def test_compare_cache_invalidates_when_evidence_changes(db_session, monkeypatch
     reports = db_session.query(ConceptCompareReport).all()
     assert len(reports) == 2, "证据变化必须使缓存失效"
     assert call_count["n"] == 2
+
+
+def test_compare_cache_invalidates_when_evidence_text_changes(db_session, monkeypatch):
+    """同一 chunk_id 但文本内容变化时缓存必须失效（hash 基于内容，不只是 id）。"""
+    from app.models import MaterialChunk
+
+    user, n1, n2 = _setup_two_nodes(db_session)
+    ch1 = MaterialChunk(
+        material_id=1, course_id=n1.course_id, chunk_index=0,
+        title="证据1", page_no=1, text="原始内容A",
+    )
+    db_session.add(ch1)
+    db_session.commit()
+    n1.source_chunk_ids = json.dumps([ch1.id])
+    db_session.commit()
+
+    call_count = {"n": 0}
+
+    def fake_generate(db, uid, concept_a, concept_b, evidence_chunks=None,
+                      user_config=None, user_focus="concept"):
+        call_count["n"] += 1
+        return {
+            "report_json": {"concept_a": {}, "concept_b": {}, "similarities": []},
+            "citation_chunk_ids": [],
+            "provider": "mock", "model_name": "mock",
+            "fallback_used": False, "fallback_reason": "", "audit_run_id": 1,
+        }
+
+    monkeypatch.setattr(
+        "app.services.concept_compare_service.generate_compare", fake_generate
+    )
+    # 第一次：原文
+    get_or_create_compare_report(db_session, user.id, n1.id, n2.id)
+    # 改文本，chunk_id 不变
+    ch1.text = "修改后的内容B"
+    db_session.commit()
+    # 第二次：内容变了，hash 应不同，必须重新生成
+    get_or_create_compare_report(db_session, user.id, n1.id, n2.id)
+    reports = db_session.query(ConceptCompareReport).all()
+    assert len(reports) == 2, "证据内容变化（同 chunk_id）必须使缓存失效"
+    assert call_count["n"] == 2

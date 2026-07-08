@@ -76,11 +76,21 @@ def _collect_chunk_ids(
     return unique
 
 
-def _compute_evidence_hash(chunk_ids: list[int]) -> str:
-    """SHA1 of sorted chunk ids, truncated to 16 chars for cache keying."""
-    if not chunk_ids:
+def _compute_evidence_hash(evidence_chunks: list[dict]) -> str:
+    """SHA1 of evidence content (chunk_id + material_id + course_id + page_no + title + text), truncated to 16 chars.
+
+    基于内容而非仅 chunk_id，保证同 chunk_id 文本变化时缓存失效。
+    """
+    if not evidence_chunks:
         return ""
-    payload = ",".join(str(cid) for cid in sorted(chunk_ids))
+    parts: list[str] = []
+    for c in sorted(evidence_chunks, key=lambda x: x.get("chunk_id", 0)):
+        parts.append(
+            f"{c.get('chunk_id', '')}|{c.get('material_id', '')}|"
+            f"{c.get('course_id', '')}|{c.get('page_no', '')}|"
+            f"{c.get('title', '')}|{c.get('text', '')}"
+        )
+    payload = "\n".join(parts)
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -124,9 +134,12 @@ def get_or_create_compare_report(
                 message="edge 与请求的节点对不匹配"
             )
 
-    # Collect evidence chunk ids up front so the cache key can include them.
+    # Collect evidence chunk ids, load their content, then compute a
+    # content-aware hash so cache invalidates when text changes (not just
+    # when chunk ids change).
     chunk_ids = _collect_chunk_ids(n1, n2, edge)
-    evidence_hash = _compute_evidence_hash(chunk_ids)
+    evidence_chunks = _load_evidence_chunks(db, user_id, chunk_ids)
+    evidence_hash = _compute_evidence_hash(evidence_chunks)
 
     # Cache lookup: same user + same node pair (either order)
     # + same user_focus + same evidence_hash.
@@ -147,9 +160,6 @@ def get_or_create_compare_report(
         ).first()
     if cached is not None:
         return _report_to_dict(cached)
-
-    # Load evidence chunks from nodes and edge.
-    evidence_chunks = _load_evidence_chunks(db, user_id, chunk_ids)
 
     # Generate a fresh report via the compare agent.
     result = generate_compare(
