@@ -47,6 +47,11 @@ const currentChunkId = ref<number | null>(null)
 const currentChunk = ref<Chunk | null>(null)
 const currentChunkMaterialName = ref<string>('')
 
+const sourceListDialogVisible = ref(false)
+const sourceListLoading = ref(false)
+const currentSourceKp = ref<KnowledgePoint | null>(null)
+const sourceListChunks = ref<ChunkWithSource[]>([])
+
 const materialChunksCache = ref<Map<number, Chunk[]>>(new Map())
 
 function normalizeImportance(value: number | undefined | null): number {
@@ -177,6 +182,22 @@ async function openChunkDialog(chunkId: number) {
   }
 }
 
+async function openSourceListDialog(kp: KnowledgePoint) {
+  currentSourceKp.value = kp
+  sourceListDialogVisible.value = true
+  sourceListLoading.value = true
+  sourceListChunks.value = []
+  try {
+    const all = await fetchAllChunks()
+    const idSet = new Set(kp.source_chunk_ids)
+    sourceListChunks.value = all.filter((c) => idSet.has(c.chunk.id))
+  } catch {
+    // 静默失败
+  } finally {
+    sourceListLoading.value = false
+  }
+}
+
 function goBack() {
   router.push(`/courses/${courseId.value}`)
 }
@@ -299,17 +320,17 @@ onMounted(async () => {
             <template
               v-if="kp.source_chunk_ids && kp.source_chunk_ids.length > 0"
             >
-              <el-tag
-                v-for="cid in kp.source_chunk_ids"
-                :key="cid"
+              <span class="kp-source-count">
+                共 {{ kp.source_chunk_ids.length }} 个片段
+              </span>
+              <el-button
+                link
+                type="primary"
                 size="small"
-                type="info"
-                effect="plain"
-                class="kp-source-tag"
-                @click="openChunkDialog(cid)"
+                @click="openSourceListDialog(kp)"
               >
-                #{{ cid }}
-              </el-tag>
+                查看来源
+              </el-button>
             </template>
             <span v-else class="kp-source-empty">无</span>
           </div>
@@ -364,16 +385,7 @@ onMounted(async () => {
               </li>
               <li v-if="kp.source_chunk_ids && kp.source_chunk_ids.length > 0">
                 <strong>来源片段：</strong>
-                <span>
-                  <template
-                    v-for="(cid, i) in kp.source_chunk_ids"
-                    :key="cid"
-                  >
-                    #{{ cid }}<span
-                      v-if="i < kp.source_chunk_ids.length - 1"
-                    >, </span>
-                  </template>
-                </span>
+                <span>共 {{ kp.source_chunk_ids.length }} 个片段</span>
               </li>
             </ul>
           </li>
@@ -416,6 +428,43 @@ onMounted(async () => {
               ? `未找到片段 #${currentChunkId} 的详细内容`
               : '未找到片段详细内容'
           "
+          :image-size="80"
+        />
+      </div>
+    </el-dialog>
+
+    <el-dialog
+      v-model="sourceListDialogVisible"
+      :title="
+        currentSourceKp
+          ? `来源片段 — ${currentSourceKp.title}（共 ${currentSourceKp.source_chunk_ids?.length || 0} 个）`
+          : '来源片段'
+      "
+      width="720px"
+    >
+      <div v-loading="sourceListLoading" class="source-list-body">
+        <template v-if="sourceListChunks.length > 0">
+          <div
+            v-for="item in sourceListChunks"
+            :key="item.chunk.id"
+            class="source-list-item"
+            @click="openChunkDialog(item.chunk.id)"
+          >
+            <div class="source-list-item-head">
+              <span class="source-list-item-id">#{{ item.chunk.id }}</span>
+              <span class="source-list-item-material">{{ item.materialName }}</span>
+              <span v-if="item.chunk.page_no" class="source-list-item-page">
+                第 {{ item.chunk.page_no }} 页
+              </span>
+            </div>
+            <div class="source-list-item-text">
+              {{ item.chunk.text?.substring(0, 120) }}{{ item.chunk.text && item.chunk.text.length > 120 ? '…' : '' }}
+            </div>
+          </div>
+        </template>
+        <el-empty
+          v-else-if="!sourceListLoading"
+          description="未找到来源片段详情"
           :image-size="80"
         />
       </div>
@@ -617,6 +666,64 @@ onMounted(async () => {
 .kp-source-empty {
   font-size: 13px;
   color: #c0c4cc;
+}
+
+.kp-source-count {
+  font-size: 13px;
+  color: #606266;
+}
+
+.source-list-body {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.source-list-item {
+  padding: 10px 12px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.source-list-item:hover {
+  border-color: #409eff;
+  background: #f0f7ff;
+}
+
+.source-list-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.source-list-item-id {
+  font-size: 13px;
+  font-weight: 600;
+  color: #409eff;
+}
+
+.source-list-item-material {
+  font-size: 12px;
+  color: #909399;
+}
+
+.source-list-item-page {
+  font-size: 12px;
+  color: #c0c4cc;
+}
+
+.source-list-item-text {
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .outline {
