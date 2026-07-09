@@ -28,7 +28,12 @@ ALLOWED_FILE_TYPES = {"txt", "pdf", "docx", "pptx", "md"}
 # A parse task stuck in ``processing`` longer than this is considered
 # timed out (e.g. the worker crashed mid-parse). list_materials flips
 # such rows to ``failed`` and writes an error_log so the user can retry.
-PARSE_TIMEOUT_SECONDS = 300
+# 600s (was 300s): a single large PDF chapter under pypdf can run longer
+# than 5 minutes; declaring it timed out mid-parse flips the status to
+# ``failed`` while the background task is still running, which the user
+# perceives as "解析中断". 600s keeps crashed-worker recovery while
+# avoiding false timeouts on legitimately-running parses.
+PARSE_TIMEOUT_SECONDS = 600
 
 
 def _get_owned_course(db: Session, course_id: int, user_id: int) -> Course:

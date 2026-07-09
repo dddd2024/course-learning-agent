@@ -19,3 +19,23 @@ def utc_now() -> datetime:
     an explicit offset.
     """
     return datetime.now(timezone.utc)
+
+
+def ensure_utc(dt: datetime | None) -> datetime | None:
+    """Return ``dt`` as a timezone-aware UTC datetime, or ``None``.
+
+    SQLite's SQLAlchemy dialect strips ``tzinfo`` from
+    ``DateTime(timezone=True)`` columns on read, returning a naive
+    datetime even when an aware UTC value was stored. Pydantic then
+    serializes a naive datetime without an offset, and the browser's
+    ``new Date("...")`` treats a no-offset ISO string as local time —
+    producing an 8-hour skew for UTC+8 clients. Attaching UTC tzinfo
+    here (at the serialization boundary) makes the API always emit an
+    explicit offset (``+00:00`` / ``Z``) so the frontend converts
+    correctly. ``None`` is passed through.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt

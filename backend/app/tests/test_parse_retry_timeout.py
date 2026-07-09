@@ -228,3 +228,22 @@ def test_reparse_failure_with_old_chunks_keeps_ready_warning(
     # A warning/error log was written for the re-parse failure.
     logs = client.get("/api/v1/logs?category=parse", headers=headers).json()
     assert logs["total"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Parse timeout default
+# ---------------------------------------------------------------------------
+
+
+def test_default_parse_timeout_is_600_seconds() -> None:
+    """The default parse timeout is 600s (generous for slow PDFs).
+
+    Regression guard: a single textbook-chapter PDF can take longer than
+    the old 300s under pypdf; declaring it timed out mid-parse flips the
+    status to failed while the background task is still running. 600s
+    keeps the crashed-worker recovery while avoiding false timeouts on
+    large but legitimately-running parses.
+    """
+    from app.api.v1.endpoints import materials as materials_endpoint
+
+    assert materials_endpoint.PARSE_TIMEOUT_SECONDS == 600

@@ -198,7 +198,7 @@ function customUpload(options: UploadRequestOptions): Promise<unknown> {
       }
     },
   })
-    .then((res) => {
+    .then(async (res) => {
       task.status = 'success'
       task.percent = 100
       ElMessage.success(`「${file.name}」上传成功，正在处理`)
@@ -206,15 +206,23 @@ function customUpload(options: UploadRequestOptions): Promise<unknown> {
       // to click "parse" manually. The parse endpoint is a separate call
       // so upload success and parse success stay independent (a parse
       // failure does not roll back the upload).
+      //
+      // AWAIT the parse request BEFORE fetching the list: the backend
+      // flips status to "processing" inside the parse endpoint, so only
+      // after it resolves will listMaterials see a processing row and
+      // ensurePolling() actually start polling. The old code fired
+      // parseMaterial without awaiting and called fetchMaterials() in
+      // .finally() which raced ahead of the status flip — so
+      // hasProcessing() was false, polling never started, and the UI
+      // stayed "解析中" forever even though the backend had finished.
       const materialId = res.data.id
-      parseMaterial(materialId)
-        .then(() => {
-          ensurePolling()
-        })
-        .catch(() => {
-          // Parse failure is surfaced via status refresh; do not block.
-          fetchMaterials()
-        })
+      try {
+        await parseMaterial(materialId)
+      } catch {
+        // Parse failure is surfaced via the status refresh below; the
+        // background task writes a failed status + error log regardless.
+      }
+      await fetchMaterials()
       return res
     })
     .catch((err) => {
@@ -227,7 +235,6 @@ function customUpload(options: UploadRequestOptions): Promise<unknown> {
       setTimeout(() => {
         uploadTasks.value = uploadTasks.value.filter((t) => t.uid !== task.uid)
       }, 2000)
-      fetchMaterials()
     })
 }
 

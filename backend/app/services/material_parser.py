@@ -87,7 +87,12 @@ def parse_with_retry(
 
     material.status = "processing"
     material.error_message = None
-    material.parse_started_at = utc_now()
+    # Preserve the parse_started_at set by the parse endpoint so the
+    # frontend elapsed timer and the timeout clock both start from when
+    # the user requested the parse (not when the background task began).
+    # Only set it as a defensive fallback if the endpoint never did.
+    if material.parse_started_at is None:
+        material.parse_started_at = utc_now()
     material.parse_attempts = 0
     db.commit()
 
