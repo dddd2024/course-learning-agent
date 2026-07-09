@@ -202,6 +202,10 @@ function goBack() {
   router.push(`/courses/${courseId.value}`)
 }
 
+function goToChat() {
+  router.push(`/courses/${courseId.value}/chat`)
+}
+
 onMounted(async () => {
   await fetchCourse()
   if (course.value) {
@@ -312,7 +316,14 @@ onMounted(async () => {
             </div>
             <div class="kp-meta-item">
               <span class="kp-meta-label">建议任务：</span>
-              <span class="kp-meta-value">{{ kp.review_action || '—' }}</span>
+              <el-button
+                link
+                type="primary"
+                class="kp-meta-value"
+                @click="goToChat"
+              >
+                {{ kp.review_action || '—' }}
+              </el-button>
             </div>
           </div>
           <div class="kp-foot">

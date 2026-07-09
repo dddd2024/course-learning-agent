@@ -13,11 +13,13 @@ import {
   type NodeDetail,
   type CompareReport,
 } from '../api/conceptGraph'
+import { listCourses, type Course } from '../api/course'
 import { parseApiError } from '../utils/error'
 
 const nodes = ref<GraphNode[]>([])
 const edges = ref<GraphEdge[]>([])
 const loading = ref(false)
+const allCourses = ref<Course[]>([])
 
 const selectedNode = ref<NodeDetail | null>(null)
 const selectedEdge = ref<GraphEdge | null>(null)
@@ -62,12 +64,8 @@ const statusLabels: Record<string, string> = {
   rejected: '已拒绝',
 }
 
-// Distinct course ids present in current node set (for the filter dropdown)
-const courseOptions = computed(() => {
-  const ids = new Set<number>()
-  for (const n of nodes.value) ids.add(n.course_id)
-  return Array.from(ids)
-})
+// Course options from the API (all courses, not just those with graph nodes)
+const courseOptions = computed(() => allCourses.value)
 
 const filteredNodes = computed(() => {
   if (!filterCourseId.value) return nodes.value
@@ -249,7 +247,13 @@ function nodeTitle(id: number): string {
   return n ? n.title : `#${id}`
 }
 
-onMounted(() => {
+onMounted(async () => {
+  try {
+    const { data } = await listCourses({ page: 1, page_size: 100 })
+    allCourses.value = data.items
+  } catch {
+    // 静默失败，下拉框为空不影响图谱功能
+  }
   fetchGraph()
 })
 </script>
@@ -270,10 +274,10 @@ onMounted(() => {
                 @change="fetchGraph"
               >
                 <el-option
-                  v-for="cid in courseOptions"
-                  :key="cid"
-                  :label="`课程 #${cid}`"
-                  :value="String(cid)"
+                  v-for="c in courseOptions"
+                  :key="c.id"
+                  :label="c.name"
+                  :value="String(c.id)"
                 />
               </el-select>
             </el-form-item>
@@ -324,7 +328,9 @@ onMounted(() => {
               class="legend-item"
             >
               <span class="legend-dot" :style="{ background: color }" />
-              <span>课程 #{{ cid }}</span>
+              <span>{{
+                allCourses.find((c) => c.id === cid)?.name || `课程 #${cid}`
+              }}</span>
             </div>
             <div class="legend-title legend-title-second">关系图例</div>
             <div

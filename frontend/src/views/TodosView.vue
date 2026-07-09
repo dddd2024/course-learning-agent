@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listCourses, type Course } from '../api/course'
 import {
@@ -10,6 +11,8 @@ import {
 } from '../api/plan'
 import { MAX_PAGE_SIZE } from '../constants/pagination'
 import { parseApiError } from '../utils/error'
+
+const router = useRouter()
 
 const courses = ref<Course[]>([])
 const coursesLoading = ref(false)
@@ -176,6 +179,12 @@ async function handleComplete(todo: Todo) {
   }
 }
 
+function goToCourse(todo: Todo) {
+  if (todo.course_id) {
+    router.push(`/courses/${todo.course_id}/chat`)
+  }
+}
+
 async function handlePostpone(todo: Todo) {
   try {
     await ElMessageBox.confirm(
@@ -264,7 +273,12 @@ onMounted(() => {
                 {{ statusLabel[todo.status] }}
               </el-tag>
             </div>
-            <div class="today-card-title">{{ todo.title }}</div>
+            <div
+              class="today-card-title today-card-title-link"
+              @click="goToCourse(todo)"
+            >
+              {{ todo.title }}
+            </div>
             <div class="today-card-meta">
               <span v-if="todo.scheduled_start">
                 {{ formatTime(todo.scheduled_start) }}
@@ -357,7 +371,13 @@ onMounted(() => {
         stripe
         empty-text="暂无待办"
       >
-        <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
+        <el-table-column label="标题" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">
+            <el-button link type="primary" @click="goToCourse(row)">
+              {{ row.title }}
+            </el-button>
+          </template>
+        </el-table-column>
         <el-table-column prop="course_name" label="课程" width="140" show-overflow-tooltip />
         <el-table-column prop="scheduled_date" label="日期" width="120" />
         <el-table-column label="时间段" width="160">
@@ -524,6 +544,14 @@ onMounted(() => {
   font-weight: 600;
   color: #303133;
   line-height: 1.4;
+}
+
+.today-card-title-link {
+  cursor: pointer;
+}
+
+.today-card-title-link:hover {
+  color: #409eff;
 }
 
 .today-card-meta {

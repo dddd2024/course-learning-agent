@@ -197,33 +197,63 @@ def _mock_course_qa(prompt: str = "") -> dict[str, Any]:
 def _mock_outline(prompt: str = "") -> dict[str, Any]:
     """Generate knowledge points from the prompt's chunk content.
 
-    The mock previously returned hardcoded ML knowledge points regardless
-    of the course content. Now it extracts chunk text from the prompt
-    (which outline.py correctly fills with real course material) and
-    generates knowledge points from the first sentences of each chunk.
+    Extracts chunk text and titles from the prompt. Uses the chunk
+    title (from the chunker's heading detection) when available,
+    falling back to the first meaningful line of text. Filters out
+    repeated page-header text (e.g. "计算机网络" appearing on every
+    page) to ensure distinct titles.
     """
     # Extract chunk text from the prompt. The outline prompt formats
-    # chunks as: [片段N] chunk_id=...\n<text>
+    # chunks as: [片段N] chunk_id=...，标题：xxx\n<text>
     chunk_pattern = re.compile(
         r"\[片段\d+\]\s*chunk_id=\d+[^\n]*\n(.+?)(?=\n\n|\Z)",
         re.DOTALL,
     )
     chunks = chunk_pattern.findall(prompt)
 
+    # Extract titles from the prompt header lines (format: "，标题：xxx")
+    title_pattern = re.compile(r"标题：(.+?)(?:，|\n)", )
+    chunk_titles = title_pattern.findall(prompt)
+
     if not chunks:
-        # No chunks in prompt — return empty so the caller can handle it
         return {"knowledge_points": []}
 
+    # Track titles to detect and skip duplicates (page headers etc.)
+    seen_titles: set[str] = set()
     knowledge_points: list[dict[str, Any]] = []
-    for i, chunk_text in enumerate(chunks[:5]):  # max 5 points
-        # Use the first non-empty line as the title (often a heading)
-        lines = [
-            line.strip()
-            for line in chunk_text.strip().split("\n")
-            if line.strip()
-        ]
-        title = lines[0][:60] if lines else f"知识点{i + 1}"
-        # Use first 100 chars as summary
+
+    for i, chunk_text in enumerate(chunks[:5]):
+        # Priority 1: use the chunk's title field from the prompt
+        title = ""
+        if i < len(chunk_titles):
+            title = chunk_titles[i].strip()
+
+        # Priority 2: use the first non-empty, non-trivial line
+        if not title:
+            lines = [
+                line.strip()
+                for line in chunk_text.strip().split("\n")
+                if line.strip()
+            ]
+            title = lines[0][:60] if lines else f"知识点{i + 1}"
+
+        # Skip duplicate titles (e.g. repeated page headers like "计算机网络")
+        base_title = title[:30]
+        if base_title in seen_titles:
+            # Try to find a different title from subsequent lines
+            lines = [
+                line.strip()
+                for line in chunk_text.strip().split("\n")
+                if line.strip() and line.strip()[:30] not in seen_titles
+            ]
+            if lines:
+                title = lines[0][:60]
+            else:
+                # Append index to make it unique
+                title = f"{title}（片段{i + 1}）"
+
+        seen_titles.add(title[:30])
+
         summary = chunk_text.strip()[:100].replace("\n", " ")
 
         knowledge_points.append({
@@ -235,9 +265,7 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
             "review_action": f"重读片段{i + 1}的相关内容。",
         })
 
-    # If only one chunk was found, split it into at least 2 knowledge
-    # points so downstream agents (quiz, concept graph) have enough
-    # nodes to work with. Use the first two non-empty lines as titles.
+    # If only one chunk was found, split it into at least 2 knowledge points
     if len(knowledge_points) < 2 and chunks:
         text = chunks[0].strip()
         lines = [l.strip() for l in text.split("\n") if l.strip()]
@@ -265,28 +293,54 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
 
 
 def _mock_planner(prompt: str = "") -> dict[str, Any]:
+    """Generate a context-aware mock study plan from the prompt.
+
+    Parses the goal and course names from the planner prompt so the
+    generated tasks reference the user's actual courses instead of
+    hardcoded "机器学习".
+    """
+    # Extract course names from the prompt (format: "## 可用课程（courses）\nA、B、C")
+    course_match = re.search(r"可用课程.*?\n(.+?)(?:\n|$)", prompt)
+    course_names: list[str] = []
+    if course_match:
+        raw = course_match.group(1).strip()
+        course_names = [c.strip() for c in re.split(r"[、,，]", raw) if c.strip()]
+
+    # Extract the goal from the prompt (format: "针对用户目标 `xxx`")
+    goal_match = re.search(r"用户目标\s*[`「『]?(.+?)[`」』]?\s*[，,]", prompt)
+    goal_text = goal_match.group(1).strip() if goal_match else "复习课程核心内容"
+
+    if not course_names:
+        course_names = ["默认课程"]
+
+    primary_course = course_names[0]
+
+    # Build tasks spread across the available courses
+    task_templates = [
+        ("复习核心概念", "review", 60, 5, "能口述核心概念并举例。"),
+        ("完成配套练习", "practice", 45, 4, "习题正确率 ≥ 80%。"),
+        ("梳理知识框架", "review", 90, 4, "能画出知识结构图。"),
+        ("重难点专项突破", "practice", 60, 5, "能独立解决典型难题。"),
+        ("阶段性自测", "practice", 45, 3, "自测得分 ≥ 70%。"),
+    ]
+
+    tasks = []
+    for i, (title, task_type, minutes, priority, acceptance) in enumerate(task_templates):
+        course_name = course_names[i % len(course_names)]
+        tasks.append({
+            "course_name": course_name,
+            "title": title,
+            "task_type": task_type,
+            "estimate_minutes": minutes,
+            "priority": priority,
+            "acceptance": acceptance,
+        })
+
     return {
-        "goal_title": "两周内复习完《机器学习》前五章",
+        "goal_title": goal_text,
         "deadline": "2026-07-20",
         "daily_minutes": 120,
-        "tasks": [
-            {
-                "course_name": "机器学习",
-                "title": "复习第一章 绪论",
-                "task_type": "review",
-                "estimate_minutes": 90,
-                "priority": 5,
-                "acceptance": "能口述机器学习三大流派并举例。",
-            },
-            {
-                "course_name": "机器学习",
-                "title": "完成第二章习题",
-                "task_type": "practice",
-                "estimate_minutes": 60,
-                "priority": 4,
-                "acceptance": "习题正确率 ≥ 80%。",
-            },
-        ],
+        "tasks": tasks,
     }
 
 

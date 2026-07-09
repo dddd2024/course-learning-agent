@@ -46,8 +46,10 @@ def _format_chunks(chunks: list[dict]) -> str:
     for i, chunk in enumerate(chunks, start=1):
         page = chunk.get("page_no")
         page_str = f"，页码 {page}" if page is not None else ""
+        title = chunk.get("title") or ""
+        title_str = f"，标题：{title}" if title else ""
         lines.append(
-            f"[片段{i}] chunk_id={chunk.get('chunk_id')}{page_str}\n"
+            f"[片段{i}] chunk_id={chunk.get('chunk_id')}{page_str}{title_str}\n"
             f"{chunk.get('text', '')}"
         )
     return "\n\n".join(lines)
@@ -108,7 +110,13 @@ def _reconcile_chunk_ids(
 
 
 def _fetch_chunks(db: Session, course_id: int) -> list[dict]:
-    """Load all ready-material chunks for a course as agent input dicts."""
+    """Load ready-material chunks for a course as agent input dicts.
+
+    To avoid LLM timeouts on courses with many chunks (1000+), we cap
+    the number of chunks sent to the LLM at ``MAX_CHUNKS`` by evenly
+    sampling across the full range.
+    """
+    MAX_CHUNKS = 50
     rows = (
         db.query(MaterialChunk)
         .join(Material, Material.id == MaterialChunk.material_id)
@@ -119,6 +127,11 @@ def _fetch_chunks(db: Session, course_id: int) -> list[dict]:
         .order_by(MaterialChunk.chunk_index.asc())
         .all()
     )
+    # Evenly sample MAX_CHUNKS items from the full list
+    if len(rows) > MAX_CHUNKS:
+        step = len(rows) / MAX_CHUNKS
+        sampled = [rows[int(i * step)] for i in range(MAX_CHUNKS)]
+        rows = sampled
     return [
         {
             "chunk_id": c.id,
