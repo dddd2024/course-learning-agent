@@ -16,6 +16,7 @@ The agent:
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -160,7 +161,7 @@ def _normalize_title(title: str) -> str:
 
 
 def _is_valid_concept_title(title: str) -> bool:
-    """Check if a title is a valid concept name (not OCR noise)."""
+    """Check if a title is a valid concept name (not OCR noise or data)."""
     if not title or len(title) < 2:
         return False
     # Check against noise patterns
@@ -183,8 +184,35 @@ def _is_valid_concept_title(title: str) -> bool:
     # explanatory text rather than a concept name
     if title.count("，") >= 2:
         return False
-    # Reject overly long titles (>25 chars) that are likely sentence fragments
-    if len(title) > 25:
+    # Reject overly long titles (>20 chars) that are likely sentence fragments
+    if len(title) > 20:
+        return False
+    # --- Stricter quality checks for large chunk sets ---
+    # Must contain at least 2 consecutive CJK chars OR a known English
+    # abbreviation (2+ uppercase letters like TCP, DNS, HTTP, ARP, VLAN)
+    has_cjk = bool(re.search(r"[\u4e00-\u9fff]{2,}", title))
+    has_abbr = bool(re.search(r"[A-Z]{2,}", title))
+    if not has_cjk and not has_abbr:
+        return False
+    # Reject titles that look like raw data: IP addresses, email addresses
+    if re.search(r"\d+\.\d+\.\d+\.\d+", title):
+        return False
+    if "@" in title:
+        return False
+    # Reject titles that are table rows (multiple space-separated short tokens)
+    if len(re.findall(r"\S+\s+\S+\s+\S+\s+\S+", title)) > 0:
+        return False
+    # Reject titles with formula/math symbols
+    if re.search(r"[×÷∞∑√≈≤≥≠±]", title):
+        return False
+    # Reject titles starting with digits followed by space (table data)
+    if re.match(r"^\d+\s+\S", title):
+        return False
+    # Reject titles containing file paths or URLs
+    if re.search(r"[\\/]|www\.|\.com|\.cn|\.edu", title, re.IGNORECASE):
+        return False
+    # Reject titles that are just English words with numbers (like "Chapter1 Introduction 68")
+    if re.match(r"^[A-Za-z]+\d*\s+[A-Za-z]+\s+\d+", title):
         return False
     return True
 
@@ -197,6 +225,14 @@ _TOO_BROAD_TITLES = {
     "信道", "帧", "协议", "网络", "分组",
     "Chapter3 Transport Layer", "Chapter1 Introduction",
     "Date", "内容提要", "教学要求及内容",
+    # Single-word concepts that are too broad
+    "交换", "拥塞", "带宽", "简单", "吞吐量", "目的主机",
+    "网卡", "小结", "总结", "概述", "小结", "总结",
+    "封装", "路由", "转发", "差错控制", "差错检测",
+    "电子邮件", "文件传输", "网络应用", "网络互连",
+    "网络核心", "网络边缘", "教学目标", "教学要求",
+    "物理地址", "IP地址", "端口号", "IP网络",
+    "本地环路", "主机域名", "地址转换", "DHCP服务器",
 }
 
 # Patterns that indicate a title is noise (not a real knowledge point)
@@ -219,11 +255,36 @@ _NOISE_TITLE_PATTERNS = [
     # Hex/technical noise like "标志字段F为0x7E"
     re.compile(r"0x[0-9A-Fa-f]"),
     # Sentence fragments ending with period/question mark
-    re.compile(r"[。？]$"),
+    re.compile(r"[。？?]\s*$"),
     # Explanatory text with "前者...后者..." pattern
     re.compile(r"前者.*后者"),
     # Sentence fragments starting with common verbs/particles
-    re.compile(r"^(用来|每个|这种|这类|这种|其中|通过|为了|由于)"),
+    re.compile(r"^(用来|每个|这种|这类|这种|其中|通过|为了|由于|用于)"),
+    # --- New patterns for large chunk set filtering ---
+    # Meta info: disclaimers, author info, citations
+    re.compile(r"(讲义中|课件制作|图片来源|引用时标记|参考文献|教材所附)"),
+    # Example/instructional text
+    re.compile(r"^(你|家里|例如|比如|假设|假设有|设有|设有一个)"),
+    # Incomplete fragments ending with ellipsis or trailing comma
+    re.compile(r"[…；，、]\s*$"),
+    # Titles that are just "第N段" or "第N行" style references
+    re.compile(r"^第[\d一二三四五六七八九十]+(段|行|句|页)"),
+    # Acknowledgment/reference style: "April ，" or "[RFC]"
+    re.compile(r"^(April|RFC|January|March)\b", re.IGNORECASE),
+    # Chapter labels with page numbers: "Chapter1 Introduction 68"
+    re.compile(r"^Chapter\d", re.IGNORECASE),
+    # Table cell content: "选项字段名 功能"
+    re.compile(r"^[A-Za-z\u4e00-\u9fff]+\s+(功能|特点|说明|含义)"),
+    # Meta labels like "知识点46", "知识点2"
+    re.compile(r"^知识点\d"),
+    # Titles with specific institution names (examples, not concepts)
+    re.compile(r"(北邮|北京邮电|清华大学|北京大学|中科院)"),
+    # Titles starting with lowercase English letter followed by CJK
+    re.compile(r"^[a-z]\s+[\u4e00-\u9fff]"),
+    # Incomplete fragments with unmatched closing bracket
+    re.compile(r"[\)）]\s*$"),
+    # Sentence definitions: "X就叫Y" or "X称为Y"
+    re.compile(r"(就叫|称为|叫做)"),
 ]
 
 
@@ -301,12 +362,14 @@ def _reconcile_chunk_ids(
 def _fetch_chunks(db: Session, course_id: int) -> list[dict]:
     """Load ready-material chunks for a course as agent input dicts.
 
-    Filters out chunks with very short text (< 30 chars) that are
-    typically cover pages or page headers (e.g. "计算机网络"), then
-    evenly samples up to MAX_CHUNKS representative chunks.
+    Samples up to MAX_PER_MATERIAL chunks per material (chapter) so that
+    knowledge points cover ALL chapters of the course. With 8 materials
+    and 15 chunks each, we get ~120 chunks — enough for comprehensive
+    coverage without overwhelming the title extraction.
     """
-    MAX_CHUNKS = 50
     MIN_TEXT_LEN = 30
+    MAX_PER_MATERIAL = 15
+
     rows = (
         db.query(MaterialChunk)
         .join(Material, Material.id == MaterialChunk.material_id)
@@ -314,16 +377,29 @@ def _fetch_chunks(db: Session, course_id: int) -> list[dict]:
             MaterialChunk.course_id == course_id,
             Material.status == "ready",
         )
-        .order_by(MaterialChunk.chunk_index.asc())
+        .order_by(MaterialChunk.material_id, MaterialChunk.chunk_index.asc())
         .all()
     )
     # Filter out chunks with very short text (cover pages, headers)
     rows = [r for r in rows if r.text and len(r.text.strip()) >= MIN_TEXT_LEN]
-    # Evenly sample MAX_CHUNKS items from the filtered list
-    if len(rows) > MAX_CHUNKS:
-        step = len(rows) / MAX_CHUNKS
-        sampled = [rows[int(i * step)] for i in range(MAX_CHUNKS)]
-        rows = sampled
+
+    # Group by material_id and sample evenly within each material
+    by_material: dict[int, list] = defaultdict(list)
+    for r in rows:
+        by_material[r.material_id].append(r)
+
+    sampled: list = []
+    for material_id, material_chunks in by_material.items():
+        if len(material_chunks) <= MAX_PER_MATERIAL:
+            sampled.extend(material_chunks)
+        else:
+            # Evenly sample MAX_PER_MATERIAL chunks from this material
+            step = len(material_chunks) / MAX_PER_MATERIAL
+            sampled.extend(
+                material_chunks[int(i * step)]
+                for i in range(MAX_PER_MATERIAL)
+            )
+
     return [
         {
             "chunk_id": c.id,
@@ -332,7 +408,7 @@ def _fetch_chunks(db: Session, course_id: int) -> list[dict]:
             "title": c.title,
             "page_no": c.page_no,
         }
-        for c in rows
+        for c in sampled
     ]
 
 
@@ -435,7 +511,101 @@ def generate(
                 "review_action": point.get("review_action", ""),
             }
         )
+
+    # --- Title clustering: merge sub-topics into parent concepts ---
+    # e.g., "RDT2.0：信道可能传输出错", "RDT2.0：要点", "RDT2.0: 操作示例"
+    # all merge into the shortest representative: "RDT2.0"
+    results = _cluster_merge_titles(results)
+
     return results
+
+
+def _extract_root(title: str) -> str:
+    """Extract the root concept from a title for clustering.
+
+    "RDT2.0：信道可能传输出错" -> "rdt2.0"
+    "DNS名字解析：迭代查询" -> "dns名字解析"
+    "TCP连接管理：连接建立" -> "tcp连接管理"
+    "CSMA/CD协议" -> "csma/cd协议"
+    """
+    # Split on common sub-topic separators
+    parts = re.split(r"[：:—\-–(（]", title, maxsplit=1)
+    root = parts[0].strip().lower()
+    # Remove trailing numbers/punctuation
+    root = re.sub(r"[\d]+$", "", root).strip()
+    return root if len(root) >= 3 else title.lower().strip()
+
+
+def _cluster_merge_titles(
+    results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge knowledge points that share a common root concept.
+
+    Groups titles by their root prefix (text before the first separator
+    like ：— -). Within each group, keeps the shortest title as the
+    representative and merges source_chunk_ids and summaries.
+
+    Only merges when a group has >= 3 members, to avoid over-merging
+    distinct concepts that happen to share a short prefix.
+    """
+    if len(results) <= 1:
+        return results
+
+    # Group by root
+    groups: dict[str, list[int]] = defaultdict(list)
+    for i, r in enumerate(results):
+        root = _extract_root(r["title"])
+        groups[root].append(i)
+
+    merged: list[dict[str, Any]] = []
+    used: set[int] = set()
+
+    for root, indices in groups.items():
+        # Only merge groups with 3+ members
+        if len(indices) < 3:
+            for i in indices:
+                if i not in used:
+                    merged.append(results[i])
+                    used.add(i)
+            continue
+
+        # Sort by title length (shortest = most general concept)
+        indices.sort(key=lambda i: len(results[i]["title"]))
+
+        # Keep the shortest title as representative
+        rep = results[indices[0]].copy()
+
+        # Merge source_chunk_ids and summaries from all members
+        all_chunk_ids: list = []
+        all_summaries: list[str] = []
+        for i in indices:
+            all_chunk_ids.extend(results[i].get("source_chunk_ids", []))
+            s = results[i].get("summary", "")
+            if s and s not in all_summaries:
+                all_summaries.append(s)
+
+        # Deduplicate chunk ids
+        seen_ids: set = set()
+        deduped_ids = []
+        for cid in all_chunk_ids:
+            if cid not in seen_ids:
+                seen_ids.add(cid)
+                deduped_ids.append(cid)
+
+        rep["source_chunk_ids"] = deduped_ids
+        rep["summary"] = all_summaries[0] if all_summaries else ""
+        # Boost importance: concepts with many sub-topics are important
+        rep["importance"] = min(5, rep.get("importance", 3) + 1)
+
+        merged.append(rep)
+        used.update(indices)
+
+    # Add any results not yet processed (shouldn't happen, but safety)
+    for i, r in enumerate(results):
+        if i not in used:
+            merged.append(r)
+
+    return merged
 
 
 __all__ = ["generate", "calculate_importance"]

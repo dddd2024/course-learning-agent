@@ -339,7 +339,7 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
     seen_titles: set[str] = set()
     knowledge_points: list[dict[str, Any]] = []
 
-    for i, chunk_text in enumerate(chunks[:50]):
+    for i, chunk_text in enumerate(chunks):
         # Priority 1: use chunk title from DB if it's meaningful
         title = ""
         if i < len(chunk_titles):
@@ -368,23 +368,25 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
         if not title:
             title = _extract_title_from_chunk(chunk_text, i)
 
-        # Skip duplicate titles
-        base_title = title[:30]
-        if base_title in seen_titles:
+        # Skip duplicate titles (use full title for dedup)
+        if title in seen_titles:
             # Try extracting a different title from subsequent lines
+            found_alt = False
             for offset in range(1, 5):
                 remaining = chunk_text.split("\n")[offset:]
                 if remaining:
                     alt_title = _extract_title_from_chunk(
                         "\n".join(remaining), i
                     )
-                    if alt_title[:30] not in seen_titles:
+                    if alt_title and alt_title not in seen_titles:
                         title = alt_title
+                        found_alt = True
                         break
-            if base_title == title[:30]:
-                title = f"{title}（{i + 1}）"
+            if not found_alt:
+                # Skip this chunk entirely - no unique title found
+                continue
 
-        seen_titles.add(title[:30])
+        seen_titles.add(title)
 
         summary = _clean_summary(chunk_text.strip()[:150])
 
