@@ -111,6 +111,28 @@
                 class="doc-chunk-text"
                 v-html="highlightTerms(chunk.text)"
               ></div>
+              <div v-if="chunk.images && chunk.images.length > 0" class="doc-chunk-images">
+                <div
+                  v-for="img in chunk.images"
+                  :key="img.id"
+                  class="doc-chunk-image-item"
+                >
+                  <el-image
+                    :src="`http://127.0.0.1:8000/uploads/${img.image_path}`"
+                    :preview-src-list="[`http://127.0.0.1:8000/uploads/${img.image_path}`]"
+                    fit="contain"
+                    style="max-width: 100%; max-height: 400px; border-radius: 6px;"
+                    loading="lazy"
+                  >
+                    <template #placeholder>
+                      <div class="image-placeholder">图片加载中...</div>
+                    </template>
+                    <template #error>
+                      <div class="image-error">图片加载失败</div>
+                    </template>
+                  </el-image>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -727,6 +749,30 @@ function goBack() {
   padding: 0 2px;
   border-radius: 2px;
   font-weight: 600;
+}
+
+/* Chunk images */
+.doc-chunk-images {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.doc-chunk-image-item {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fafafa;
+  padding: 8px;
+}
+
+.image-placeholder,
+.image-error {
+  padding: 20px;
+  text-align: center;
+  color: #909399;
+  font-size: 13px;
 }
 
 /* AI Assistant */

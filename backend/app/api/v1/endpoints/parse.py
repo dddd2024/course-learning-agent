@@ -182,8 +182,33 @@ def list_chunks(
         .limit(page_size)
         .all()
     )
+
+    # Load images associated with these chunks' pages
+    from collections import defaultdict
+    from app.models.material_image import MaterialImage
+    from app.schemas.material import ImageResponse
+
+    page_nos = list(set(c.page_no for c in items if c.page_no))
+    images_by_page: dict[int, list] = defaultdict(list)
+    if page_nos:
+        imgs = db.query(MaterialImage).filter(
+            MaterialImage.material_id == material_id,
+            MaterialImage.page_no.in_(page_nos),
+        ).all()
+        for img in imgs:
+            images_by_page[img.page_no].append(img)
+
+    chunk_responses = []
+    for c in items:
+        chunk_dict = ChunkResponse.model_validate(c).model_dump()
+        if c.page_no and c.page_no in images_by_page:
+            chunk_dict["images"] = [
+                ImageResponse.model_validate(img) for img in images_by_page[c.page_no]
+            ]
+        chunk_responses.append(ChunkResponse(**chunk_dict))
+
     return ChunkListResponse(
-        items=[ChunkResponse.model_validate(c) for c in items],
+        items=chunk_responses,
         total=total,
         page=page,
         page_size=page_size,

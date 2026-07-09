@@ -130,6 +130,53 @@ def parse_with_retry(
                 saved_chunks.append(mc)
 
             db.flush()
+
+            # --- Image extraction (PDF only) ---
+            if material.file_type.lower() == "pdf":
+                try:
+                    from app.retrieval.image_extractor import extract_images_from_pdf
+                    from app.models.material_image import MaterialImage
+
+                    db.query(MaterialImage).filter(
+                        MaterialImage.material_id == material_id
+                    ).delete(synchronize_session=False)
+
+                    file_path_obj = Path(settings.UPLOAD_DIR) / material.file_path
+                    extracted = extract_images_from_pdf(str(file_path_obj))
+
+                    page_to_chunk = {}
+                    for mc in saved_chunks:
+                        if mc.page_no:
+                            page_to_chunk.setdefault(mc.page_no, mc.id)
+
+                    img_dir = Path(settings.UPLOAD_DIR) / material.file_path.replace(
+                        f"original.{material.file_type}", ""
+                    ) / "images"
+                    img_dir.mkdir(parents=True, exist_ok=True)
+
+                    for idx, img in enumerate(extracted):
+                        img_filename = f"page{img.page_no}_{idx}.{img.format}"
+                        img_full_path = img_dir / img_filename
+                        img_full_path.write_bytes(img.image_bytes)
+
+                        rel_path = str(img_full_path.relative_to(Path(settings.UPLOAD_DIR))).replace("\\", "/")
+
+                        db.add(MaterialImage(
+                            material_id=material_id,
+                            course_id=material.course_id,
+                            chunk_id=page_to_chunk.get(img.page_no),
+                            page_no=img.page_no,
+                            image_filename=img_filename,
+                            image_path=rel_path,
+                            width=img.width,
+                            height=img.height,
+                            format=img.format,
+                        ))
+                    db.flush()
+                    logger.info("Saved %d images for material %s", len(extracted), material_id)
+                except Exception as img_exc:
+                    logger.warning("Image extraction failed for material %s: %s", material_id, img_exc)
+
             for f in security_scanner.scan_material_chunks(saved_chunks):
                 db.add(f)
 

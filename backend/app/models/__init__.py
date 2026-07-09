@@ -19,6 +19,7 @@ from app.models.knowledge_point import KnowledgePoint
 from app.models.llm_config import UserLLMConfig
 from app.models.material import Material
 from app.models.material_chunk import MaterialChunk
+from app.models.material_image import MaterialImage
 from app.models.plan import StudyGoal, StudyTask, Todo
 from app.models.quiz import Quiz, QuizItem, WeakPoint
 from app.models.security_finding import MaterialSecurityFinding
@@ -41,6 +42,7 @@ __all__ = [
     "KnowledgePoint",
     "Material",
     "MaterialChunk",
+    "MaterialImage",
     "MaterialSecurityFinding",
     "StudyGoal",
     "StudyTask",

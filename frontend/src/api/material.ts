@@ -33,6 +33,15 @@ export interface ParseResult {
   chunk_count: number
 }
 
+export interface ChunkImage {
+  id: number
+  page_no: number
+  image_path: string
+  width?: number
+  height?: number
+  format: string
+}
+
 export interface Chunk {
   id: number
   chunk_index: number
@@ -40,6 +49,7 @@ export interface Chunk {
   page_no: number
   text: string
   keyword_text?: string
+  images?: ChunkImage[]
 }
 
 export interface ChunkListResult {

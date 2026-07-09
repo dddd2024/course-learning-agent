@@ -63,6 +63,19 @@ class ParseResponse(BaseModel):
     chunk_count: int
 
 
+class ImageResponse(BaseModel):
+    """An image extracted from a PDF material."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    page_no: int
+    image_path: str
+    width: Optional[int] = None
+    height: Optional[int] = None
+    format: str = "png"
+
+
 class ChunkResponse(BaseModel):
     """A single material chunk returned by the chunks endpoint."""
 
@@ -75,6 +88,7 @@ class ChunkResponse(BaseModel):
     title: Optional[str] = None
     page_no: Optional[int] = None
     token_count: Optional[int] = None
+    images: List[ImageResponse] = []
 
 
 class ChunkListResponse(BaseModel):
