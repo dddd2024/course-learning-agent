@@ -247,3 +247,49 @@ def test_default_parse_timeout_is_600_seconds() -> None:
     from app.api.v1.endpoints import materials as materials_endpoint
 
     assert materials_endpoint.PARSE_TIMEOUT_SECONDS == 600
+
+
+def test_recovers_processing_with_null_parse_started_at(
+    client, tmp_path, monkeypatch
+) -> None:
+    """A processing material with NULL parse_started_at is recovered.
+
+    Regression: _recover_timed_out_materials used to filter
+    ``parse_started_at.isnot(None)``, so a material stuck in "processing"
+    with a NULL parse_started_at (legacy row, or endpoint set status but
+    background task crashed before setting parse_started_at) was never
+    recovered — staying "解析中" forever. The fix uses
+    coalesce(parse_started_at, updated_at) so updated_at is the fallback
+    timestamp.
+    """
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr("app.api.v1.endpoints.materials.PARSE_TIMEOUT_SECONDS", 0)
+
+    headers = auth_headers(client, username="alice")
+    course_id = create_course(client, headers, "操作系统")
+    material_id = upload_material(
+        client, headers, course_id, "notes.txt", b"content"
+    )
+
+    db = _test_db(client)
+    try:
+        # Simulate the stuck state: processing with NULL parse_started_at.
+        _force_status(
+            db,
+            material_id,
+            status="processing",
+            started_at=None,
+            attempts=0,
+        )
+    finally:
+        db.close()
+
+    resp = client.get(
+        f"/api/v1/courses/{course_id}/materials", headers=headers
+    )
+    assert resp.status_code == 200
+    item = next(m for m in resp.json()["items"] if m["id"] == material_id)
+    assert item["status"] == "failed", (
+        f"expected failed, got {item['status']!r} — "
+        "NULL parse_started_at materials must be recovered via updated_at"
+    )

@@ -8,6 +8,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -64,13 +65,20 @@ def _recover_timed_out_materials(db: Session, user_id: int) -> None:
     Only materials owned by ``user_id`` are touched (per-user isolation).
     """
     threshold = utc_now() - timedelta(seconds=PARSE_TIMEOUT_SECONDS)
+    # Use coalesce(parse_started_at, updated_at) so materials stuck in
+    # "processing" with a NULL parse_started_at (legacy rows from before
+    # the parse-tracking columns existed, or rows where the endpoint set
+    # status="processing" but the background task crashed before setting
+    # parse_started_at) are also recovered. updated_at is always set via
+    # TimestampMixin.onupdate=func.now(), reflecting the last time the
+    # row was modified (i.e. when status was flipped to "processing").
     stuck = (
         db.query(Material)
         .filter(
             Material.user_id == user_id,
             Material.status == "processing",
-            Material.parse_started_at.isnot(None),
-            Material.parse_started_at < threshold,
+            func.coalesce(Material.parse_started_at, Material.updated_at)
+            < threshold,
         )
         .all()
     )
@@ -91,7 +99,9 @@ def _recover_timed_out_materials(db: Session, user_id: int) -> None:
             title="资料解析超时",
             message=err,
             technical_detail=(
-                f"parse_started_at={mat.parse_started_at.isoformat()} "
+                f"parse_started_at="
+                f"{mat.parse_started_at.isoformat() if mat.parse_started_at else 'NULL'} "
+                f"updated_at={mat.updated_at.isoformat() if mat.updated_at else 'NULL'} "
                 f"timeout_seconds={PARSE_TIMEOUT_SECONDS}"
             ),
             course_id=mat.course_id,
