@@ -246,6 +246,7 @@ function historyToChatMessage(m: HistoryMessage): ChatMessage {
     retrievedChunks,
     fallbackUsed,
     fallbackReason,
+    courseId: courseId.value,
     pending: false,
   }
 }
@@ -287,6 +288,7 @@ async function handleSend() {
       role: 'agent',
       content: '正在思考...',
       pending: true,
+      courseId: courseId.value,
     }) - 1
   sending.value = true
 

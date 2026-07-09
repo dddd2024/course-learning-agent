@@ -4,6 +4,7 @@
 // The parent owns all state; this component renders and emits follow-up
 // selections and visibility changes.
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import type { Citation } from '../../api/chat'
 import type { ChunkDetail } from '../../api/material'
 import type { ChatMessage } from './types'
@@ -22,6 +23,8 @@ const emit = defineEmits<{
   (e: 'follow-up', question: string): void
 }>()
 
+const router = useRouter()
+
 const drawerTitle = computed(() => {
   if (props.citation) return '引用详情'
   return '检索过程'
@@ -30,6 +33,16 @@ const drawerTitle = computed(() => {
 function truncate(text: string, max = 120): string {
   if (!text) return ''
   return text.length > max ? text.slice(0, max) + '…' : text
+}
+
+function goToLearn(chunkId: number) {
+  if (props.message?.courseId) {
+    router.push({
+      path: `/courses/${props.message.courseId}/learn`,
+      query: { chunk_id: String(chunkId) },
+    })
+    emit('update:visible', false)
+  }
 }
 
 // Render chunk text with quote_text highlighted. Escapes HTML first,
@@ -170,6 +183,16 @@ function renderHighlightedText(fullText: string, quote: string): string {
               <div class="retrieval-snippet">
                 {{ truncate(chunk.snippet, 80) }}
               </div>
+              <div class="retrieval-actions">
+                <el-button
+                  text
+                  size="small"
+                  type="primary"
+                  @click="goToLearn(chunk.chunk_id)"
+                >
+                  去学习
+                </el-button>
+              </div>
             </div>
           </div>
         </template>
@@ -308,5 +331,10 @@ function renderHighlightedText(fullText: string, quote: string): string {
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.retrieval-actions {
+  margin-top: 6px;
+  text-align: right;
 }
 </style>

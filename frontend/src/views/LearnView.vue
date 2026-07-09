@@ -190,8 +190,30 @@ onMounted(async () => {
     const { data } = await listMaterials(courseId.value)
     materials.value = data.items.filter((m: Material) => m.status === 'ready')
     if (materials.value.length > 0) {
-      selectedMaterialId.value = materials.value[0].id
+      // Use material_id from query if provided, otherwise default to first
+      const queryMaterialId = route.query.material_id
+        ? Number(route.query.material_id)
+        : null
+      const match = queryMaterialId
+        ? materials.value.find((m) => m.id === queryMaterialId)
+        : null
+      selectedMaterialId.value = match ? match.id : materials.value[0].id
       await loadChunks()
+
+      // Scroll to specific chunk if provided
+      const queryChunkId = route.query.chunk_id
+      if (queryChunkId) {
+        await nextTick()
+        const el = document.getElementById(`chunk-${queryChunkId}`)
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+
+      // Auto-ask if provided
+      const queryAsk = route.query.ask
+      if (queryAsk && typeof queryAsk === 'string') {
+        inputQuestion.value = `请解释这段内容：\n"${queryAsk}"`
+        await askQuestion()
+      }
     }
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取资料列表失败'))

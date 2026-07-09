@@ -20,6 +20,7 @@ export interface ChatMessage {
   // T05: LLM fallback visibility (mock fallback marker).
   fallbackUsed?: boolean
   fallbackReason?: string | null
+  courseId?: number
 }
 
 // A single step in the SSE progress timeline.

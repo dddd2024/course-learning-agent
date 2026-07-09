@@ -19,6 +19,7 @@ import {
   type MaterialStatus,
   type SearchItem,
 } from '../api/material'
+import { listKnowledgePoints, type KnowledgePoint } from '../api/knowledge'
 import { parseApiError } from '../utils/error'
 import { formatLocalDateTime, secondsSince } from '../utils/datetime'
 
@@ -88,6 +89,9 @@ const searchResults = ref<SearchItem[]>([])
 const searchTotal = ref(0)
 const searched = ref(false)
 const expandedSearchIds = ref<Set<number>>(new Set())
+const knowledgePoints = ref<KnowledgePoint[]>([])
+const aiSummary = ref('')
+const aiSummaryLoading = ref(false)
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -407,8 +411,83 @@ function truncate(text: string, max = 120): string {
   return text.length > max ? text.slice(0, max) + '…' : text
 }
 
+function highlightKeyword(text: string, keyword: string): string {
+  if (!text || !keyword) return text
+  const escapeHtml = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const escaped = escapeHtml(text)
+  const escapedKw = escapeHtml(keyword.trim())
+  if (escapedKw.length < 2) return escaped
+  const regex = new RegExp(
+    escapedKw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+    'gi',
+  )
+  return escaped.replace(regex, '<mark class="search-highlight">$&</mark>')
+}
+
 function formatPercent(percent: number): string {
   return `${percent}%`
+}
+
+async function fetchKnowledgePoints() {
+  try {
+    const { data } = await listKnowledgePoints(courseId.value)
+    knowledgePoints.value = data.items.slice(0, 12)
+  } catch {
+    knowledgePoints.value = []
+  }
+}
+
+function searchByKp(kp: KnowledgePoint) {
+  searchKeyword.value = kp.title
+  handleSearch()
+}
+
+function goToLearn(item: SearchItem) {
+  router.push({
+    path: `/courses/${courseId.value}/learn`,
+    query: { material_id: String(item.material_id), chunk_id: String(item.chunk_id) },
+  })
+}
+
+function askAiAboutChunk(item: SearchItem) {
+  router.push({
+    path: `/courses/${courseId.value}/learn`,
+    query: {
+      material_id: String(item.material_id),
+      chunk_id: String(item.chunk_id),
+      ask: item.text.substring(0, 200),
+    },
+  })
+}
+
+async function generateAiSummary() {
+  if (searchResults.value.length === 0) return
+  aiSummaryLoading.value = true
+  aiSummary.value = ''
+  try {
+    const { sendMessage: sendChat } = await import('../api/chat')
+    const { createConversation } = await import('../api/chat')
+    const { data: conv } = await createConversation({
+      course_id: courseId.value,
+      title: `检索总结：${searchKeyword.value}`,
+    })
+    const chunksText = searchResults.value
+      .slice(0, 5)
+      .map((r, i) => `[片段${i + 1}] ${r.filename} 第${r.page_no}页\n${r.text.substring(0, 200)}`)
+      .join('\n\n')
+    const question = `以下是关于"${searchKeyword.value}"的检索结果，请总结要点：\n\n${chunksText}`
+    const { data } = await sendChat({
+      course_id: courseId.value,
+      conversation_id: conv.id,
+      question,
+    })
+    aiSummary.value = (data as { answer: string }).answer
+  } catch (err) {
+    ElMessage.error(parseApiError(err, 'AI总结生成失败'))
+  } finally {
+    aiSummaryLoading.value = false
+  }
 }
 
 function goBack() {
@@ -417,7 +496,7 @@ function goBack() {
 
 onMounted(async () => {
   await fetchCourse()
-  await fetchMaterials()
+  await Promise.all([fetchMaterials(), fetchKnowledgePoints()])
 })
 
 onUnmounted(() => {
@@ -599,8 +678,25 @@ onUnmounted(() => {
       <template #header>
         <div class="section-title-bar">
           <span class="section-title">资料检索</span>
+          <span class="section-hint">输入关键词或点击下方知识点快速检索</span>
         </div>
       </template>
+
+      <!-- Knowledge point quick tags -->
+      <div v-if="knowledgePoints.length > 0" class="kp-tags">
+        <span class="kp-tags-label">知识点：</span>
+        <el-tag
+          v-for="kp in knowledgePoints"
+          :key="kp.id"
+          class="kp-tag"
+          size="small"
+          effect="plain"
+          @click="searchByKp(kp)"
+        >
+          {{ kp.title }}
+        </el-tag>
+      </div>
+
       <div class="search-bar">
         <el-input
           v-model="searchKeyword"
@@ -621,8 +717,25 @@ onUnmounted(() => {
 
       <div v-if="searched" class="search-results">
         <div class="search-results-head">
-          共找到 {{ searchTotal }} 条结果
+          <span>共找到 {{ searchTotal }} 条结果</span>
+          <el-button
+            v-if="searchResults.length > 0"
+            type="primary"
+            text
+            size="small"
+            :loading="aiSummaryLoading"
+            @click="generateAiSummary"
+          >
+            AI 总结检索结果
+          </el-button>
         </div>
+
+        <!-- AI Summary -->
+        <div v-if="aiSummary" class="ai-summary-box">
+          <div class="ai-summary-label">AI 总结</div>
+          <div class="ai-summary-content" v-html="aiSummary.replace(/\n/g, '<br>')"></div>
+        </div>
+
         <el-empty
           v-if="searchResults.length === 0 && !searchLoading"
           description="未找到相关片段"
@@ -631,24 +744,29 @@ onUnmounted(() => {
           v-for="item in searchResults"
           :key="item.chunk_id"
           class="search-item"
-          @click="toggleSearchExpand(item.chunk_id)"
         >
           <div class="search-item-head">
             <span class="search-item-name">{{ item.filename }}</span>
             <el-tag size="small" type="info">第 {{ item.page_no }} 页</el-tag>
             <span v-if="item.title" class="search-item-title">{{ item.title }}</span>
+            <span class="search-item-score" v-if="item.score > 0">相关度 {{ Math.min(100, Math.round(item.score * 100)) }}%</span>
           </div>
-          <div class="search-item-text">
-            <template v-if="expandedSearchIds.has(item.chunk_id)">
-              {{ item.text }}
-            </template>
-            <template v-else>
-              {{ truncate(item.text) }}
-            </template>
-          </div>
+          <div
+            class="search-item-text"
+            v-html="highlightKeyword(
+              expandedSearchIds.has(item.chunk_id) ? item.text : truncate(item.text),
+              searchKeyword
+            )"
+          ></div>
           <div class="search-item-foot">
-            <el-button text size="small">
+            <el-button text size="small" @click="toggleSearchExpand(item.chunk_id)">
               {{ expandedSearchIds.has(item.chunk_id) ? '收起' : '展开全文' }}
+            </el-button>
+            <el-button text size="small" type="primary" @click="askAiAboutChunk(item)">
+              问 AI
+            </el-button>
+            <el-button text size="small" type="success" @click="goToLearn(item)">
+              去学习
             </el-button>
           </div>
         </div>
@@ -880,11 +998,6 @@ onUnmounted(() => {
   gap: 12px;
 }
 
-.search-results-head {
-  font-size: 13px;
-  color: #909399;
-}
-
 .search-item {
   border: 1px solid #ebeef5;
   border-radius: 6px;
@@ -926,7 +1039,97 @@ onUnmounted(() => {
 
 .search-item-foot {
   margin-top: 4px;
-  text-align: right;
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+/* Knowledge point quick tags */
+.kp-tags {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  background: #f5f7fa;
+  border-radius: 6px;
+}
+
+.kp-tags-label {
+  font-size: 12px;
+  color: #909399;
+  line-height: 24px;
+  flex-shrink: 0;
+}
+
+.kp-tag {
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.kp-tag:hover {
+  color: #409eff;
+  border-color: #409eff;
+  background: #ecf5ff;
+}
+
+.section-hint {
+  font-size: 12px;
+  color: #909399;
+  font-weight: normal;
+}
+
+.search-results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #909399;
+  margin-bottom: 10px;
+}
+
+.search-item-score {
+  font-size: 12px;
+  color: #67c23a;
+  margin-left: auto;
+}
+
+.search-item-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+/* AI summary box */
+.ai-summary-box {
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #ecf5ff 0%, #f0f9eb 100%);
+  border: 1px solid #d9ecff;
+  border-radius: 8px;
+}
+
+.ai-summary-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #409eff;
+  margin-bottom: 8px;
+}
+
+.ai-summary-content {
+  font-size: 14px;
+  color: #303133;
+  line-height: 1.8;
+}
+
+/* Search highlight */
+:deep(.search-highlight) {
+  background: #fff3a0;
+  color: #303133;
+  padding: 0 2px;
+  border-radius: 2px;
+  font-weight: 600;
 }
 
 .chunk-text {
