@@ -89,7 +89,7 @@ const searchTotal = ref(0)
 const searched = ref(false)
 const expandedSearchIds = ref<Set<number>>(new Set())
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
+let pollTimer: ReturnType<typeof setTimeout> | null = null
 
 function getFileExtension(filename: string): string {
   const idx = filename.lastIndexOf('.')
@@ -144,7 +144,10 @@ function ensurePolling() {
 
 function startPolling() {
   if (pollTimer) return
-  pollTimer = setInterval(async () => {
+  // Use recursive setTimeout instead of setInterval so a new request
+  // is only sent after the previous one completes. This prevents
+  // request pileup when the backend is slow or temporarily unavailable.
+  const tick = async () => {
     if (!hasProcessing()) {
       stopPolling()
       return
@@ -159,16 +162,19 @@ function startPolling() {
       materials.value = updated
       if (!hasProcessing()) {
         stopPolling()
+        return
       }
     } catch {
       // 静默失败，下次轮询继续
     }
-  }, 2500)
+    pollTimer = setTimeout(tick, 2500)
+  }
+  pollTimer = setTimeout(tick, 2500)
 }
 
 function stopPolling() {
   if (pollTimer) {
-    clearInterval(pollTimer)
+    clearTimeout(pollTimer)
     pollTimer = null
   }
 }
