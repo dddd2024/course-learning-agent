@@ -48,11 +48,28 @@ def _format_chunks(retrieved_chunks: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
-def _validate_schema(output: dict[str, Any]) -> None:
-    """Ensure the LLM output contains every required field."""
-    missing = [f for f in _REQUIRED_FIELDS if f not in output]
-    if missing:
-        raise ValueError(f"CourseQAAgent 输出缺少字段: {missing}")
+_DEFAULTS = {
+    "key_points": list,
+    "citations": list,
+    "not_found": lambda: False,
+    "follow_up_questions": list,
+}
+
+
+def _ensure_fields(output: dict[str, Any]) -> None:
+    """Fill in any missing required fields with sensible defaults.
+
+    Real LLMs sometimes return a partial response (e.g. only ``answer``)
+    without the structured metadata.  Rather than failing the entire
+    request, we inject empty defaults so the pipeline can continue and
+    the user still receives an answer.
+    """
+    if "answer" not in output:
+        # answer is the one field we truly cannot live without.
+        raise ValueError("CourseQAAgent 输出缺少必需字段: answer")
+    for field, factory in _DEFAULTS.items():
+        if field not in output or output[field] is None:
+            output[field] = factory()
 
 
 def _compute_reliability_level(output: dict[str, Any]) -> str:
@@ -188,7 +205,7 @@ def answer_question(
     output["provider"] = llm_meta["provider"]
     output["fallback_used"] = llm_meta["fallback_used"]
     output["fallback_reason"] = llm_meta["fallback_reason"]
-    _validate_schema(output)
+    _ensure_fields(output)
 
     # No retrieved chunks ⇒ we cannot answer; force not_found.
     if not retrieved_chunks:

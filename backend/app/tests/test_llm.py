@@ -59,6 +59,56 @@ def test_call_llm_mock_course_qa(monkeypatch) -> None:
         assert isinstance(cite["confidence"], (int, float))
 
 
+def test_call_llm_mock_course_qa_with_chunks(monkeypatch) -> None:
+    """course_qa mock uses prompt chunk content instead of hardcoded text."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "mock")
+
+    result = call_llm(
+        prompt=(
+            "系统角色:课程学习助手\n"
+            "用户问题:什么是TCP协议？\n\n"
+            "[片段1] chunk_id=101\n"
+            "TCP协议是传输控制协议，提供可靠的、面向连接的字节流服务。\n\n"
+            "[片段2] chunk_id=102\n"
+            "UDP是用户数据报协议，提供无连接的、不可靠的数据传输服务。"
+        ),
+        agent_type="course_qa",
+    )
+
+    # Answer should reference TCP content, not hardcoded "梯度下降"
+    assert "TCP" in result["answer"] or "传输控制协议" in result["answer"]
+    assert "梯度下降" not in result["answer"]
+    assert len(result["citations"]) >= 1
+    assert result["citations"][0]["chunk_id"] == "101"
+    assert len(result["key_points"]) >= 1
+
+
+def test_ensure_fields_fills_defaults() -> None:
+    """_ensure_fields injects defaults for missing fields."""
+    from app.agents.course_qa import _ensure_fields
+
+    # Partial LLM output with only 'answer'
+    output = {"answer": "TCP是传输控制协议。"}
+    _ensure_fields(output)
+
+    assert output["answer"] == "TCP是传输控制协议。"
+    assert output["key_points"] == []
+    assert output["citations"] == []
+    assert output["not_found"] is False
+    assert output["follow_up_questions"] == []
+
+
+def test_ensure_fields_raises_without_answer() -> None:
+    """_ensure_fields raises ValueError when 'answer' is missing."""
+    import pytest
+    from app.agents.course_qa import _ensure_fields
+
+    with pytest.raises(ValueError, match="answer"):
+        _ensure_fields({"key_points": []})
+
+
 def test_call_llm_mock_outline(monkeypatch) -> None:
     """outline mock returns a knowledge_points list."""
     from app.core.config import settings

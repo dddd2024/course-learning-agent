@@ -130,29 +130,67 @@ def _mock_response(
 
 
 def _mock_course_qa(prompt: str = "") -> dict[str, Any]:
-    return {
-        "answer": (
-            "梯度下降是一种迭代优化算法，通过沿损失函数梯度反方向更新参数，"
-            "逐步逼近损失最小值。"
-        ),
-        "key_points": [
-            "沿负梯度方向更新参数",
-            "学习率决定步长",
-            "可收敛到局部最优",
-        ],
-        "citations": [
+    """Generate a context-aware mock answer from the prompt content.
+
+    Parses the question and retrieved chunks from the prompt to produce
+    a relevant answer instead of hardcoded "梯度下降" content. Falls back
+    to a generic answer when the prompt structure is unexpected.
+    """
+    # Extract the user's question from the prompt.
+    question = ""
+    q_match = re.search(r"用户问题[:：]\s*(.+?)(?:\n|$)", prompt)
+    if q_match:
+        question = q_match.group(1).strip()
+
+    # Extract chunk text from the prompt (same format as _mock_outline).
+    chunk_pattern = re.compile(
+        r"\[片段\d+\]\s*chunk_id=(\d+)[^\n]*\n(.+?)(?=\n\n|\Z)",
+        re.DOTALL,
+    )
+    chunks = chunk_pattern.findall(prompt)
+
+    if chunks:
+        # Use the first chunk's text as the basis for the answer.
+        first_cid, first_text = chunks[0]
+        first_text = first_text.strip()
+        # Build an answer from the first chunk content.
+        answer = first_text[:200]
+        if len(first_text) > 200:
+            answer += "…"
+
+        key_points: list[str] = []
+        for cid, text in chunks[:3]:
+            lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+            if lines:
+                key_points.append(lines[0][:60])
+
+        citations = [
             {
-                "chunk_id": "chunk_1",
-                "quote_text": "梯度下降沿负梯度方向迭代更新参数。",
-                "reason": "该片段直接定义了梯度下降的核心思想。",
-                "confidence": 0.92,
+                "chunk_id": first_cid,
+                "quote_text": first_text[:150],
+                "reason": "该片段直接回答了用户的问题。",
+                "confidence": 0.85,
             }
-        ],
+        ]
+        follow_ups = [
+            f"关于「{question[:20]}」还有哪些需要注意的地方？",
+        ] if question else []
+    else:
+        # No chunks in prompt — return a minimal generic answer.
+        answer = (
+            f"根据课程资料，关于「{question or '该问题'}」的内容"
+            "在现有资料中有相关描述，但未找到直接定义。"
+        )
+        key_points = []
+        citations = []
+        follow_ups = []
+
+    return {
+        "answer": answer,
+        "key_points": key_points,
+        "citations": citations,
         "not_found": False,
-        "follow_up_questions": [
-            "学习率过大或过小会带来什么问题？",
-            "随机梯度下降与批量梯度下降有何区别？",
-        ],
+        "follow_up_questions": follow_ups,
     }
 
 
