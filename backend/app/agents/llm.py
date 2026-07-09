@@ -622,14 +622,27 @@ def _mock_citation_verify(prompt: str = "") -> dict[str, Any]:
 
 
 def _mock_concept_compare(prompt: str = "") -> dict[str, Any]:
-    """Mock concept_compare: return citations derived from evidence in the prompt.
+    """Mock concept_compare: parse concept titles/summaries from the prompt
+    and generate a structured comparison with real content.
 
-    The prompt contains a ``证据片段: [...]`` line whose JSON array lists
-    the evidence chunks. We parse it so the mock returns real chunk ids
-    rather than empty citations.
+    The prompt is formatted with:
+        概念 A: {title}
+        概念 A 摘要: {summary}
+        概念 B: {title}
+        概念 B 摘要: {summary}
+        证据片段: [{chunk_id, ...}, ...]
+        用户关注点: {concept|exam|transfer}
     """
+    # Parse concept titles and summaries from the prompt
+    title_a = _extract_prompt_field(prompt, "概念 A:")
+    summary_a = _extract_prompt_field(prompt, "概念 A 摘要:")
+    title_b = _extract_prompt_field(prompt, "概念 B:")
+    summary_b = _extract_prompt_field(prompt, "概念 B 摘要:")
+    user_focus = _extract_prompt_field(prompt, "用户关注点:")
+
+    # Parse evidence chunk ids
     chunk_ids: list[int] = []
-    m = re.search(r"证据片段:\s*(\[.*\])", prompt)
+    m = re.search(r"证据片段:\s*(\[.*?\])", prompt, re.DOTALL)
     if m:
         try:
             chunks = json.loads(m.group(1))
@@ -645,19 +658,111 @@ def _mock_concept_compare(prompt: str = "") -> dict[str, Any]:
         {"chunk_id": cid, "quote": f"证据片段 {cid}", "supports": "对比依据"}
         for cid in chunk_ids
     ]
+
+    # Generate meaningful similarities based on title/summary overlap
+    from app.services.concept_graph_service import (
+        _keyword_set, _jaccard, _cjk_chars,
+    )
+    kw_a = _keyword_set(summary_a)
+    kw_b = _keyword_set(summary_b)
+    overlap = _jaccard(kw_a, kw_b)
+    shared_kws = kw_a & kw_b
+    shared_chars = _cjk_chars(title_a) & _cjk_chars(title_b)
+
+    similarities: list[str] = []
+    if shared_kws:
+        sample = list(shared_kws)[:5]
+        similarities.append(
+            f"两者都涉及关键词：{('、'.join(sample))}"
+        )
+    if shared_chars:
+        similarities.append(
+            f"标题中都包含字：{('、'.join(list(shared_chars)[:4]))}"
+        )
+    if not similarities:
+        similarities.append("两者都是课程中的重要概念，在各自的知识体系中占据关键位置")
+
+    # Generate meaningful differences
+    differences: list[dict] = []
+    differences.append({
+        "dimension": "概念定义",
+        "a": summary_a[:120] if summary_a else f"{title_a}的具体定义",
+        "b": summary_b[:120] if summary_b else f"{title_b}的具体定义",
+    })
+
+    # Extract distinguishing keywords (in A but not B, and vice versa)
+    only_a = list(kw_a - kw_b)[:3]
+    only_b = list(kw_b - kw_a)[:3]
+    if only_a or only_b:
+        differences.append({
+            "dimension": "核心关注点",
+            "a": f"侧重：{('、'.join(only_a))}" if only_a else "无显著独有关键词",
+            "b": f"侧重：{('、'.join(only_b))}" if only_b else "无显著独有关键词",
+        })
+
+    # Focus-specific content
+    transfer_learning: list[str] = []
+    confusions: list[str] = []
+    exam_questions: list[str] = []
+
+    if user_focus == "exam":
+        exam_questions = [
+            f"简述「{title_a}」与「{title_b}」的联系与区别",
+            f"在什么场景下应选择「{title_a}」而非「{title_b}」？反之呢？",
+        ]
+        confusions = [
+            f"注意「{title_a}」和「{title_b}」虽然看似相关，但适用场景不同",
+        ]
+        transfer_learning = [
+            f"理解「{title_a}」的核心思想是否可以迁移到「{title_b}」的理解中",
+        ]
+    elif user_focus == "transfer":
+        transfer_learning = [
+            f"「{title_a}」的思维方式可否迁移到「{title_b}」的学习中",
+            f"两者在方法论层面是否有可复用的模式",
+        ]
+        exam_questions = [f"分析「{title_a}」与「{title_b}」的异同"]
+        confusions = [f"避免将「{title_a}」的适用条件混淆到「{title_b}」"]
+    else:  # concept
+        transfer_learning = [
+            f"对比两者的核心思想，寻找可迁移的方法论",
+        ]
+        confusions = [
+            f"注意「{title_a}」和「{title_b}」的适用场景差异",
+        ]
+        exam_questions = [
+            f"简述「{title_a}」与「{title_b}」的联系与区别",
+        ]
+
     return {
-        "concept_a": {"title": "概念 A", "explanation": "基于证据的概念 A 解析"},
-        "concept_b": {"title": "概念 B", "explanation": "基于证据的概念 B 解析"},
-        "similarities": ["两者在各自课程中均为核心概念"],
-        "differences": [
-            {"dimension": "所属课程", "a": "课程 A", "b": "课程 B"}
-        ],
-        "transfer_learning": ["可迁移的方法论"],
-        "confusions": ["注意适用场景差异"],
-        "exam_questions": ["简述两者的联系与区别"],
+        "concept_a": {
+            "title": title_a or "概念 A",
+            "explanation": summary_a or "基于证据的概念解析",
+        },
+        "concept_b": {
+            "title": title_b or "概念 B",
+            "explanation": summary_b or "基于证据的概念解析",
+        },
+        "similarities": similarities,
+        "differences": differences,
+        "transfer_learning": transfer_learning,
+        "confusions": confusions,
+        "exam_questions": exam_questions,
         "citations": citations,
         "insufficient_evidence": not bool(citations),
     }
+
+
+def _extract_prompt_field(prompt: str, field_name: str) -> str:
+    """Extract a field value from a prompt line like '概念 A: xxx'.
+
+    Returns the text after the field name up to the next newline.
+    """
+    pattern = re.escape(field_name) + r"\s*(.+?)(?:\n|$)"
+    m = re.search(pattern, prompt)
+    if m:
+        return m.group(1).strip()
+    return ""
 
 
 _MOCK_BUILDERS = {

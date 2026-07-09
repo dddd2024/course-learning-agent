@@ -197,13 +197,34 @@ def sync_nodes_for_user(db: Session, user_id: int) -> int:
 # ---------------------------------------------------------------------------
 
 
-def generate_candidate_edges(db: Session, user_id: int) -> int:
+def clear_candidate_edges(db: Session, user_id: int) -> int:
+    """Delete all candidate-status edges for a user.
+
+    Confirmed/rejected edges are preserved so user decisions are not lost
+    on rebuild. Returns the number of deleted edges.
+    """
+    deleted = (
+        db.query(ConceptEdge)
+        .filter_by(user_id=user_id, status="candidate")
+        .delete(synchronize_session=False)
+    )
+    db.flush()
+    return deleted
+
+
+def generate_candidate_edges(
+    db: Session, user_id: int, clear_existing: bool = False
+) -> int:
     """Generate candidate edges using rule-based matching.
 
-    Skips pairs that already have a confirmed/rejected edge.
-    Skips pairs that already have a candidate edge (no duplicates).
+    When clear_existing=True, deletes all candidate edges first (a full
+    rebuild).  Otherwise, skips pairs that already have a
+    confirmed/rejected/candidate edge (no duplicates).
     Returns the number of new edges created.
     """
+    if clear_existing:
+        clear_candidate_edges(db, user_id)
+
     nodes = db.query(ConceptNode).filter_by(user_id=user_id).all()
     if len(nodes) < 2:
         return 0
@@ -259,6 +280,18 @@ def _try_make_edge(a: ConceptNode, b: ConceptNode) -> ConceptEdge | None:
         else ""
     )
 
+    # Shared keywords for richer reasons
+    shared_kws = list(kw_a & kw_b)[:5]
+    shared_kw_str = "、".join(shared_kws) if shared_kws else ""
+
+    def _fmt_overlap() -> str:
+        """Format overlap percentage, showing 1 decimal for small values."""
+        if kw_overlap <= 0:
+            return ""
+        if kw_overlap < 0.1:
+            return f"关键词重叠度 {kw_overlap:.1%}"
+        return f"关键词重叠度 {kw_overlap:.0%}"
+
     # Rule 1: same normalized title, different course
     if same_title and diff_course:
         if kw_overlap < 0.6:
@@ -267,7 +300,11 @@ def _try_make_edge(a: ConceptNode, b: ConceptNode) -> ConceptEdge | None:
                 target_node_id=b.id,
                 relation_type="same_name_different_meaning",
                 confidence=0.7,
-                reason=f"同名概念「{a.title}」在两门课中含义不同{no_evidence_suffix}",
+                reason=(
+                    f"同名概念「{a.title}」在两门课程中含义不同"
+                    + (f"，{ _fmt_overlap() }" if kw_overlap > 0 else "")
+                    + no_evidence_suffix
+                ),
                 evidence_chunk_ids=evidence_json,
                 status="candidate",
             )
@@ -277,7 +314,11 @@ def _try_make_edge(a: ConceptNode, b: ConceptNode) -> ConceptEdge | None:
                 target_node_id=b.id,
                 relation_type="similar_to",
                 confidence=0.8,
-                reason=f"同名概念「{a.title}」在两门课中含义相近{no_evidence_suffix}",
+                reason=(
+                    f"同名概念「{a.title}」在两门课程中含义相近"
+                    + (f"，{_fmt_overlap()}" if kw_overlap > 0 else "")
+                    + no_evidence_suffix
+                ),
                 evidence_chunk_ids=evidence_json,
                 status="candidate",
             )
@@ -287,19 +328,29 @@ def _try_make_edge(a: ConceptNode, b: ConceptNode) -> ConceptEdge | None:
     title_chars_a = _cjk_chars(a.title or "")
     title_chars_b = _cjk_chars(b.title or "")
     titles_share_char = bool(title_chars_a & title_chars_b)
+    shared_title_chars = list(title_chars_a & title_chars_b)[:4]
     if (
         diff_course
         and not same_title
         and kw_overlap < 0.25
         and (kw_overlap >= 0.1 or titles_share_char)
     ):
-        domain_hint = "标题同域" if titles_share_char else "关键词部分重叠"
+        reason_parts: list[str] = []
+        if titles_share_char:
+            reason_parts.append(
+                f"标题共享字「{'、'.join(shared_title_chars)}」"
+            )
+        if shared_kw_str:
+            reason_parts.append(f"共同关键词：{shared_kw_str}")
+        if _fmt_overlap():
+            reason_parts.append(_fmt_overlap())
+        reason_text = "，".join(reason_parts) if reason_parts else "跨课程关联"
         return ConceptEdge(
             source_node_id=a.id,
             target_node_id=b.id,
             relation_type="contrast_with",
             confidence=0.5,
-            reason=f"跨课程对比：{domain_hint} ({kw_overlap:.2f}){no_evidence_suffix}",
+            reason=f"跨课程对比：{reason_text}{no_evidence_suffix}",
             evidence_chunk_ids=evidence_json,
             status="candidate",
         )
@@ -308,24 +359,34 @@ def _try_make_edge(a: ConceptNode, b: ConceptNode) -> ConceptEdge | None:
     threshold = 0.25 if diff_course else 0.2
     if kw_overlap >= threshold:
         rtype = "applies_to" if diff_course else "similar_to"
+        reason_parts: list[str] = []
+        if shared_kw_str:
+            reason_parts.append(f"共同关键词：{shared_kw_str}")
+        if _fmt_overlap():
+            reason_parts.append(_fmt_overlap())
+        reason_text = "，".join(reason_parts)
         return ConceptEdge(
             source_node_id=a.id,
             target_node_id=b.id,
             relation_type=rtype,
             confidence=0.45 + 0.3 * kw_overlap,
-            reason=f"摘要关键词重叠度 {kw_overlap:.2f}{no_evidence_suffix}",
+            reason=f"{reason_text}{no_evidence_suffix}",
             evidence_chunk_ids=evidence_json,
             status="candidate",
         )
 
     # Rule 3: one summary mentions the other's title
     if title_in_summary:
+        if a.title and a.title in (b.summary or ""):
+            detail = f"「{b.title}」的摘要提及了「{a.title}」"
+        else:
+            detail = f"「{a.title}」的摘要提及了「{b.title}」"
         return ConceptEdge(
             source_node_id=a.id,
             target_node_id=b.id,
             relation_type="prerequisite_of",
             confidence=0.6,
-            reason=f"一方摘要提及另一方标题{no_evidence_suffix}",
+            reason=f"{detail}{no_evidence_suffix}",
             evidence_chunk_ids=evidence_json,
             status="candidate",
         )

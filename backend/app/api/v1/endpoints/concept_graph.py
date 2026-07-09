@@ -45,7 +45,7 @@ def rebuild_graph(
 ):
     """Sync knowledge points into concept nodes and generate candidate edges."""
     nodes_count = sync_nodes_for_user(db, current_user.id)
-    edges_count = generate_candidate_edges(db, current_user.id)
+    edges_count = generate_candidate_edges(db, current_user.id, clear_existing=True)
     db.commit()
     return RebuildResponse(
         nodes_count=nodes_count, edges_count=edges_count
