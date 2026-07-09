@@ -112,11 +112,12 @@ def _reconcile_chunk_ids(
 def _fetch_chunks(db: Session, course_id: int) -> list[dict]:
     """Load ready-material chunks for a course as agent input dicts.
 
-    To avoid LLM timeouts on courses with many chunks (1000+), we cap
-    the number of chunks sent to the LLM at ``MAX_CHUNKS`` by evenly
-    sampling across the full range.
+    Filters out chunks with very short text (< 30 chars) that are
+    typically cover pages or page headers (e.g. "计算机网络"), then
+    evenly samples up to MAX_CHUNKS representative chunks.
     """
     MAX_CHUNKS = 50
+    MIN_TEXT_LEN = 30
     rows = (
         db.query(MaterialChunk)
         .join(Material, Material.id == MaterialChunk.material_id)
@@ -127,7 +128,9 @@ def _fetch_chunks(db: Session, course_id: int) -> list[dict]:
         .order_by(MaterialChunk.chunk_index.asc())
         .all()
     )
-    # Evenly sample MAX_CHUNKS items from the full list
+    # Filter out chunks with very short text (cover pages, headers)
+    rows = [r for r in rows if r.text and len(r.text.strip()) >= MIN_TEXT_LEN]
+    # Evenly sample MAX_CHUNKS items from the filtered list
     if len(rows) > MAX_CHUNKS:
         step = len(rows) / MAX_CHUNKS
         sampled = [rows[int(i * step)] for i in range(MAX_CHUNKS)]

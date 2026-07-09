@@ -122,6 +122,12 @@ function renderHighlightedText(fullText: string, quote: string): string {
         <div class="drawer-label">
           检索命中 ({{ props.message?.retrievedChunks?.length ?? 0 }})
         </div>
+        <div class="retrieval-explain">
+          以下是从课程资料中检索到的相关片段。AI 根据这些片段生成回答，
+          <span class="retrieval-explain-cited">已引用</span> 表示该片段被
+          AI 直接引用，<span class="retrieval-explain-uncited">未引用</span>
+          表示检索到但未直接使用。
+        </div>
         <template
           v-if="
             props.message?.retrievedChunks &&
@@ -229,6 +235,26 @@ function renderHighlightedText(fullText: string, quote: string): string {
   color: #303133;
   padding: 0 2px;
   border-radius: 2px;
+  font-weight: 600;
+}
+
+.retrieval-explain {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.6;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  background: #f4f4f5;
+  border-radius: 6px;
+}
+
+.retrieval-explain-cited {
+  color: #67c23a;
+  font-weight: 600;
+}
+
+.retrieval-explain-uncited {
+  color: #909399;
   font-weight: 600;
 }
 

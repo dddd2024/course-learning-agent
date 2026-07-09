@@ -194,17 +194,59 @@ def _mock_course_qa(prompt: str = "") -> dict[str, Any]:
     }
 
 
+def _extract_title_from_chunk(chunk_text: str, index: int) -> str:
+    """Extract a meaningful title from chunk text.
+
+    Tries multiple strategies to find a good title:
+    1. Lines matching chapter/section patterns (第X章, X.Y, §X, etc.)
+    2. Short lines (< 30 chars) that look like headings
+    3. First non-trivial line
+    Skips lines that are course names, page numbers, or boilerplate.
+    """
+    SKIP_PATTERNS = [
+        "计算机网络", "操作系统", "数据结构", "数据库",
+        "主要内容", "教学内容", "第", "页", "2025", "2026",
+    ]
+    SECTION_RE = re.compile(
+        r"^(第[一二三四五六七八九十\d]+[章节]|"
+        r"\d+[\.\-]\d+|"
+        r"[一二三四五六七八九十]+、|"
+        r"§\d+|"
+        r"Chapter\s+\d+)"
+    )
+
+    lines = [l.strip() for l in chunk_text.strip().split("\n") if l.strip()]
+
+    # Strategy 1: Find lines matching section/chapter patterns
+    for line in lines:
+        if SECTION_RE.match(line) and len(line) < 60:
+            return line[:60]
+
+    # Strategy 2: Find short lines that look like headings
+    for line in lines:
+        if len(line) < 30 and not any(s in line for s in SKIP_PATTERNS):
+            # Skip lines that are just numbers or symbols
+            if re.match(r"^[\d\s\.\-]+$", line):
+                continue
+            return line[:60]
+
+    # Strategy 3: First non-trivial line (skip course names and headers)
+    for line in lines:
+        if not any(line.startswith(s) for s in SKIP_PATTERNS):
+            return line[:60]
+
+    return f"知识点{index + 1}"
+
+
 def _mock_outline(prompt: str = "") -> dict[str, Any]:
     """Generate knowledge points from the prompt's chunk content.
 
-    Extracts chunk text and titles from the prompt. Uses the chunk
-    title (from the chunker's heading detection) when available,
-    falling back to the first meaningful line of text. Filters out
-    repeated page-header text (e.g. "计算机网络" appearing on every
-    page) to ensure distinct titles.
+    Extracts chunk text from the prompt and uses _extract_title_from_chunk
+    to find meaningful titles (section headings, short descriptive lines)
+    instead of just taking the first line which is often a repeated page
+    header like "计算机网络".
     """
-    # Extract chunk text from the prompt. The outline prompt formats
-    # chunks as: [片段N] chunk_id=...，标题：xxx\n<text>
+    # Extract chunk text from the prompt.
     chunk_pattern = re.compile(
         r"\[片段\d+\]\s*chunk_id=\d+[^\n]*\n(.+?)(?=\n\n|\Z)",
         re.DOTALL,
@@ -212,45 +254,45 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
     chunks = chunk_pattern.findall(prompt)
 
     # Extract titles from the prompt header lines (format: "，标题：xxx")
-    title_pattern = re.compile(r"标题：(.+?)(?:，|\n)", )
+    title_pattern = re.compile(r"标题：(.+?)(?:，|\n)")
     chunk_titles = title_pattern.findall(prompt)
 
     if not chunks:
         return {"knowledge_points": []}
 
-    # Track titles to detect and skip duplicates (page headers etc.)
     seen_titles: set[str] = set()
     knowledge_points: list[dict[str, Any]] = []
 
     for i, chunk_text in enumerate(chunks[:5]):
-        # Priority 1: use the chunk's title field from the prompt
+        # Priority 1: use chunk title from DB if it's meaningful
         title = ""
         if i < len(chunk_titles):
-            title = chunk_titles[i].strip()
+            db_title = chunk_titles[i].strip()
+            # Only use DB title if it's not a course name or None
+            if db_title and db_title not in (
+                "计算机网络", "操作系统", "数据结构", "数据库"
+            ):
+                title = db_title
 
-        # Priority 2: use the first non-empty, non-trivial line
+        # Priority 2: extract a meaningful title from chunk text
         if not title:
-            lines = [
-                line.strip()
-                for line in chunk_text.strip().split("\n")
-                if line.strip()
-            ]
-            title = lines[0][:60] if lines else f"知识点{i + 1}"
+            title = _extract_title_from_chunk(chunk_text, i)
 
-        # Skip duplicate titles (e.g. repeated page headers like "计算机网络")
+        # Skip duplicate titles
         base_title = title[:30]
         if base_title in seen_titles:
-            # Try to find a different title from subsequent lines
-            lines = [
-                line.strip()
-                for line in chunk_text.strip().split("\n")
-                if line.strip() and line.strip()[:30] not in seen_titles
-            ]
-            if lines:
-                title = lines[0][:60]
-            else:
-                # Append index to make it unique
-                title = f"{title}（片段{i + 1}）"
+            # Try extracting a different title from subsequent lines
+            for offset in range(1, 5):
+                remaining = chunk_text.split("\n")[offset:]
+                if remaining:
+                    alt_title = _extract_title_from_chunk(
+                        "\n".join(remaining), i
+                    )
+                    if alt_title[:30] not in seen_titles:
+                        title = alt_title
+                        break
+            if base_title == title[:30]:
+                title = f"{title}（{i + 1}）"
 
         seen_titles.add(title[:30])
 
@@ -272,7 +314,7 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
         if len(lines) >= 2:
             knowledge_points = [
                 {
-                    "title": lines[0][:60],
+                    "title": _extract_title_from_chunk(lines[0], 0),
                     "summary": lines[0][:100],
                     "importance": 5,
                     "source_chunk_ids": [1],
@@ -280,7 +322,7 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
                     "review_action": "重读片段1的相关内容。",
                 },
                 {
-                    "title": lines[1][:60],
+                    "title": _extract_title_from_chunk(lines[1], 1),
                     "summary": lines[1][:100],
                     "importance": 4,
                     "source_chunk_ids": [1],

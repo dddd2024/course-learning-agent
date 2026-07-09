@@ -181,7 +181,7 @@ async function handleComplete(todo: Todo) {
 
 function goToCourse(todo: Todo) {
   if (todo.course_id) {
-    router.push(`/courses/${todo.course_id}/chat`)
+    router.push(`/courses/${todo.course_id}/learn`)
   }
 }
 

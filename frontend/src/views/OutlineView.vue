@@ -203,7 +203,7 @@ function goBack() {
 }
 
 function goToChat() {
-  router.push(`/courses/${courseId.value}/chat`)
+  router.push(`/courses/${courseId.value}/learn`)
 }
 
 onMounted(async () => {
