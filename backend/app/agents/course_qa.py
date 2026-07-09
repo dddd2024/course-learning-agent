@@ -116,13 +116,31 @@ def verify_citations(
     Returns the filtered citation list. This is the CitationVerifier:
     it prevents the LLM from referencing chunks that were never
     retrieved (fabricated references).
+
+    Type coercion: LLMs sometimes return ``chunk_id`` as a string
+    (e.g. ``"5"``) even though the database stores integers. We coerce
+    both sides to ``int`` so valid citations are not mistakenly dropped.
     """
-    valid_ids = {chunk["chunk_id"] for chunk in retrieved_chunks}
-    return [
-        cite
-        for cite in output.get("citations", [])
-        if cite.get("chunk_id") in valid_ids
-    ]
+    valid_ids: set[int] = set()
+    for chunk in retrieved_chunks:
+        try:
+            valid_ids.add(int(chunk["chunk_id"]))
+        except (TypeError, ValueError):
+            continue
+
+    def _to_int(cid: Any) -> int | None:
+        try:
+            return int(cid)
+        except (TypeError, ValueError):
+            return None
+
+    result: list[dict] = []
+    for cite in output.get("citations", []):
+        cid = _to_int(cite.get("chunk_id"))
+        if cid is not None and cid in valid_ids:
+            cite["chunk_id"] = cid  # normalise to int
+            result.append(cite)
+    return result
 
 
 def answer_question(

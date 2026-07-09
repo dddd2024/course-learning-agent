@@ -66,7 +66,13 @@ def test_call_llm_mock_outline(monkeypatch) -> None:
     monkeypatch.setattr(settings, "LLM_PROVIDER", "mock")
 
     result = call_llm(
-        prompt="从以下 chunks 提取知识点: ...",
+        prompt=(
+            "从以下 chunks 提取知识点:\n\n"
+            "[片段1] chunk_id=1\n"
+            "TCP协议是传输控制协议，提供可靠的、面向连接的字节流服务。\n\n"
+            "[片段2] chunk_id=2\n"
+            "UDP是用户数据报协议，提供无连接的、不可靠的数据传输服务。"
+        ),
         agent_type="outline",
     )
 

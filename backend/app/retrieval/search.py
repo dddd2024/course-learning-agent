@@ -34,24 +34,59 @@ from app.models.material_chunk import MaterialChunk
 # match chunks that only contain "表".
 _CJK_PATTERN = re.compile(r"[\u4e00-\u9fff]")
 
+# Common Chinese stop characters that produce too many false positives
+# if used as individual LIKE keywords. Ported from
+# concept_graph_service.CJK_STOP_CHARS (audit Task 6, commit 1388e91).
+_CJK_STOP_CHARS = set("的是了和与及在为对中上下一种一个可以通过")
+
 
 def _split_keywords(query: str) -> List[str]:
     """Split ``query`` into keywords for retrieval.
 
-    Whitespace tokens are kept as-is. Individual CJK characters in the
-    query are also added (deduplicated, order-preserving) so Chinese
-    queries without spaces still produce useful keywords.
+    Three extraction strategies ensure both Chinese and English queries
+    produce useful search terms:
+
+    1. **Whitespace tokens** — kept as-is (handles English queries like
+       "TCP protocol header").
+    2. **ASCII words (>= 2 chars)** — extracted via regex so terms like
+       "TCP", "UDP", "IP" inside Chinese queries ("什么是TCP协议？")
+       become searchable keywords. Without this, "TCP" is trapped inside
+       the unsplit CJK string and never matches.
+    3. **CJK 2-grams** — bigrams of non-stop CJK characters, so "协议"
+       becomes a keyword instead of single chars "协"/"议" which match
+       too broadly. Single CJK chars that are not stopwords are also
+       kept as a fallback for short queries.
+
+    All keywords are lowercased and de-duplicated (order-preserving).
     """
     if not query or not query.strip():
         return []
+
+    # 1. Whitespace tokens
     tokens = [t for t in query.split() if t]
-    cjk_chars = _CJK_PATTERN.findall(query)
+
+    # 2. ASCII words >= 2 characters (e.g. "TCP", "UDP", "HTTP")
+    ascii_words = re.findall(r"[a-zA-Z]{2,}", query)
+
+    # 3. CJK 2-grams from non-stop chars (e.g. "协议" from "什么是TCP协议？")
+    cjk_chars = [
+        c for c in _CJK_PATTERN.findall(query)
+        if c not in _CJK_STOP_CHARS
+    ]
+    cjk_grams: list[str] = []
+    for i in range(len(cjk_chars) - 1):
+        gram = cjk_chars[i] + cjk_chars[i + 1]
+        cjk_grams.append(gram)
+    # Also keep single non-stop CJK chars for short queries
+    cjk_grams.extend(cjk_chars)
+
     seen: set[str] = set()
     keywords: List[str] = []
-    for kw in tokens + cjk_chars:
-        if kw and kw not in seen:
-            seen.add(kw)
-            keywords.append(kw)
+    for kw in tokens + ascii_words + cjk_grams:
+        kw_lower = kw.lower()
+        if kw_lower and kw_lower not in seen:
+            seen.add(kw_lower)
+            keywords.append(kw_lower)
     return keywords
 
 

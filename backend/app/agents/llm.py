@@ -157,26 +157,73 @@ def _mock_course_qa(prompt: str = "") -> dict[str, Any]:
 
 
 def _mock_outline(prompt: str = "") -> dict[str, Any]:
-    return {
-        "knowledge_points": [
-            {
-                "title": "梯度下降基本原理",
-                "summary": "通过负梯度方向迭代更新参数以最小化损失。",
-                "importance": 5,
-                "source_chunk_ids": ["chunk_1", "chunk_2"],
-                "exam_style": "简答题/计算题",
-                "review_action": "重读 chunk_1 并手推一次更新公式。",
-            },
-            {
-                "title": "学习率的影响",
-                "summary": "学习率过大发散，过小收敛慢。",
-                "importance": 4,
-                "source_chunk_ids": ["chunk_3"],
-                "exam_style": "选择题/简答题",
-                "review_action": "做两道学习率调整的练习题。",
-            },
+    """Generate knowledge points from the prompt's chunk content.
+
+    The mock previously returned hardcoded ML knowledge points regardless
+    of the course content. Now it extracts chunk text from the prompt
+    (which outline.py correctly fills with real course material) and
+    generates knowledge points from the first sentences of each chunk.
+    """
+    # Extract chunk text from the prompt. The outline prompt formats
+    # chunks as: [片段N] chunk_id=...\n<text>
+    chunk_pattern = re.compile(
+        r"\[片段\d+\]\s*chunk_id=\d+[^\n]*\n(.+?)(?=\n\n|\Z)",
+        re.DOTALL,
+    )
+    chunks = chunk_pattern.findall(prompt)
+
+    if not chunks:
+        # No chunks in prompt — return empty so the caller can handle it
+        return {"knowledge_points": []}
+
+    knowledge_points: list[dict[str, Any]] = []
+    for i, chunk_text in enumerate(chunks[:5]):  # max 5 points
+        # Use the first non-empty line as the title (often a heading)
+        lines = [
+            line.strip()
+            for line in chunk_text.strip().split("\n")
+            if line.strip()
         ]
-    }
+        title = lines[0][:60] if lines else f"知识点{i + 1}"
+        # Use first 100 chars as summary
+        summary = chunk_text.strip()[:100].replace("\n", " ")
+
+        knowledge_points.append({
+            "title": title,
+            "summary": summary,
+            "importance": 5 if i == 0 else 4,
+            "source_chunk_ids": [i + 1],
+            "exam_style": "简答题/选择题",
+            "review_action": f"重读片段{i + 1}的相关内容。",
+        })
+
+    # If only one chunk was found, split it into at least 2 knowledge
+    # points so downstream agents (quiz, concept graph) have enough
+    # nodes to work with. Use the first two non-empty lines as titles.
+    if len(knowledge_points) < 2 and chunks:
+        text = chunks[0].strip()
+        lines = [l.strip() for l in text.split("\n") if l.strip()]
+        if len(lines) >= 2:
+            knowledge_points = [
+                {
+                    "title": lines[0][:60],
+                    "summary": lines[0][:100],
+                    "importance": 5,
+                    "source_chunk_ids": [1],
+                    "exam_style": "简答题/选择题",
+                    "review_action": "重读片段1的相关内容。",
+                },
+                {
+                    "title": lines[1][:60],
+                    "summary": lines[1][:100],
+                    "importance": 4,
+                    "source_chunk_ids": [1],
+                    "exam_style": "简答题/选择题",
+                    "review_action": "重读片段1的相关内容。",
+                },
+            ]
+
+    return {"knowledge_points": knowledge_points}
 
 
 def _mock_planner(prompt: str = "") -> dict[str, Any]:

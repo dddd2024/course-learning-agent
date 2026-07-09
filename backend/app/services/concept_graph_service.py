@@ -112,7 +112,9 @@ def sync_nodes_for_user(db: Session, user_id: int) -> int:
     """Sync KnowledgePoint -> ConceptNode for all of a user's courses.
 
     Idempotent: existing nodes (matched by course_id + knowledge_point_id)
-    are updated in place, not duplicated. Returns the number of nodes.
+    are updated in place, not duplicated. ConceptNodes whose
+    KnowledgePoint has been deleted (e.g. by re-generating knowledge
+    points) are removed as orphans. Returns the number of nodes.
     """
     kps = db.query(KnowledgePoint).filter_by(user_id=user_id).all()
     existing: dict[tuple[int, int], ConceptNode] = {
@@ -122,9 +124,13 @@ def sync_nodes_for_user(db: Session, user_id: int) -> int:
     weak_rows = db.query(WeakPoint).filter_by(user_id=user_id).all()
     weak_kp_ids = {w.knowledge_point_id for w in weak_rows}
 
+    # Track which ConceptNode keys are still backed by a live KP.
+    live_keys: set[tuple[int, int]] = set()
+
     count = 0
     for kp in kps:
         key = (kp.course_id, kp.id)
+        live_keys.add(key)
         node = existing.get(key)
         norm = _normalize_title(kp.title or "")
         if node is None:
@@ -149,6 +155,26 @@ def sync_nodes_for_user(db: Session, user_id: int) -> int:
             node.source_chunk_ids = kp.source_chunk_ids or "[]"
             node.weak_point_score = 1.0 if kp.id in weak_kp_ids else 0.0
         count += 1
+
+    # Delete orphan ConceptNodes whose KnowledgePoint no longer exists.
+    # This happens when knowledge points are re-generated (old KPs are
+    # deleted in knowledge_points.py:149-152) but the derived
+    # ConceptNodes were never cleaned up.
+    orphan_node_ids = [
+        existing[key].id
+        for key in existing
+        if key not in live_keys
+    ]
+    if orphan_node_ids:
+        # Also delete edges connected to orphan nodes before removing them.
+        db.query(ConceptEdge).filter(
+            ConceptEdge.source_node_id.in_(orphan_node_ids)
+            | ConceptEdge.target_node_id.in_(orphan_node_ids)
+        ).delete(synchronize_session=False)
+        db.query(ConceptNode).filter(
+            ConceptNode.id.in_(orphan_node_ids)
+        ).delete(synchronize_session=False)
+
     db.flush()
     return count
 
