@@ -42,6 +42,8 @@ _REQUIRED_FIELDS = (
 
 # Meaningless symbols commonly found in PDF extracts
 _NOISE_SYMBOLS = re.compile(r"[□☐◆■►●○▪▫▶▷◇★☆▼▽▲△]")
+# Unicode Private Use Area characters (PPT font icons extracted as text)
+_PUA_CHARS = re.compile(r"[\ue000-\uf8ff]")
 # Date patterns: "2026年春", "2026年5月", "2024年"
 _DATE_PATTERN = re.compile(r"\d{4}年(?:\d+月)?(?:春|秋|夏|冬)?")
 # Standalone year (e.g. "2026 " at start of title)
@@ -58,10 +60,11 @@ _MULTI_WS = re.compile(r"[ \t]+")
 
 
 def _clean_text(text: str) -> str:
-    """Remove noise symbols, dates, page refs, chapter prefixes, and normalize whitespace."""
+    """Remove noise symbols, PUA chars, dates, page refs, chapter prefixes, and normalize whitespace."""
     if not text:
         return ""
     result = _NOISE_SYMBOLS.sub("", text)
+    result = _PUA_CHARS.sub("", result)
     result = _DATE_PATTERN.sub("", result)
     result = _PAGE_REF.sub("", result)
     result = _META_INFO.sub("", result)
@@ -87,6 +90,105 @@ def _clean_title(title: str) -> str:
     return result
 
 
+def _normalize_title(title: str) -> str:
+    """Normalize a knowledge point title to a concept-style phrase.
+
+    Converts question-style titles to concept phrases and filters out
+    invalid titles (chapter numbers, single English words).
+
+    - "为什么需要X?" → "X的必要性"
+    - "什么是X?" → "X"
+    - "为什么X?" → "X的原因"
+    - "第N章" / "第N章 " → "" (filtered, chapter number only)
+    - "Date" / single English word → "" (filtered, noise)
+    - "总结：交换机的工作过程" → "交换机的工作过程"
+    """
+    if not title:
+        return ""
+    title = title.strip()
+
+    # Strip leading non-alphanumeric, non-CJK characters (PUA remnants,
+    # bullet points, spaces) so section number regex can match
+    title = re.sub(r"^[^\w\u4e00-\u9fff]+", "", title).strip()
+
+    # Strip chapter/section prefix: "第9章 磁盘存储器管理" → "磁盘存储器管理"
+    title = re.sub(
+        r"^第[\d一二三四五六七八九十]+章\s*", "", title
+    ).strip()
+    title = re.sub(
+        r"^第[\d一二三四五六七八九十]+节\s*", "", title
+    ).strip()
+    # Strip section number prefix: "7.1 物理层概述" → "物理层概述"
+    title = re.sub(r"^[\d]+[\.\-][\d]+(?:[\.\-]\d+)*\s*", "", title).strip()
+
+    # Filter chapter-number-only titles (e.g. "第10章", "第五章")
+    # (after stripping, if nothing remains, it was chapter-number-only)
+    if not title:
+        return ""
+    if re.match(r"^第[\d一二三四五六七八九十]+章$", title):
+        return ""
+
+    # Filter single English words (noise like "Date", "Chapter3")
+    if re.match(r"^[A-Za-z]\w{0,15}$", title) and not re.search(
+        r"[/\u4e00-\u9fff]", title
+    ):
+        return ""
+
+    # Strip meta prefixes: "总结：", "小结：", "概述：", "示例：", "复习："
+    title = re.sub(
+        r"^(总结|小结|概述|示例|备注|注意|提示|引言|前言|复习|回顾)[:：]\s*", "", title
+    ).strip()
+
+    # Convert "为什么需要X?" → "X的必要性"
+    m = re.match(r"^为什么需要(.+?)\??$", title)
+    if m:
+        inner = m.group(1).strip().rstrip("?？")
+        return f"{inner}的必要性"
+
+    # Convert "什么是X?" → "X"
+    m = re.match(r"^什么是(.+?)\??$", title)
+    if m:
+        return m.group(1).strip().rstrip("?？")
+
+    # Convert "为什么X?" → "X的原因"
+    m = re.match(r"^为什么(.+?)\??$", title)
+    if m:
+        inner = m.group(1).strip().rstrip("?？")
+        return f"{inner}的原因"
+
+    return title
+
+
+def _is_valid_concept_title(title: str) -> bool:
+    """Check if a title is a valid concept name (not OCR noise)."""
+    if not title or len(title) < 2:
+        return False
+    # Check against noise patterns
+    if any(p.search(title) for p in _NOISE_TITLE_PATTERNS):
+        return False
+    # Check against too-broad titles
+    if title in _TOO_BROAD_TITLES:
+        return False
+    # Reject titles that are just numbers/section numbers
+    if re.match(r"^[\d.]+$", title):
+        return False
+    # Reject sentence-style titles: "X是Y的Z" (contains 是 as a copula verb
+    # in the middle, indicating a sentence not a concept name)
+    if re.search(r".{2,}是.{2,}", title) and len(title) > 8:
+        return False
+    # Reject list-style titles: contains 3+ "、" separators (a list, not a concept)
+    if title.count("、") >= 3:
+        return False
+    # Reject sentence-style titles: contains "，" (comma) indicating
+    # explanatory text rather than a concept name
+    if title.count("，") >= 2:
+        return False
+    # Reject overly long titles (>25 chars) that are likely sentence fragments
+    if len(title) > 25:
+        return False
+    return True
+
+
 # Titles that are too broad (chapter-level, not specific concepts)
 _TOO_BROAD_TITLES = {
     "数据链路层", "物理层", "网络层", "传输层", "应用层",
@@ -108,6 +210,20 @@ _NOISE_TITLE_PATTERNS = [
     # Pure-English multi-word titles (likely OCR noise, not real concepts)
     # Short English abbreviations like "CSMA/CD" or "TCP/IP" still pass
     re.compile(r"^[A-Za-z][A-Za-z\s/]{10,}$"),
+    # Diagram labels: single uppercase letters with spaces like "A YX B Z"
+    re.compile(r"^[A-Z](\s+[A-Z])+"),
+    # Titles starting with common OCR artifacts
+    re.compile(r"^[的个么什是对于在]\s*"),  # incomplete Chinese fragments
+    # "A 的..." style diagram descriptions
+    re.compile(r"^[A-Z]\s+的"),
+    # Hex/technical noise like "标志字段F为0x7E"
+    re.compile(r"0x[0-9A-Fa-f]"),
+    # Sentence fragments ending with period/question mark
+    re.compile(r"[。？]$"),
+    # Explanatory text with "前者...后者..." pattern
+    re.compile(r"前者.*后者"),
+    # Sentence fragments starting with common verbs/particles
+    re.compile(r"^(用来|每个|这种|这类|这种|其中|通过|为了|由于)"),
 ]
 
 
@@ -265,14 +381,19 @@ def generate(
     valid_chunk_ids = [c["chunk_id"] for c in chunks]
 
     results: list[dict[str, Any]] = []
+    seen_titles: set[str] = set()  # Deduplicate by normalized title
     for point in raw_points:
         title = _clean_title(point.get("title", ""))
         summary = _clean_text(point.get("summary", ""))
 
+        # Normalize title: convert questions to concept phrases,
+        # filter out chapter numbers and noise
+        title = _normalize_title(title)
+
         # Skip knowledge points with too-broad titles
         if title in _TOO_BROAD_TITLES:
             continue
-        # Skip empty titles after cleaning
+        # Skip empty titles after cleaning + normalization
         if not title or len(title) < 2:
             continue
         # Skip titles that are just chapter numbers (e.g. "5.1", "3.2.1")
@@ -281,6 +402,14 @@ def generate(
         # Skip titles that match noise patterns (IP addresses, pure numbers, etc.)
         if any(p.search(title) for p in _NOISE_TITLE_PATTERNS):
             continue
+        # Skip titles that fail concept validity check (sentence-style,
+        # list-style, incomplete fragments)
+        if not _is_valid_concept_title(title):
+            continue
+        # Skip duplicate titles (already added to results)
+        if title in seen_titles:
+            continue
+        seen_titles.add(title)
 
         source_ids = _reconcile_chunk_ids(
             point.get("source_chunk_ids", []), valid_chunk_ids

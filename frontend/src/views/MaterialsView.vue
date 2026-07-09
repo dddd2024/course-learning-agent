@@ -754,7 +754,7 @@ onUnmounted(() => {
           <div
             class="search-item-text"
             v-html="highlightKeyword(
-              expandedSearchIds.has(item.chunk_id) ? item.text : truncate(item.text),
+              expandedSearchIds.has(item.chunk_id) ? item.text : (item.snippet || truncate(item.text)),
               searchKeyword
             )"
           ></div>

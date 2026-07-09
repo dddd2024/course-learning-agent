@@ -130,15 +130,28 @@ def sync_nodes_for_user(db: Session, user_id: int) -> int:
     count = 0
     for kp in kps:
         key = (kp.course_id, kp.id)
+        # Apply outline-level title normalization: convert questions to
+        # concept phrases, filter out chapter numbers and noise
+        from app.agents.outline import (
+            _normalize_title as _normalize_kp_title,
+            _is_valid_concept_title,
+        )
+        display_title = _normalize_kp_title(kp.title or "")
+        # Skip knowledge points whose title is empty after normalization
+        # or is OCR noise (e.g. "第10章", "Date", "A YX B Z")
+        if not display_title or not _is_valid_concept_title(display_title):
+            # Don't add to live_keys so the orphan cleanup will delete
+            # any existing ConceptNode for this KP
+            continue
         live_keys.add(key)
         node = existing.get(key)
-        norm = _normalize_title(kp.title or "")
+        norm = _normalize_title(display_title)
         if node is None:
             node = ConceptNode(
                 user_id=user_id,
                 course_id=kp.course_id,
                 knowledge_point_id=kp.id,
-                title=kp.title or "",
+                title=display_title,
                 normalized_title=norm,
                 summary=kp.summary or "",
                 aliases="[]",
@@ -148,7 +161,7 @@ def sync_nodes_for_user(db: Session, user_id: int) -> int:
             )
             db.add(node)
         else:
-            node.title = kp.title or ""
+            node.title = display_title
             node.normalized_title = norm
             node.summary = kp.summary or ""
             node.importance = kp.importance or 3

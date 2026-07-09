@@ -15,6 +15,7 @@ class SearchResultItem(BaseModel):
     page_no: Optional[int] = None
     title: Optional[str] = None
     text: str
+    snippet: Optional[str] = ""
     score: float
 
 

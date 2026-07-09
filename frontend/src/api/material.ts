@@ -71,6 +71,7 @@ export interface SearchItem {
   page_no: number
   title: string
   text: string
+  snippet: string
   score: number
 }
 

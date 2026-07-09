@@ -364,3 +364,139 @@ def test_keyword_search_weights_filename(client, tmp_path, monkeypatch) -> None:
         assert results[0]["score"] > results[1]["score"]
     finally:
         db.close()
+
+
+# T08: 搜索去重 + 摘要生成
+
+def test_keyword_search_deduplicates_same_page(
+    client, tmp_path, monkeypatch
+) -> None:
+    """T08: 同一页面的多个匹配切块去重，只保留最高分的一个。"""
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
+    )
+
+    headers = auth_headers(client, username="alice")
+    course_id, _ = setup_course_with_material(
+        client, headers, content=TLB_TEXT
+    )
+
+    from app.api.deps import get_db
+    from app.main import app
+    from app.models.material import Material
+    from app.models.material_chunk import MaterialChunk
+
+    db_generator = app.dependency_overrides[get_db]()
+    db: Session = next(db_generator)
+    try:
+        # Add duplicate chunks on the same page (page_no=5) so dedup kicks in
+        mat = (
+            db.query(Material)
+            .filter(Material.course_id == course_id)
+            .first()
+        )
+        if mat:
+            for i in range(3):
+                db.add(MaterialChunk(
+                    material_id=mat.id,
+                    course_id=course_id,
+                    chunk_index=100 + i,
+                    page_no=5,
+                    title="TLB缓存",
+                    text=f"TLB是Translation Lookaside Buffer的缩写，TLB缓存了页表项。重复内容{i}",
+                    keyword_text="TLB Translation Lookaside Buffer 缓存 页表",
+                ))
+            db.commit()
+
+        results = keyword_search(db, course_id, "TLB", top_k=12)
+        assert len(results) >= 1
+        # For results with page_no set, no two should share the same
+        # (material_id, page_no)
+        seen_pages: set = set()
+        for r in results:
+            if r["page_no"] is None:
+                continue  # skip non-PDF chunks
+            key = (r["material_id"], r["page_no"])
+            assert key not in seen_pages, f"Duplicate page: {key}"
+            seen_pages.add(key)
+    finally:
+        db.close()
+
+
+def test_keyword_search_includes_snippet(
+    client, tmp_path, monkeypatch
+) -> None:
+    """T08: 搜索结果包含 snippet 字段，为关键词上下文摘要。"""
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
+    )
+
+    headers = auth_headers(client, username="alice")
+    course_id, _ = setup_course_with_material(
+        client, headers, content=TLB_TEXT
+    )
+
+    from app.api.deps import get_db
+    from app.main import app
+
+    db_generator = app.dependency_overrides[get_db]()
+    db: Session = next(db_generator)
+    try:
+        results = keyword_search(db, course_id, "TLB", top_k=12)
+        assert len(results) >= 1
+        for r in results:
+            assert "snippet" in r
+            assert len(r["snippet"]) <= 200
+            assert len(r["snippet"]) > 0
+    finally:
+        db.close()
+
+
+def test_generate_snippet_filters_noise() -> None:
+    """T08: generate_snippet 过滤噪声行（IP地址、页码、单字母）。"""
+    from app.retrieval.search import generate_snippet
+
+    text = (
+        "192.168.1.1\n"
+        "第3页\n"
+        "A YX B Z\n"
+        "ARP协议是地址解析协议\n"
+        "ARP缓存表存储IP到MAC的映射\n"
+        "43\n"
+    )
+    snippet = generate_snippet(text, ["ARP"])
+    assert "ARP" in snippet
+    assert "192.168" not in snippet
+    assert "第3页" not in snippet
+
+
+# T09: 知识点数量 + 标题规范化
+
+def test_mock_outline_generates_many_points() -> None:
+    """T09: mock outline 应从所有chunk生成知识点，而非仅前10个。"""
+    from app.agents.llm import _mock_outline
+
+    chunks = []
+    for i in range(20):
+        chunks.append(
+            f"[片段{i+1}] chunk_id={i+1}，标题：概念{i+1}\n"
+            f"这是第{i+1}个知识点的内容。包含重要概念和定义。"
+        )
+    prompt = "\n\n".join(chunks)
+    result = _mock_outline(prompt)
+    points = result.get("knowledge_points", [])
+    assert len(points) >= 10, f"Expected >= 10 points, got {len(points)}"
+
+
+def test_normalize_title_converts_questions() -> None:
+    """T09: 疑问句标题转换为概念名。"""
+    from app.agents.outline import _normalize_title
+
+    assert _normalize_title("为什么需要数据链路层?") == "数据链路层的必要性"
+    assert _normalize_title("什么是CSMA/CD协议?") == "CSMA/CD协议"
+    assert _normalize_title("虚拟存储器") == "虚拟存储器"
+    assert _normalize_title("第10章") == ""
+    assert _normalize_title("Date") == ""
+    assert _normalize_title("第五章") == ""

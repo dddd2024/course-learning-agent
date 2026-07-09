@@ -339,7 +339,7 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
     seen_titles: set[str] = set()
     knowledge_points: list[dict[str, Any]] = []
 
-    for i, chunk_text in enumerate(chunks[:10]):
+    for i, chunk_text in enumerate(chunks[:50]):
         # Priority 1: use chunk title from DB if it's meaningful
         title = ""
         if i < len(chunk_titles):

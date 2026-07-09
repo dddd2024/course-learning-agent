@@ -213,7 +213,108 @@ def keyword_search(
         )
 
     results.sort(key=lambda item: item["score"], reverse=True)
+
+    # Deduplicate: keep only the highest-scoring chunk per (material_id, page_no)
+    results = _deduplicate_results(results)
+
+    # Generate snippets for each result
+    for r in results:
+        r["snippet"] = generate_snippet(r["text"], keywords)
+
     return results[:top_k]
+
+
+def _deduplicate_results(results: list[dict]) -> list[dict]:
+    """Remove duplicate results from the same (filename, page_no).
+
+    When multiple chunks from the same page match, keep only the
+    highest-scoring one to avoid redundant results. Uses filename
+    instead of material_id so that the same PDF uploaded as different
+    material records is still deduplicated. When page_no is None
+    (non-PDF materials), each chunk is treated as unique.
+    """
+    seen: set[tuple] = set()
+    deduped: list[dict] = []
+    for r in results:
+        page_no = r.get("page_no")
+        filename = r.get("filename", "")
+        if page_no is None:
+            # Non-PDF chunks: treat each as unique
+            key = ("__none__", r.get("chunk_id"))
+        else:
+            key = (filename, page_no)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(r)
+    return deduped
+
+
+def generate_snippet(
+    text: str, keywords: list[str], max_len: int = 150
+) -> str:
+    """Extract a context snippet around the first keyword match.
+
+    Filters out noise lines (IP addresses, page numbers, single letters,
+    OCR artifacts) and returns a clean snippet centered on the keyword.
+    """
+    if not text:
+        return ""
+
+    # Clean OCR/PPT noise symbols from the full text first
+    _OCR_SYMBOLS = re.compile(r"[◆◇■►●○▪▫▶▷★☆▼▽▲△◼➢➣➤➔➧]")
+    _YEAR_CHAPTER = re.compile(r"\b\d{4}\s+(?:Chapter|Spring|Fall|Autumn|Summer)\d*\b", re.IGNORECASE)
+    _BRACKET_REF = re.compile(r"\[[A-Za-z]+\]")
+    cleaned_text = _OCR_SYMBOLS.sub("", text)
+    cleaned_text = _YEAR_CHAPTER.sub("", cleaned_text)
+    cleaned_text = _BRACKET_REF.sub("", cleaned_text)
+
+    lines = [l.strip() for l in cleaned_text.split("\n") if l.strip()]
+    # Filter noise lines: pure numbers/dots, page refs, single-letter patterns
+    _NOISE_LINE = re.compile(
+        r"^[\d\s\.\-:]+$"  # pure numbers/dots (IP, page numbers)
+        r"|^[A-Z]\s+[A-Z]\s"  # diagram labels like "A YX B Z"
+        r"|^第\d+页"
+        r"|^P\d+"
+        r"|^\d{4}\s*$"  # standalone year
+    )
+    clean_lines = [
+        l for l in lines if not _NOISE_LINE.match(l) and len(l) >= 3
+    ]
+    if not clean_lines:
+        return cleaned_text[:max_len]
+
+    # Find the first line containing a keyword
+    kw_lower = [k.lower() for k in keywords]
+    match_idx = 0
+    for i, line in enumerate(clean_lines):
+        line_lower = line.lower()
+        if any(kw in line_lower for kw in kw_lower):
+            match_idx = i
+            break
+
+    # Take 1 line before and 2 lines after the match for context
+    start = max(0, match_idx - 1)
+    end = min(len(clean_lines), match_idx + 3)
+    snippet = " ".join(clean_lines[start:end])
+    # Normalize whitespace
+    snippet = re.sub(r"\s+", " ", snippet).strip()
+    if len(snippet) > max_len:
+        # Center on the first keyword
+        kw_pos = -1
+        snippet_lower = snippet.lower()
+        for kw in kw_lower:
+            pos = snippet_lower.find(kw)
+            if pos >= 0:
+                kw_pos = pos
+                break
+        if kw_pos >= 0:
+            half = max_len // 2
+            start_pos = max(0, kw_pos - half)
+            snippet = snippet[start_pos:start_pos + max_len]
+        else:
+            snippet = snippet[:max_len]
+    return snippet.strip()
 
 
 def vector_search(
