@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Network } from 'vis-network'
+import { DataSet } from 'vis-data'
 import {
   rebuildGraph,
   getGraph,
@@ -64,93 +66,172 @@ const statusLabels: Record<string, string> = {
   rejected: '已拒绝',
 }
 
-// Course options from the API (all courses, not just those with graph nodes)
 const courseOptions = computed(() => allCourses.value)
-
-const filteredNodes = computed(() => {
-  if (!filterCourseId.value) return nodes.value
-  const cid = Number(filterCourseId.value)
-  return nodes.value.filter((n) => n.course_id === cid)
-})
-
-const filteredEdges = computed(() => {
-  const nodeIds = new Set(filteredNodes.value.map((n) => n.id))
-  return edges.value.filter(
-    (e) =>
-      nodeIds.has(e.source_node_id) &&
-      nodeIds.has(e.target_node_id) &&
-      (!filterRelationType.value ||
-        e.relation_type === filterRelationType.value) &&
-      (!filterStatus.value || e.status === filterStatus.value),
-  )
-})
-
-// Group nodes by course for radial cluster layout
-const courseGroups = computed(() => {
-  const groups = new Map<number, GraphNode[]>()
-  for (const n of filteredNodes.value) {
-    if (!groups.has(n.course_id)) groups.set(n.course_id, [])
-    groups.get(n.course_id)!.push(n)
-  }
-  return groups
-})
-
-// Radial layout: each course is a cluster, clusters arranged in a circle
-const layoutPositions = computed(() => {
-  const positions = new Map<number, { x: number; y: number }>()
-  const groups = Array.from(courseGroups.value.entries())
-  const centerX = 400
-  const centerY = 350
-  const clusterRadius = groups.length > 1 ? 200 : 0
-
-  groups.forEach(([, groupNodes], gi) => {
-    const angle =
-      groups.length > 1 ? (gi / groups.length) * 2 * Math.PI : 0
-    const cx = centerX + clusterRadius * Math.cos(angle)
-    const cy = centerY + clusterRadius * Math.sin(angle)
-    groupNodes.forEach((node, ni) => {
-      const nodeAngle =
-        groupNodes.length > 1 ? (ni / groupNodes.length) * 2 * Math.PI : 0
-      const r = groupNodes.length > 1 ? 80 : 0
-      positions.set(node.id, {
-        x: cx + r * Math.cos(nodeAngle),
-        y: cy + r * Math.sin(nodeAngle),
-      })
-    })
-  })
-  return positions
-})
 
 const courseColors = computed(() => {
   const colors = [
-    '#409EFF',
-    '#67C23A',
-    '#E6A23C',
-    '#F56C6C',
-    '#9C27B0',
-    '#00BCD4',
+    '#5B8FF9', '#5AD8A6', '#5D7092', '#F6BD16',
+    '#E8684A', '#6DC8EC', '#9270CA', '#FF9D4D',
   ]
   const m = new Map<number, string>()
-  Array.from(courseGroups.value.keys()).forEach((cid, i) => {
+  const courseIds = new Set(nodes.value.map(n => n.course_id))
+  Array.from(courseIds).forEach((cid, i) => {
     m.set(cid, colors[i % colors.length])
   })
   return m
 })
 
-function nodeColor(node: GraphNode): string {
-  return courseColors.value.get(node.course_id) || '#909399'
+// --- vis-network instance ---
+const graphContainer = ref<HTMLElement | null>(null)
+let network: Network | null = null
+const nodesDataSet = new DataSet<any>([])
+const edgesDataSet = new DataSet<any>([])
+
+function buildVisData() {
+  const visNodes = nodes.value.map(n => {
+    const color = courseColors.value.get(n.course_id) || '#909399'
+    const isWeak = n.weak_point_score > 0
+    const size = 18 + Math.max(0, (n.importance || 3) - 3) * 4 + (isWeak ? 6 : 0)
+    return {
+      id: n.id,
+      label: cleanNodeLabel(n.title),
+      title: `${n.title}\n课程: ${allCourses.value.find(c => c.id === n.course_id)?.name || '#' + n.course_id}\n重要度: ${n.importance}${isWeak ? '\n⚠ 薄弱点' : ''}`,
+      shape: 'dot',
+      size: size,
+      color: {
+        background: color,
+        border: isWeak ? '#F56C6C' : color,
+        highlight: { background: color, border: '#303133' },
+        hover: { background: color, border: '#303133' },
+      },
+      font: {
+        size: 13,
+        color: '#303133',
+        face: 'system-ui, -apple-system, sans-serif',
+        multi: 'html',
+      },
+      _data: n,
+    }
+  })
+
+  const visEdges = edges.value.map(e => ({
+    id: e.id,
+    from: e.source_node_id,
+    to: e.target_node_id,
+    color: {
+      color: relationColors[e.relation_type] || '#C0C4CC',
+      highlight: relationColors[e.relation_type] || '#C0C4CC',
+      hover: relationColors[e.relation_type] || '#C0C4CC',
+    },
+    width: e.status === 'confirmed' ? 2.5 : 1.5,
+    dashes: e.status === 'candidate' ? [6, 4] : false,
+    label: relationLabels[e.relation_type] || '',
+    font: {
+      size: 10,
+      color: '#909399',
+      strokeWidth: 0,
+      align: 'middle',
+    },
+    smooth: { enabled: true, type: 'continuous', roundness: 0.3 },
+    _data: e,
+  }))
+
+  nodesDataSet.clear()
+  nodesDataSet.add(visNodes)
+  edgesDataSet.clear()
+  edgesDataSet.add(visEdges)
 }
 
-function edgeColor(edge: GraphEdge): string {
-  return relationColors[edge.relation_type] || '#C0C4CC'
+function initNetwork() {
+  if (!graphContainer.value) return
+
+  const options = {
+    physics: {
+      enabled: true,
+      solver: 'forceAtlas2Based',
+      forceAtlas2Based: {
+        gravitationalConstant: -60,
+        centralGravity: 0.01,
+        springLength: 120,
+        springConstant: 0.05,
+        damping: 0.4,
+        avoidOverlap: 0.5,
+      },
+      stabilization: {
+        enabled: true,
+        iterations: 200,
+        updateInterval: 25,
+      },
+      timestep: 0.35,
+    },
+    interaction: {
+      hover: true,
+      tooltipDelay: 200,
+      navigationButtons: true,
+      keyboard: true,
+      multiselect: false,
+      zoomView: true,
+      dragView: true,
+      dragNodes: true,
+    },
+    layout: {
+      improvedLayout: true,
+    },
+    nodes: {
+      borderWidth: 2,
+      shadow: {
+        enabled: true,
+        color: 'rgba(0,0,0,0.1)',
+        size: 6,
+        x: 2,
+        y: 4,
+      },
+      scaling: {
+        min: 10,
+        max: 35,
+      },
+    },
+    edges: {
+      smooth: {
+        enabled: true,
+        type: 'continuous',
+        roundness: 0.3,
+      },
+      selectionWidth: 3,
+    },
+  }
+
+  network = new Network(
+    graphContainer.value,
+    { nodes: nodesDataSet, edges: edgesDataSet },
+    options,
+  )
+
+  network.on('click', (params: any) => {
+    if (params.nodes.length > 0) {
+      const nodeId = params.nodes[0]
+      const node = nodes.value.find(n => n.id === nodeId)
+      if (node) handleNodeClick(node)
+    } else if (params.edges.length > 0) {
+      const edgeId = params.edges[0]
+      const edge = edges.value.find(e => e.id === edgeId)
+      if (edge) handleEdgeClick(edge)
+    } else {
+      selectedNode.value = null
+      selectedEdge.value = null
+    }
+  })
+
+  network.on('stabilizationIterationsDone', () => {
+    network?.setOptions({ physics: { enabled: false } })
+  })
 }
 
-function nodeRadius(node: GraphNode): number {
-  // weak points + high importance render larger
-  const base = 14
-  const weakBonus = node.weak_point_score > 0 ? 6 : 0
-  const impBonus = Math.max(0, (node.importance || 3) - 3) * 2
-  return base + weakBonus + impBonus
+function destroyNetwork() {
+  if (network) {
+    network.destroy()
+    network = null
+  }
 }
 
 async function fetchGraph() {
@@ -163,6 +244,14 @@ async function fetchGraph() {
     const { data } = await getGraph(params)
     nodes.value = data.nodes
     edges.value = data.edges
+    await nextTick()
+    buildVisData()
+    if (!network) {
+      initNetwork()
+    }
+    if (network) {
+      network.setOptions({ physics: { enabled: true } })
+    }
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取图谱失败'))
   } finally {
@@ -242,25 +331,22 @@ async function handleCompare() {
   }
 }
 
+function fitGraph() {
+  network?.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } })
+}
+
 function cleanNodeLabel(title: string): string {
   if (!title) return ''
-  // Remove noise symbols
   let result = title.replace(/[□☐◆■►●○▪▫▶▷◇★☆▼▽▲△]/g, '')
-  // Remove date patterns (with or without 年)
   result = result.replace(/\d{4}年(?:\d+月)?(?:春|秋|夏|冬)?/g, '')
   result = result.replace(/\b\d{4}\b/g, '')
-  // Remove page references and bibliographic tags
   result = result.replace(/第\d+页|P\d+|\[[A-Za-z]+\]/g, '')
-  // Remove chapter/section prefixes to show the concept name only
-  // e.g. "第五章 数据链路层" → "数据链路层", "第3章 处理机调度" → "处理机调度"
   result = result.replace(/^第[一二三四五六七八九十\d]+章\s*/g, '')
-  // Remove section number prefixes like "1.1.3 "
   result = result.replace(/^[\d.]+\s+/g, '')
-  // Collapse whitespace
   result = result.replace(/\s+/g, ' ').trim()
-  // If cleaning removed everything (e.g. label was just "第10章"), 
-  // return the original so the node still has a visible label
   if (!result) return title
+  // Truncate long labels for display
+  if (result.length > 12) return result.substring(0, 11) + '…'
   return result
 }
 
@@ -269,20 +355,28 @@ function nodeTitle(id: number): string {
   return n ? n.title : `#${id}`
 }
 
+watch([filterCourseId, filterRelationType, filterStatus], () => {
+  fetchGraph()
+})
+
 onMounted(async () => {
   try {
     const { data } = await listCourses({ page: 1, page_size: 100 })
     allCourses.value = data.items
   } catch {
-    // 静默失败，下拉框为空不影响图谱功能
+    // 静默失败
   }
-  fetchGraph()
+  await fetchGraph()
+})
+
+onBeforeUnmount(() => {
+  destroyNetwork()
 })
 </script>
 
 <template>
   <div class="kg-page">
-    <el-row :gutter="16" class="kg-row">
+    <el-row :gutter="12" class="kg-row">
       <!-- Left: filters -->
       <el-col :span="4" class="kg-side">
         <div class="side-card">
@@ -293,7 +387,6 @@ onMounted(async () => {
                 v-model="filterCourseId"
                 placeholder="全部课程"
                 clearable
-                @change="fetchGraph"
               >
                 <el-option
                   v-for="c in courseOptions"
@@ -308,7 +401,6 @@ onMounted(async () => {
                 v-model="filterRelationType"
                 placeholder="全部关系"
                 clearable
-                @change="fetchGraph"
               >
                 <el-option
                   v-for="(label, key) in relationLabels"
@@ -323,7 +415,6 @@ onMounted(async () => {
                 v-model="filterStatus"
                 placeholder="全部状态"
                 clearable
-                @change="fetchGraph"
               >
                 <el-option
                   v-for="(label, key) in statusLabels"
@@ -342,6 +433,10 @@ onMounted(async () => {
           >
             重建图谱
           </el-button>
+          <el-button class="fit-btn" size="small" @click="fitGraph">
+            适应视图
+          </el-button>
+
           <div class="legend">
             <div class="legend-title">课程图例</div>
             <div
@@ -367,78 +462,20 @@ onMounted(async () => {
         </div>
       </el-col>
 
-      <!-- Center: SVG graph -->
+      <!-- Center: interactive graph canvas -->
       <el-col :span="14" class="kg-center">
         <div class="graph-card" v-loading="loading">
-          <div v-if="!filteredNodes.length && !loading" class="empty-tip">
+          <div v-if="!nodes.length && !loading" class="empty-tip">
             暂无图谱数据，点击「重建图谱」生成
           </div>
-          <svg
-            v-else
-            viewBox="0 0 800 700"
-            xmlns="http://www.w3.org/2000/svg"
-            class="graph-svg"
-          >
-            <!-- Edges first (under nodes) -->
-            <g class="edges">
-              <line
-                v-for="edge in filteredEdges"
-                :key="edge.id"
-                :x1="layoutPositions.get(edge.source_node_id)?.x ?? 0"
-                :y1="layoutPositions.get(edge.source_node_id)?.y ?? 0"
-                :x2="layoutPositions.get(edge.target_node_id)?.x ?? 0"
-                :y2="layoutPositions.get(edge.target_node_id)?.y ?? 0"
-                :stroke="edgeColor(edge)"
-                :stroke-width="
-                  selectedEdge && selectedEdge.id === edge.id ? 4 : 2
-                "
-                :stroke-dasharray="
-                  edge.status === 'candidate' ? '6 4' : 'none'
-                "
-                :opacity="edge.status === 'rejected' ? 0.3 : 0.85"
-                class="edge-line"
-                @click="handleEdgeClick(edge)"
-              />
-            </g>
-            <!-- Nodes -->
-            <g class="nodes">
-              <g
-                v-for="node in filteredNodes"
-                :key="node.id"
-                :transform="`translate(${layoutPositions.get(node.id)?.x ?? 0}, ${layoutPositions.get(node.id)?.y ?? 0})`"
-                class="node-group"
-                @click="handleNodeClick(node)"
-              >
-                <circle
-                  :r="nodeRadius(node)"
-                  :fill="nodeColor(node)"
-                  :stroke="
-                    selectedNode && selectedNode.id === node.id
-                      ? '#000'
-                      : '#fff'
-                  "
-                  :stroke-width="
-                    selectedNode && selectedNode.id === node.id ? 3 : 2
-                  "
-                />
-                <text
-                  :y="nodeRadius(node) + 14"
-                  text-anchor="middle"
-                  class="node-label"
-                >
-                  {{ cleanNodeLabel(node.title) }}
-                </text>
-                <circle
-                  v-if="node.weak_point_score > 0"
-                  cx="10"
-                  cy="-10"
-                  r="4"
-                  fill="#F56C6C"
-                  class="weak-marker"
-                />
-              </g>
-            </g>
-          </svg>
+          <div
+            v-show="nodes.length > 0 || loading"
+            ref="graphContainer"
+            class="graph-canvas"
+          ></div>
+          <div v-if="nodes.length > 0" class="graph-stats">
+            {{ nodes.length }} 节点 · {{ edges.length }} 关系
+          </div>
         </div>
       </el-col>
 
@@ -449,42 +486,44 @@ onMounted(async () => {
             <div class="side-title">节点详情</div>
             <div class="detail-row">
               <span class="detail-label">标题</span>
-              <span class="detail-value">{{ selectedNode.title }}</span>
+              <span class="detail-value">{{ selectedNode?.title }}</span>
             </div>
             <div class="detail-row">
               <span class="detail-label">课程</span>
-              <span class="detail-value">#{{ selectedNode.course_id }}</span>
+              <span class="detail-value">{{
+                allCourses.find(c => c.id === selectedNode?.course_id)?.name || '#' + selectedNode?.course_id
+              }}</span>
             </div>
             <div class="detail-row">
               <span class="detail-label">重要度</span>
-              <span class="detail-value">{{ selectedNode.importance }}</span>
+              <span class="detail-value">{{ selectedNode?.importance }}</span>
             </div>
             <div class="detail-row">
               <span class="detail-label">薄弱点</span>
               <span class="detail-value">
-                {{ selectedNode.weak_point_score > 0 ? '是' : '否' }}
+                {{ (selectedNode?.weak_point_score ?? 0) > 0 ? '是' : '否' }}
               </span>
             </div>
-            <div v-if="selectedNode.summary" class="detail-block">
+            <div v-if="selectedNode?.summary" class="detail-block">
               <div class="detail-label">摘要</div>
-              <div class="detail-text">{{ selectedNode.summary }}</div>
+              <div class="detail-text">{{ selectedNode?.summary }}</div>
             </div>
-            <div v-if="selectedNode.related_edges.length" class="detail-block">
-              <div class="detail-label">关联关系 ({{ selectedNode.related_edges.length }})</div>
+            <div v-if="selectedNode?.related_edges?.length" class="detail-block">
+              <div class="detail-label">关联关系 ({{ selectedNode?.related_edges.length }})</div>
               <div
-                v-for="e in selectedNode.related_edges"
+                v-for="e in selectedNode?.related_edges"
                 :key="e.id"
                 class="related-edge"
                 @click="handleEdgeClick(e)"
               >
                 <span
                   class="related-tag"
-                  :style="{ background: edgeColor(e) }"
+                  :style="{ background: relationColors[e.relation_type] || '#C0C4CC' }"
                 >
                   {{ relationLabels[e.relation_type] || e.relation_type }}
                 </span>
                 <span class="related-target">
-                  ↔ {{ nodeTitle(e.source_node_id === selectedNode.id ? e.target_node_id : e.source_node_id) }}
+                  ↔ {{ nodeTitle(e.source_node_id === selectedNode?.id ? e.target_node_id : e.source_node_id) }}
                 </span>
                 <span class="related-status">[{{ statusLabels[e.status] || e.status }}]</span>
               </div>
@@ -496,38 +535,38 @@ onMounted(async () => {
             <div class="detail-row">
               <span class="detail-label">类型</span>
               <span class="detail-value">
-                {{ relationLabels[selectedEdge.relation_type] || selectedEdge.relation_type }}
+                {{ relationLabels[selectedEdge?.relation_type ?? ''] || selectedEdge?.relation_type }}
               </span>
             </div>
             <div class="detail-row">
               <span class="detail-label">置信度</span>
               <span class="detail-value">
-                {{ (selectedEdge.confidence * 100).toFixed(0) }}%
+                {{ ((selectedEdge?.confidence ?? 0) * 100).toFixed(0) }}%
               </span>
             </div>
             <div class="detail-row">
               <span class="detail-label">状态</span>
               <span class="detail-value">
-                {{ statusLabels[selectedEdge.status] || selectedEdge.status }}
+                {{ statusLabels[selectedEdge?.status ?? ''] || selectedEdge?.status }}
               </span>
             </div>
             <div class="detail-row">
               <span class="detail-label">源节点</span>
-              <span class="detail-value">{{ nodeTitle(selectedEdge.source_node_id) }}</span>
+              <span class="detail-value">{{ nodeTitle(selectedEdge?.source_node_id ?? 0) }}</span>
             </div>
             <div class="detail-row">
               <span class="detail-label">目标节点</span>
-              <span class="detail-value">{{ nodeTitle(selectedEdge.target_node_id) }}</span>
+              <span class="detail-value">{{ nodeTitle(selectedEdge?.target_node_id ?? 0) }}</span>
             </div>
-            <div v-if="selectedEdge.reason" class="detail-block">
+            <div v-if="selectedEdge?.reason" class="detail-block">
               <div class="detail-label">生成理由</div>
-              <div class="detail-text">{{ selectedEdge.reason }}</div>
+              <div class="detail-text">{{ selectedEdge?.reason }}</div>
             </div>
             <div class="detail-actions">
               <el-button
                 size="small"
                 type="success"
-                :disabled="selectedEdge.status === 'confirmed'"
+                :disabled="selectedEdge?.status === 'confirmed'"
                 @click="handleConfirm"
               >
                 确认
@@ -535,7 +574,7 @@ onMounted(async () => {
               <el-button
                 size="small"
                 type="danger"
-                :disabled="selectedEdge.status === 'rejected'"
+                :disabled="selectedEdge?.status === 'rejected'"
                 @click="handleReject"
               >
                 拒绝
@@ -548,7 +587,8 @@ onMounted(async () => {
 
           <div v-else class="empty-detail">
             <div class="empty-detail-text">
-              点击节点或边查看详情
+              点击节点或边查看详情<br />
+              <span class="empty-hint">滚轮缩放 · 拖拽平移 · 拖拽节点</span>
             </div>
           </div>
         </div>
@@ -728,7 +768,7 @@ onMounted(async () => {
 .graph-card,
 .detail-card {
   background: #fff;
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 16px;
   height: 100%;
   box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
@@ -743,6 +783,11 @@ onMounted(async () => {
 }
 
 .rebuild-btn {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.fit-btn {
   width: 100%;
   margin-top: 8px;
 }
@@ -784,44 +829,32 @@ onMounted(async () => {
   border-radius: 2px;
 }
 
-.graph-svg {
+/* --- Interactive graph canvas --- */
+.graph-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.graph-canvas {
   width: 100%;
   height: 100%;
-  background: #fafafa;
-  cursor: grab;
+  min-height: 500px;
+  background:
+    radial-gradient(circle at 1px 1px, rgba(64, 158, 255, 0.08) 1px, transparent 0);
+  background-size: 24px 24px;
+  border-radius: 6px;
 }
 
-.edge-line {
-  cursor: pointer;
-  transition: stroke-width 0.15s;
-}
-
-.edge-line:hover {
-  stroke-width: 4;
-}
-
-.node-group {
-  cursor: pointer;
-}
-
-.node-group circle {
-  transition: stroke-width 0.15s;
-}
-
-.node-group:hover circle {
-  stroke-width: 4;
-}
-
-.node-label {
+.graph-stats {
+  position: absolute;
+  bottom: 12px;
+  right: 16px;
   font-size: 12px;
-  fill: #303133;
+  color: #909399;
+  background: rgba(255, 255, 255, 0.85);
+  padding: 4px 10px;
+  border-radius: 4px;
   pointer-events: none;
-  user-select: none;
-}
-
-.weak-marker {
-  stroke: #fff;
-  stroke-width: 1;
 }
 
 .empty-tip {
@@ -916,6 +949,12 @@ onMounted(async () => {
   text-align: center;
   color: #909399;
   padding: 40px 0;
+  line-height: 2;
+}
+
+.empty-hint {
+  font-size: 12px;
+  color: #C0C4CC;
 }
 
 .compare-report {

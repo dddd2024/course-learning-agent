@@ -454,6 +454,60 @@ def test_keyword_search_includes_snippet(
         db.close()
 
 
+# T09: ASCII keyword word-boundary matching — "NAT" should not match "International"
+
+NAT_TEXT = (
+    "# NAT 网络地址翻译\n"
+    "NAT 完成私有地址和全局地址的转换。\n"
+    "NAT 存在的问题：违反了IP的体系结构。\n"
+    "# International Telecommunications Union\n"
+    "来源: International Telecommunications Union (ITU)\n"
+    "# DCF 分布协调功能\n"
+    "Distributed Coordination Function (CSMA/CA)\n"
+).encode("utf-8")
+
+
+def test_keyword_search_ascii_word_boundary(
+    client, tmp_path, monkeypatch
+) -> None:
+    """T09: ASCII keywords use word-boundary matching so 'NAT' does not
+    match substrings like 'International' or 'Coordination'.
+
+    The test material contains both genuine 'NAT' references and
+    incidental substring matches ('International', 'Coordination').
+    Only chunks containing 'NAT' as a standalone word should appear.
+    """
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
+    )
+
+    headers = auth_headers(client, username="alice")
+    course_id, _ = setup_course_with_material(
+        client, headers, content=NAT_TEXT
+    )
+
+    from app.api.deps import get_db
+    from app.main import app
+
+    db_generator = app.dependency_overrides[get_db]()
+    db: Session = next(db_generator)
+    try:
+        results = keyword_search(db, course_id, "NAT", top_k=12)
+        # Should find results (the NAT chunks exist)
+        assert len(results) >= 1
+        # None of the results should be about "International" or "Coordination"
+        for r in results:
+            text_lower = r["text"].lower()
+            # The result text must contain "nat" as a standalone word
+            import re
+            assert re.search(
+                r'\bnat\b', text_lower
+            ), f"Result text doesn't contain 'NAT' as a word: {r['text'][:80]}"
+    finally:
+        db.close()
+
+
 def test_generate_snippet_filters_noise() -> None:
     """T08: generate_snippet 过滤噪声行（IP地址、页码、单字母）。"""
     from app.retrieval.search import generate_snippet

@@ -90,6 +90,16 @@
             </div>
           </div>
 
+          <!-- Knowledge point focus banner -->
+          <div v-if="kpTitle" class="kp-focus-banner">
+            <div class="kp-focus-head">
+              <el-icon color="#409eff"><Aim /></el-icon>
+              <span class="kp-focus-title">当前学习知识点：{{ kpTitle }}</span>
+              <el-button text size="small" @click="kpTitle = ''; kpSummary = ''">关闭</el-button>
+            </div>
+            <div v-if="kpSummary" class="kp-focus-summary">{{ kpSummary }}</div>
+          </div>
+
           <!-- Document chunks -->
           <div class="doc-chunks" @mouseup="handleSelection">
             <div
@@ -218,7 +228,7 @@
 import { nextTick, onMounted, ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, ChatDotRound, InfoFilled, Loading, MagicStick } from '@element-plus/icons-vue'
+import { ArrowLeft, ChatDotRound, InfoFilled, Loading, MagicStick, Aim } from '@element-plus/icons-vue'
 import { listMaterials, getChunks, type Material, type Chunk } from '../api/material'
 import { listCourses, type Course } from '../api/course'
 import {
@@ -256,6 +266,10 @@ const conversationId = ref<number | null>(null)
 // Study guide state
 const studyGuide = ref('')
 const studyGuideLoading = ref(false)
+
+// Knowledge point focus (from outline navigation)
+const kpTitle = ref('')
+const kpSummary = ref('')
 
 // TOC + progress state
 const activeChunkIndex = ref(0)
@@ -488,6 +502,17 @@ onMounted(async () => {
       const queryAsk = route.query.ask
       if (queryAsk && typeof queryAsk === 'string') {
         inputQuestion.value = `请解释这段内容：\n"${queryAsk}"`
+        await askQuestion()
+      }
+
+      // Knowledge point focus from outline
+      const qKpTitle = route.query.kp_title
+      const qKpSummary = route.query.kp_summary
+      if (qKpTitle && typeof qKpTitle === 'string') {
+        kpTitle.value = qKpTitle
+        kpSummary.value = (qKpSummary as string) || ''
+        // Auto-ask AI to explain this knowledge point
+        inputQuestion.value = `请详细讲解知识点「${kpTitle.value}」${kpSummary.value ? `，参考摘要：${kpSummary.value}` : ''}`
         await askQuestion()
       }
     }
@@ -746,6 +771,39 @@ function goBack() {
   line-height: 1.8;
   color: #303133;
   min-height: 80px;
+}
+
+/* Knowledge point focus banner */
+.kp-focus-banner {
+  margin-bottom: 24px;
+  background: linear-gradient(135deg, #fdf6ec 0%, #fef0f0 100%);
+  border: 1px solid #f5dab1;
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+
+.kp-focus-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #e6a23c;
+}
+
+.kp-focus-head .el-button {
+  margin-left: auto;
+}
+
+.kp-focus-title {
+  flex: 1;
+}
+
+.kp-focus-summary {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #606266;
 }
 
 /* Document chunks */

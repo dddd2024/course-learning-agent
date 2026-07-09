@@ -287,6 +287,37 @@ def _extract_title_from_chunk(chunk_text: str, index: int) -> str:
     return f"知识点{index + 1}"
 
 
+def _truncate_to_concept(line: str) -> str:
+    """Truncate a sentence-style line to a concept name.
+
+    "快表 TLB 是页表的高速缓存..." → "快表 TLB"
+    "CSMA/CD协议：用于以太网的介质访问控制" → "CSMA/CD协议"
+    "数据链路层的主要功能，包括成帧..." → "数据链路层的主要功能"
+    """
+    # Split at copula verbs (是, 就是, 乃) — take subject
+    for sep in ["就是", "是", "乃"]:
+        if sep in line:
+            parts = line.split(sep, 1)
+            subject = parts[0].strip()
+            if len(subject) >= 2:
+                return subject[:30]
+    # Split at colon — take concept before colon
+    for sep in ["：", ":"]:
+        if sep in line:
+            parts = line.split(sep, 1)
+            concept = parts[0].strip()
+            if len(concept) >= 2:
+                return concept[:30]
+    # Split at comma — take first clause
+    for sep in ["，", ",", "。", "；"]:
+        if sep in line:
+            parts = line.split(sep, 1)
+            clause = parts[0].strip()
+            if len(clause) >= 2:
+                return clause[:30]
+    return line[:30]
+
+
 def _mock_outline(prompt: str = "") -> dict[str, Any]:
     """Generate knowledge points from the prompt's chunk content.
 
@@ -368,6 +399,11 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
         if not title:
             title = _extract_title_from_chunk(chunk_text, i)
 
+        # Truncate sentence-style titles to concept names
+        # e.g. "快表 TLB 是页表的高速缓存..." → "快表 TLB"
+        if len(title) > 15 or re.search(r".{2,}是.{2,}", title):
+            title = _truncate_to_concept(title)
+
         # Skip duplicate titles (use full title for dedup)
         if title in seen_titles:
             # Try extracting a different title from subsequent lines
@@ -404,9 +440,16 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
         text = chunks[0].strip()
         lines = [l.strip() for l in text.split("\n") if l.strip()]
         if len(lines) >= 2:
+            # Extract concept-style titles from the first two lines
+            t1 = _extract_title_from_chunk(lines[0], 0)
+            t2 = _extract_title_from_chunk(lines[1], 1)
+            if len(t1) > 15 or re.search(r".{2,}是.{2,}", t1):
+                t1 = _truncate_to_concept(t1)
+            if len(t2) > 15 or re.search(r".{2,}是.{2,}", t2):
+                t2 = _truncate_to_concept(t2)
             knowledge_points = [
                 {
-                    "title": _extract_title_from_chunk(lines[0], 0),
+                    "title": t1,
                     "summary": lines[0][:100],
                     "importance": 5,
                     "source_chunk_ids": [1],
@@ -414,7 +457,7 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
                     "review_action": "重读片段1的相关内容。",
                 },
                 {
-                    "title": _extract_title_from_chunk(lines[1], 1),
+                    "title": t2,
                     "summary": lines[1][:100],
                     "importance": 4,
                     "source_chunk_ids": [1],

@@ -146,6 +146,15 @@ def keyword_search(
     )
 
     results: list[dict] = []
+    # Pre-compile word-boundary patterns for ASCII keywords
+    # CJK keywords use substring matching (no word boundaries in Chinese)
+    ascii_kws = [kw for kw in keywords if re.match(r"^[a-z]{2,}$", kw)]
+    cjk_kws = [kw for kw in keywords if kw not in ascii_kws]
+    ascii_patterns = {
+        kw: re.compile(r"\b" + re.escape(kw) + r"\b", re.IGNORECASE)
+        for kw in ascii_kws
+    }
+
     for chunk, filename in rows:
         text = chunk.text or ""
         text_lower = text.lower()
@@ -154,13 +163,20 @@ def keyword_search(
 
         # --- Density-based scoring ---
         # Count how many distinct keywords match (coverage) and total hits.
+        # ASCII keywords use word-boundary matching; CJK uses substring.
         match_count = 0  # number of distinct keywords that matched
         raw_score = 0
         for kw in keywords:
-            kw_l = kw.lower()
-            title_hits = title_lower.count(kw_l)
-            fname_hits = filename_lower.count(kw_l)
-            text_hits = text_lower.count(kw_l)
+            if kw in ascii_patterns:
+                pat = ascii_patterns[kw]
+                title_hits = len(pat.findall(chunk.title or ""))
+                fname_hits = len(pat.findall(filename or ""))
+                text_hits = len(pat.findall(text))
+            else:
+                kw_l = kw.lower()
+                title_hits = title_lower.count(kw_l)
+                fname_hits = filename_lower.count(kw_l)
+                text_hits = text_lower.count(kw_l)
             total_hits = title_hits + fname_hits + text_hits
             if total_hits > 0:
                 match_count += 1
@@ -168,6 +184,18 @@ def keyword_search(
 
         if raw_score <= 0:
             continue
+
+        # Filter: if there are ASCII keywords, at least one must match
+        # as a whole word. This prevents "NAT" from matching "International".
+        if ascii_kws:
+            ascii_word_match = any(
+                ascii_patterns[kw].search(text)
+                or ascii_patterns[kw].search(chunk.title or "")
+                or ascii_patterns[kw].search(filename or "")
+                for kw in ascii_kws
+            )
+            if not ascii_word_match:
+                continue
 
         # Density: keyword hits per 100 characters of text.
         # A chunk with 5 hits in 200 chars is far more relevant than

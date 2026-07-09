@@ -206,6 +206,16 @@ function goToChat() {
   router.push(`/courses/${courseId.value}/learn`)
 }
 
+function goToLearnWithKp(kp: KnowledgePoint) {
+  router.push({
+    path: `/courses/${courseId.value}/learn`,
+    query: {
+      kp_title: kp.title,
+      kp_summary: kp.summary || '',
+    },
+  })
+}
+
 onMounted(async () => {
   await fetchCourse()
   if (course.value) {
@@ -288,10 +298,10 @@ onMounted(async () => {
         </div>
       </template>
       <div class="kp-list">
-        <div v-for="(kp, idx) in knowledgePoints" :key="idx" class="kp-card">
+        <div v-for="(kp, idx) in knowledgePoints" :key="idx" class="kp-card kp-card--clickable" @click="goToLearnWithKp(kp)">
           <div class="kp-head">
             <div class="kp-num">{{ idx + 1 }}</div>
-            <div class="kp-title">{{ kp.title }}</div>
+            <div class="kp-title kp-title--link">{{ kp.title }}</div>
             <div class="kp-importance">
               <el-rate
                 :model-value="normalizeImportance(kp.importance)"
@@ -582,6 +592,19 @@ onMounted(async () => {
 .kp-card:hover {
   border-color: #409eff;
   box-shadow: 0 2px 10px rgba(64, 158, 255, 0.08);
+}
+
+.kp-card--clickable {
+  cursor: pointer;
+}
+
+.kp-title--link {
+  color: #303133;
+  transition: color 0.2s;
+}
+
+.kp-card--clickable:hover .kp-title--link {
+  color: #409eff;
 }
 
 .kp-head {
