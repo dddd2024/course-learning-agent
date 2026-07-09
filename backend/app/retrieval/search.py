@@ -9,7 +9,7 @@ implementation without changing call sites.
 * :func:`keyword_search` — SQLite ``LIKE`` based keyword retrieval. It
   splits the query into keywords (whitespace tokens plus individual CJK
   characters), filters chunks whose ``keyword_text``/``text`` match any
-  keyword, scores by weighted occurrence count (title 3x, filename 2x,
+  keyword, scores by weighted occurrence count (title 2x, filename 2x,
   body 1x), and returns the top-K.
 * :func:`vector_search` — reserved for Task 11; raises
   ``NotImplementedError``.
@@ -107,7 +107,7 @@ def keyword_search(
     never surface in search results.
 
     Scoring applies title/filename weighting: a keyword hit in the
-    chunk title counts 3x, in the material filename 2x, and in the
+    chunk title counts 2x, in the material filename 2x, and in the
     body text 1x. This prioritises chunks whose heading or source
     filename directly matches the query.
 
@@ -180,7 +180,7 @@ def keyword_search(
             total_hits = title_hits + fname_hits + text_hits
             if total_hits > 0:
                 match_count += 1
-            raw_score += title_hits * 3 + fname_hits * 2 + text_hits
+            raw_score += title_hits * 2 + fname_hits * 2 + text_hits
 
         if raw_score <= 0:
             continue
@@ -212,20 +212,24 @@ def keyword_search(
         has_title_match = any(
             kw.lower() in title_lower for kw in keywords
         )
-        title_bonus = 0.15 if has_title_match else 0.0
+        title_bonus = 0.05 if has_title_match else 0.0
 
         # Final normalized score (0-1 range for the API).
         # density typically ranges 0.5-30 for relevant chunks.
-        # Coefficients are tuned so title_bonus (0.15) creates a
-        # clear separation between title-matching and body-only chunks,
-        # even for short texts where density is naturally high.
+        # Coefficients are tuned so title_bonus (0.05) lightly favours
+        # title-matching chunks without letting title-only chunks (e.g.
+        # PPT slide titles like "第10章") crowd out chunks with actual
+        # knowledge content.
         normalized_score = min(
             1.0, (density * 0.02) + (coverage_bonus * 0.2) + title_bonus
         )
 
-        # Minimum relevance threshold: chunk must either have density > 0.5
-        # (at least ~1 hit per 200 chars) or have a title match.
-        if density < 0.5 and not has_title_match:
+        # Minimum relevance threshold: chunk must have density > 0.5
+        # (at least ~1 hit per 200 chars). Title matches no longer exempt
+        # chunks from this requirement, so title-only chunks without body
+        # content (e.g. PPT slide titles like "第10章") are filtered out
+        # and do not crowd out chunks with actual knowledge content.
+        if density < 0.5:
             continue
 
         results.append(
@@ -242,7 +246,9 @@ def keyword_search(
 
     results.sort(key=lambda item: item["score"], reverse=True)
 
-    # Deduplicate: keep only the highest-scoring chunk per (material_id, page_no)
+    # Deduplicate: same (filename, page_no) keeps the highest-scoring
+    # chunk; page_no is None and cross-page near-duplicates are merged
+    # by text similarity (see _deduplicate_results).
     results = _deduplicate_results(results)
 
     # Generate snippets for each result
@@ -252,29 +258,116 @@ def keyword_search(
     return results[:top_k]
 
 
-def _deduplicate_results(results: list[dict]) -> list[dict]:
-    """Remove duplicate results from the same (filename, page_no).
+def _text_overlap_ratio(a: str, b: str) -> float:
+    """Calculate character-level overlap ratio between two strings.
 
-    When multiple chunks from the same page match, keep only the
-    highest-scoring one to avoid redundant results. Uses filename
-    instead of material_id so that the same PDF uploaded as different
-    material records is still deduplicated. When page_no is None
-    (non-PDF materials), each chunk is treated as unique.
+    Uses the Jaccard similarity of 2-gram (bigram) sets so that short
+    prefixes can be compared robustly without requiring exact equality.
+    Returns a value in ``[0.0, 1.0]`` where ``1.0`` means the two
+    strings share all their 2-grams.
     """
-    seen: set[tuple] = set()
+    if not a or not b:
+        return 0.0
+    a_grams = {a[i:i + 2] for i in range(len(a) - 1)}
+    b_grams = {b[i:i + 2] for i in range(len(b) - 1)}
+    if not a_grams or not b_grams:
+        return 0.0
+    return len(a_grams & b_grams) / len(a_grams | b_grams)
+
+
+def _deduplicate_results(results: list[dict]) -> list[dict]:
+    """Remove duplicate results.
+
+    Three dedup strategies are applied in order:
+
+    1. **Same (filename, page_no)** — at most one chunk per page is kept.
+       Because ``results`` is pre-sorted by score descending, the first
+       chunk on a page that survives the text checks wins. The page slot
+       is claimed only on survival so a page is not emptied just because
+       its top chunk was a cross-page duplicate (e.g. a repeated header).
+       Uses filename instead of material_id so that the same PDF uploaded
+       as different material records is still deduplicated.
+    2. **page_no is None (docx/txt/md)** — there is no page to key on,
+       so dedup by text similarity: if the first 100 characters of two
+       chunks overlap by >= 60%, treat them as duplicates and keep the
+       higher-scoring one. This replaces the old behaviour where every
+       ``page_no is None`` chunk was treated as unique (no dedup at all).
+    3. **Cross-page** — near-identical content repeated across different
+       pages (headers, chapter dividers, repeated slide text) is deduped
+       using an 80% text overlap threshold so only the highest-scoring
+       copy is kept.
+
+    Strategies 2 and 3 are scoped to the same ``filename``: the same
+    document uploaded under different material records is still
+    deduplicated, while genuinely different source files remain distinct
+    so filename weighting stays observable.
+    """
+    seen_keys: set[tuple] = set()
+    # (filename, text_prefix, score, chunk_id) for every chunk currently
+    # held in ``deduped``; used for the text-similarity strategies (2 & 3).
+    seen_texts: list[tuple[str, str, float, int]] = []
     deduped: list[dict] = []
+
     for r in results:
         page_no = r.get("page_no")
         filename = r.get("filename", "")
-        if page_no is None:
-            # Non-PDF chunks: treat each as unique
-            key = ("__none__", r.get("chunk_id"))
-        else:
-            key = (filename, page_no)
-        if key in seen:
+        text = r.get("text", "")
+        score = r.get("score", 0)
+        chunk_id = r.get("chunk_id")
+
+        # Strategy 1: Same (filename, page_no) — at most one kept chunk
+        # per page. The page slot is claimed only when a chunk actually
+        # survives the text-similarity checks below, so a page is not
+        # left empty just because its top chunk was a cross-page
+        # duplicate (e.g. a repeated header that also matches on page 2).
+        key = (filename, page_no) if page_no is not None else None
+        if key is not None and key in seen_keys:
             continue
-        seen.add(key)
+
+        # Strategy 2 & 3: text-similarity dedup, scoped to the same file
+        # (filename). This mirrors the original filename-based keying so
+        # that the same document uploaded under different material
+        # records is still deduplicated, while genuinely different source
+        # files (e.g. two .txt notes) remain distinct and filename
+        # weighting stays observable. Within a single file, page_no is
+        # None chunks overlap >= 60% (strategy 2) and cross-page chunks
+        # overlap >= 80% (strategy 3) are collapsed to the higher score.
+        text_prefix = text[:100].strip()
+        threshold = 0.6 if page_no is None else 0.8
+        action = "keep"  # one of: keep | replace | drop
+        for i, (ex_filename, ex_prefix, ex_score, ex_id) in enumerate(
+            seen_texts
+        ):
+            if ex_filename != filename:
+                continue
+            if not text_prefix or not ex_prefix:
+                continue
+            overlap = _text_overlap_ratio(text_prefix, ex_prefix)
+            if overlap >= threshold:
+                if score > ex_score:
+                    # Replace the existing representative with the
+                    # higher-scoring chunk (defensive: results is
+                    # pre-sorted desc, so this branch rarely triggers).
+                    action = "replace"
+                    seen_texts[i] = (filename, text_prefix, score, chunk_id)
+                    deduped = [
+                        d for d in deduped
+                        if d.get("chunk_id") != ex_id
+                    ]
+                else:
+                    action = "drop"
+                break
+
+        if action == "drop":
+            continue
+
+        # r is retained — either as a new entry or as a replacement.
+        if key is not None:
+            seen_keys.add(key)
+        if action == "keep":
+            seen_texts.append((filename, text_prefix, score, chunk_id))
         deduped.append(r)
+
     return deduped
 
 

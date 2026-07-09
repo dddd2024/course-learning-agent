@@ -95,9 +95,12 @@
             <div class="kp-focus-head">
               <el-icon color="#409eff"><Aim /></el-icon>
               <span class="kp-focus-title">当前学习知识点：{{ kpTitle }}</span>
-              <el-button text size="small" @click="kpTitle = ''; kpSummary = ''">关闭</el-button>
+              <el-button text size="small" @click="kpTitle = ''; kpSummary = ''; kpFilterActive = false; loadChunks()">关闭</el-button>
             </div>
             <div v-if="kpSummary" class="kp-focus-summary">{{ kpSummary }}</div>
+            <div v-if="kpFilterActive" class="kp-filter-note">
+              已筛选显示该知识点相关的 {{ chunks.length }} 个内容片段（共 {{ rawChunks.length }} 个）
+            </div>
           </div>
 
           <!-- Document chunks -->
@@ -270,6 +273,8 @@ const studyGuideLoading = ref(false)
 // Knowledge point focus (from outline navigation)
 const kpTitle = ref('')
 const kpSummary = ref('')
+const kpSourceChunkIds = ref<Set<number>>(new Set())
+const kpFilterActive = ref(false)
 
 // TOC + progress state
 const activeChunkIndex = ref(0)
@@ -483,6 +488,20 @@ onMounted(async () => {
     const { data } = await listMaterials(courseId.value)
     materials.value = data.items.filter((m: Material) => m.status === 'ready')
     if (materials.value.length > 0) {
+      // Parse knowledge point source chunk IDs for filtering BEFORE loadChunks
+      const qKpSourceChunkIds = route.query.kp_source_chunk_ids
+      if (qKpSourceChunkIds && typeof qKpSourceChunkIds === 'string') {
+        try {
+          const ids = JSON.parse(qKpSourceChunkIds) as number[]
+          if (Array.isArray(ids) && ids.length > 0) {
+            kpSourceChunkIds.value = new Set(ids)
+            kpFilterActive.value = true
+          }
+        } catch {
+          // ignore parse errors
+        }
+      }
+
       const queryMaterialId = route.query.material_id
         ? Number(route.query.material_id)
         : null
@@ -527,9 +546,39 @@ async function loadChunks() {
   chunks.value = []
   studyGuide.value = ''
   try {
-    const { data } = await getChunks(selectedMaterialId.value, { page: 1, page_size: 100 })
-    rawChunks.value = data.items
-    chunks.value = filterUsefulChunks(data.items)
+    if (kpFilterActive.value && kpSourceChunkIds.value.size > 0) {
+      // Knowledge point filter active: load chunks from ALL materials
+      // and filter by source chunk IDs, so the user sees content from
+      // whichever material(s) the knowledge point was derived from.
+      const allChunks: Chunk[] = []
+      let bestMaterialId = selectedMaterialId.value
+      let bestMatchCount = 0
+      for (const m of materials.value) {
+        try {
+          const { data } = await getChunks(m.id, { page: 1, page_size: 100 })
+          const matchCount = data.items.filter((c: Chunk) =>
+            kpSourceChunkIds.value.has(c.id),
+          ).length
+          if (matchCount > bestMatchCount) {
+            bestMatchCount = matchCount
+            bestMaterialId = m.id
+          }
+          allChunks.push(...data.items)
+        } catch {
+          // skip materials that fail to load
+        }
+      }
+      selectedMaterialId.value = bestMaterialId
+      rawChunks.value = allChunks
+      const filtered = filterUsefulChunks(allChunks).filter((c: Chunk) =>
+        kpSourceChunkIds.value.has(c.id),
+      )
+      chunks.value = filtered
+    } else {
+      const { data } = await getChunks(selectedMaterialId.value, { page: 1, page_size: 100 })
+      rawChunks.value = data.items
+      chunks.value = filterUsefulChunks(data.items)
+    }
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取资料内容失败'))
   } finally {
@@ -804,6 +853,12 @@ function goBack() {
   font-size: 13px;
   line-height: 1.6;
   color: #606266;
+}
+
+.kp-filter-note {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #67c23a;
 }
 
 /* Document chunks */

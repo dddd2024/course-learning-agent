@@ -207,11 +207,13 @@ function goToChat() {
 }
 
 function goToLearnWithKp(kp: KnowledgePoint) {
+  const sourceChunkIds = kp.source_chunk_ids || []
   router.push({
     path: `/courses/${courseId.value}/learn`,
     query: {
       kp_title: kp.title,
       kp_summary: kp.summary || '',
+      kp_source_chunk_ids: sourceChunkIds.length > 0 ? JSON.stringify(sourceChunkIds) : '',
     },
   })
 }
