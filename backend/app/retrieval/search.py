@@ -54,8 +54,8 @@ def _split_keywords(query: str) -> List[str]:
        the unsplit CJK string and never matches.
     3. **CJK 2-grams** — bigrams of non-stop CJK characters, so "协议"
        becomes a keyword instead of single chars "协"/"议" which match
-       too broadly. Single CJK chars that are not stopwords are also
-       kept as a fallback for short queries.
+       too broadly. Single CJK chars are only used when the query is too
+       short to form any bigram (e.g., a single-character query).
 
     All keywords are lowercased and de-duplicated (order-preserving).
     """
@@ -77,8 +77,13 @@ def _split_keywords(query: str) -> List[str]:
     for i in range(len(cjk_chars) - 1):
         gram = cjk_chars[i] + cjk_chars[i + 1]
         cjk_grams.append(gram)
-    # Also keep single non-stop CJK chars for short queries
-    cjk_grams.extend(cjk_chars)
+    # Only keep single non-stop CJK chars when no bigrams could be
+    # formed (i.e., the query is a single CJK character).  When bigrams
+    # exist, the individual chars produce too many false positives
+    # (e.g., searching "信道" would match "通信" via the single char
+    # "信", or "道路" via "道").
+    if not cjk_grams:
+        cjk_grams.extend(cjk_chars)
 
     seen: set[str] = set()
     keywords: List[str] = []
@@ -144,24 +149,62 @@ def keyword_search(
     for chunk, filename in rows:
         text = chunk.text or ""
         text_lower = text.lower()
-        # T07: 标题命中加权 3x，材料名命中加权 2x，正文命中 1x。
-        # 标题通常是对切块内容的最紧凑概括，命中关键词时相关性更高；
-        # 材料名（文件名）次之；正文按出现次数计 1x。
         title_lower = (chunk.title or "").lower()
         filename_lower = (filename or "").lower()
-        score = 0
+
+        # --- Density-based scoring ---
+        # Count how many distinct keywords match (coverage) and total hits.
+        match_count = 0  # number of distinct keywords that matched
+        raw_score = 0
         for kw in keywords:
             kw_l = kw.lower()
-            score += title_lower.count(kw_l) * 3
-            score += filename_lower.count(kw_l) * 2
-            score += text_lower.count(kw_l)
-        if score <= 0:
+            title_hits = title_lower.count(kw_l)
+            fname_hits = filename_lower.count(kw_l)
+            text_hits = text_lower.count(kw_l)
+            total_hits = title_hits + fname_hits + text_hits
+            if total_hits > 0:
+                match_count += 1
+            raw_score += title_hits * 3 + fname_hits * 2 + text_hits
+
+        if raw_score <= 0:
             continue
+
+        # Density: keyword hits per 100 characters of text.
+        # A chunk with 5 hits in 200 chars is far more relevant than
+        # 5 hits in 2000 chars (where "信道" may only appear tangentially).
+        text_len = max(len(text), 1)
+        density = raw_score / (text_len / 100)
+
+        # Coverage bonus: matching more distinct keywords means the chunk
+        # is broadly about the topic, not just mentioning it once.
+        coverage_bonus = match_count / max(len(keywords), 1)
+
+        # Title match bonus: a chunk whose title contains the keyword
+        # is more relevant than one where only the body matches.
+        has_title_match = any(
+            kw.lower() in title_lower for kw in keywords
+        )
+        title_bonus = 0.15 if has_title_match else 0.0
+
+        # Final normalized score (0-1 range for the API).
+        # density typically ranges 0.5-30 for relevant chunks.
+        # Coefficients are tuned so title_bonus (0.15) creates a
+        # clear separation between title-matching and body-only chunks,
+        # even for short texts where density is naturally high.
+        normalized_score = min(
+            1.0, (density * 0.02) + (coverage_bonus * 0.2) + title_bonus
+        )
+
+        # Minimum relevance threshold: chunk must either have density > 0.5
+        # (at least ~1 hit per 200 chars) or have a title match.
+        if density < 0.5 and not has_title_match:
+            continue
+
         results.append(
             {
                 "chunk_id": chunk.id,
                 "text": text,
-                "score": score,
+                "score": round(normalized_score, 4),
                 "page_no": chunk.page_no,
                 "material_id": chunk.material_id,
                 "filename": filename,

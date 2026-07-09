@@ -199,14 +199,24 @@ def _extract_title_from_chunk(chunk_text: str, index: int) -> str:
 
     Tries multiple strategies to find a good title:
     1. Lines matching chapter/section patterns (第X章, X.Y, §X, etc.)
+       — chapter/section prefixes are stripped to get the concept name
     2. Short lines (< 30 chars) that look like headings
     3. First non-trivial line
-    Skips lines that are course names, page numbers, or boilerplate.
+    Skips lines that are course names, page numbers, dates, or boilerplate.
     """
     SKIP_PATTERNS = [
         "计算机网络", "操作系统", "数据结构", "数据库",
-        "主要内容", "教学内容", "第", "页", "2025", "2026",
+        "主要内容", "教学内容", "网络空间安全学院",
+        "第", "页", "2024", "2025", "2026", "2027",
+        "Forouzan", "Tanenbaum", "版权说明",
+        # Figure/table/meta references from OCR extraction
+        "标题", "图5-", "图6-", "图7-", "图8-", "图9-",
+        "表5-", "表6-", "表7-", "表8-", "表9-",
     ]
+    # Lines starting with figure/table/meta markers
+    META_LINE_RE = re.compile(
+        r"^(标题\d|图\d|表\d|第\d+行|第\d+图)"
+    )
     SECTION_RE = re.compile(
         r"^(第[一二三四五六七八九十\d]+[章节]|"
         r"\d+[\.\-]\d+|"
@@ -214,13 +224,39 @@ def _extract_title_from_chunk(chunk_text: str, index: int) -> str:
         r"§\d+|"
         r"Chapter\s+\d+)"
     )
+    # Pattern to strip chapter/section prefix from a title
+    PREFIX_RE = re.compile(
+        r"^(第[一二三四五六七八九十\d]+[章节]\s*|"
+        r"\d+[\.\-]\d+(?:[\.\-]\d+)*\s*|"
+        r"[一二三四五六七八九十]+、\s*|"
+        r"§\d+\s*|"
+        r"Chapter\s+\d+\s*)"
+    )
+    # Lines that are pure noise (IP addresses, MAC addresses, etc.)
+    NOISE_LINE_RE = re.compile(r"^[\d\.\s:abcdefABCDEF-]+$")
+
+    def _clean_title_line(line: str) -> str:
+        """Strip prefix and noise from a title line."""
+        # Remove chapter/section prefix
+        cleaned = PREFIX_RE.sub("", line).strip()
+        # Remove leading year numbers
+        cleaned = re.sub(r"^\d{4}\s*", "", cleaned).strip()
+        return cleaned
 
     lines = [l.strip() for l in chunk_text.strip().split("\n") if l.strip()]
 
     # Strategy 1: Find lines matching section/chapter patterns
     for line in lines:
         if SECTION_RE.match(line) and len(line) < 60:
-            return line[:60]
+            # Skip lines containing dates or meta info
+            if any(s in line for s in SKIP_PATTERNS):
+                continue
+            if META_LINE_RE.match(line):
+                continue
+            # Strip the prefix to get the concept name
+            cleaned = _clean_title_line(line)
+            if cleaned and len(cleaned) >= 2:
+                return cleaned[:60]
 
     # Strategy 2: Find short lines that look like headings
     for line in lines:
@@ -228,11 +264,24 @@ def _extract_title_from_chunk(chunk_text: str, index: int) -> str:
             # Skip lines that are just numbers or symbols
             if re.match(r"^[\d\s\.\-]+$", line):
                 continue
+            if NOISE_LINE_RE.match(line):
+                continue
+            if META_LINE_RE.match(line):
+                continue
+            # Skip very short lines (< 4 chars) that are likely noise
+            if len(line) < 4:
+                continue
             return line[:60]
 
     # Strategy 3: First non-trivial line (skip course names and headers)
     for line in lines:
         if not any(line.startswith(s) for s in SKIP_PATTERNS):
+            if NOISE_LINE_RE.match(line):
+                continue
+            if META_LINE_RE.match(line):
+                continue
+            if len(line) < 4:
+                continue
             return line[:60]
 
     return f"知识点{index + 1}"
@@ -246,6 +295,22 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
     instead of just taking the first line which is often a repeated page
     header like "计算机网络".
     """
+    # Patterns for cleaning summary text
+    SUMMARY_NOISE = re.compile(
+        r"[□☐◆■►●○▪▫▶▷◇★☆▼▽▲△]"  # noise symbols
+        r"|\d{4}年(?:\d+月)?(?:春|秋|夏|冬)?"  # dates with 年
+        r"|\b\d{4}\b"  # standalone years
+        r"|第\d+页|P\d+"  # page refs
+        r"|\[Forouzan\]|\[Tanenbaum\]|\[谢\]"  # bib tags
+        r"|网络空间安全学院"  # institution
+    )
+
+    def _clean_summary(text: str) -> str:
+        cleaned = SUMMARY_NOISE.sub("", text)
+        cleaned = re.sub(r"\n+", " ", cleaned)
+        cleaned = re.sub(r"[ \t]+", " ", cleaned)
+        return cleaned.strip()
+
     # Extract chunk text from the prompt.
     chunk_pattern = re.compile(
         r"\[片段\d+\]\s*chunk_id=\d+[^\n]*\n(.+?)(?=\n\n|\Z)",
@@ -260,19 +325,44 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
     if not chunks:
         return {"knowledge_points": []}
 
+    # Broad titles to skip when using DB chunk titles
+    BROAD_DB_TITLES = {
+        "计算机网络", "操作系统", "数据结构", "数据库",
+        "数据链路层", "物理层", "网络层", "传输层", "应用层",
+    }
+    # Patterns for DB titles that are noise (figure/table references, etc.)
+    DB_META_RE = re.compile(
+        r"^(标题\d|图\d|表\d|第\d+行|第\d+图|R\d\s)"
+    )
+    DB_SKIP_KEYWORDS = {"2024", "2025", "2026", "2027", "Forouzan", "Tanenbaum"}
+
     seen_titles: set[str] = set()
     knowledge_points: list[dict[str, Any]] = []
 
-    for i, chunk_text in enumerate(chunks[:5]):
+    for i, chunk_text in enumerate(chunks[:10]):
         # Priority 1: use chunk title from DB if it's meaningful
         title = ""
         if i < len(chunk_titles):
             db_title = chunk_titles[i].strip()
-            # Only use DB title if it's not a course name or None
-            if db_title and db_title not in (
-                "计算机网络", "操作系统", "数据结构", "数据库"
-            ):
-                title = db_title
+            # Only use DB title if it's not a course name or broad concept
+            if db_title and db_title not in BROAD_DB_TITLES:
+                # Skip DB titles that are figure/table/meta references
+                if DB_META_RE.match(db_title):
+                    db_title = ""
+                # Skip DB titles containing year keywords
+                elif any(kw in db_title for kw in DB_SKIP_KEYWORDS):
+                    db_title = ""
+                # Skip DB titles that are just numbers/symbols
+                elif re.match(r"^[\d\s\.\-]+$", db_title):
+                    db_title = ""
+                if db_title:
+                    # Strip chapter/section prefix from DB title
+                    cleaned_db = re.sub(
+                        r"^(第[一二三四五六七八九十\d]+[章节]\s*|"
+                        r"\d+[\.\-]\d+(?:[\.\-]\d+)*\s*|"
+                        r"Chapter\s+\d+\s*)", "", db_title
+                    ).strip()
+                    title = cleaned_db if cleaned_db else db_title
 
         # Priority 2: extract a meaningful title from chunk text
         if not title:
@@ -296,7 +386,7 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
 
         seen_titles.add(title[:30])
 
-        summary = chunk_text.strip()[:100].replace("\n", " ")
+        summary = _clean_summary(chunk_text.strip()[:150])
 
         knowledge_points.append({
             "title": title,

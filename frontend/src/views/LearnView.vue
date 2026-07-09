@@ -269,6 +269,38 @@ const USELESS_PATTERNS = [
   /^\d{4}年\d*月?\s*$/,
   /^[主讲教师|教师][:：]/,
   /^第\d+章知识导图$/,
+  // Date + semester info on cover pages
+  /^\d{4}年(?:春|秋|夏|冬)\s*$/,
+  // Combined cover lines: "网络空间安全学院 2026年5月 计算机网络"
+  /^网络空间安全学院\s+\d{4}年/,
+  // Page-only references and bibliographic info
+  /^\[Forouzan\]/,
+  /^Forouzan\s/,
+  // "本章学习" / "本章小结" / "学习目标" section headers without content
+  /^(?:本章学习|本章小结|学习目标|教学目标)\s*$/,
+  // Pure page numbers
+  /^第?\d+页\s*$/,
+]
+
+// Lines that, if present, make the whole chunk likely a cover/header
+const NOISE_LINE_PATTERNS = [
+  /^\d{4}年(?:春|秋|夏|冬)/,           // "2026年春"
+  /^\d{4}年\d+月/,                       // "2026年5月"
+  /^网络空间安全学院/,
+  /^Forouzan/i,
+  /\[Forouzan\]/i,
+  /\[Tanenbaum\]/i,
+  /^第\d+页/,
+  /^[主讲教师|教师][:：]/,
+]
+
+// Inline noise patterns: removed from within lines (not just whole lines)
+// e.g. "42026年春" → "4", "5第36页[Tanenbaum]" → "5"
+const INLINE_NOISE_PATTERNS = [
+  /\d{4}年(?:\d+月)?(?:春|秋|夏|冬)?/g,   // dates: "2026年春", "2026年5月"
+  /\[Forouzan\]/gi,
+  /\[Tanenbaum\]/gi,
+  /\[谢\]/g,
 ]
 
 function isUsefulChunk(chunk: Chunk): boolean {
@@ -278,11 +310,48 @@ function isUsefulChunk(chunk: Chunk): boolean {
     if (pattern.test(text)) return false
   }
   if (chunk.title && chunk.title.trim() === text) return false
+
+  // Check if the chunk is mostly noise (cover page, header lines)
+  const lines = text.split('\n')
+  const noiseLines = lines.filter(line => {
+    const trimmed = line.trim()
+    return NOISE_LINE_PATTERNS.some(p => p.test(trimmed)) ||
+      // Also detect inline noise (dates embedded with page numbers etc.)
+      INLINE_NOISE_PATTERNS.some(p => {
+        const re = new RegExp(p.source, p.flags)
+        return re.test(trimmed) && trimmed.replace(re, '').trim().length < 3
+      })
+  })
+  // If more than half the lines are noise, filter it out
+  if (lines.length > 0 && noiseLines.length / lines.length > 0.5) {
+    return false
+  }
+
   return true
 }
 
+function cleanChunkText(text: string): string {
+  // Remove noise lines from within chunk text
+  const lines = text.split('\n')
+  const cleaned = lines.filter(line => {
+    const trimmed = line.trim()
+    if (!trimmed) return true // keep blank lines for formatting
+    return !NOISE_LINE_PATTERNS.some(p => p.test(trimmed))
+  })
+  // Apply inline noise removal (dates, bibliographic refs) within surviving lines
+  const deNoised = cleaned.map(line =>
+    INLINE_NOISE_PATTERNS.reduce((l, p) => l.replace(p, ''), line)
+  )
+  // Collapse multiple blank lines into one
+  const result = deNoised.join('\n').replace(/\n{3,}/g, '\n\n')
+  return result.trim()
+}
+
 function filterUsefulChunks(raw: Chunk[]): Chunk[] {
-  const filtered = raw.filter(isUsefulChunk)
+  const filtered = raw.filter(isUsefulChunk).map(c => ({
+    ...c,
+    text: cleanChunkText(c.text),
+  }))
   filteredCount.value = raw.length - filtered.length
   return filtered
 }

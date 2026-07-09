@@ -15,6 +15,7 @@ The agent:
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -36,6 +37,78 @@ _REQUIRED_FIELDS = (
     "exam_style",
     "review_action",
 )
+
+# --- Text cleaning for knowledge point titles and summaries ---
+
+# Meaningless symbols commonly found in PDF extracts
+_NOISE_SYMBOLS = re.compile(r"[□☐◆■►●○▪▫▶▷◇★☆▼▽▲△]")
+# Date patterns: "2026年春", "2026年5月", "2024年"
+_DATE_PATTERN = re.compile(r"\d{4}年(?:\d+月)?(?:春|秋|夏|冬)?")
+# Standalone year (e.g. "2026 " at start of title)
+_YEAR_ONLY = re.compile(r"\b\d{4}\b")
+# Page references: "第3页", "P15", "[Forouzan]"
+_PAGE_REF = re.compile(r"第\d+页|P\d+|\[[A-Za-z]+\]")
+# Chapter/section prefix: "第五章 ", "第3章 ", "5.1.3 "
+_CHAPTER_PREFIX = re.compile(r"^第[一二三四五六七八九十\d]+章\s*")
+_SECTION_PREFIX = re.compile(r"^[\d.]+\s+")
+# Institution/meta info
+_META_INFO = re.compile(r"网络空间安全学院|计算机(?:网络|操作系统|数据结构|数据库)")
+# Multiple whitespace
+_MULTI_WS = re.compile(r"[ \t]+")
+
+
+def _clean_text(text: str) -> str:
+    """Remove noise symbols, dates, page refs, chapter prefixes, and normalize whitespace."""
+    if not text:
+        return ""
+    result = _NOISE_SYMBOLS.sub("", text)
+    result = _DATE_PATTERN.sub("", result)
+    result = _PAGE_REF.sub("", result)
+    result = _META_INFO.sub("", result)
+    result = _MULTI_WS.sub(" ", result)
+    # Collapse multiple newlines into single space
+    result = re.sub(r"\n+", " ", result)
+    return result.strip()
+
+
+def _clean_title(title: str) -> str:
+    """Clean a knowledge point title: remove noise + chapter/year prefixes."""
+    if not title:
+        return ""
+    result = _clean_text(title)
+    # Remove standalone year numbers (e.g. "2026 Chapter3" → "Chapter3")
+    result = _YEAR_ONLY.sub("", result).strip()
+    # Remove chapter prefix (e.g. "第五章 数据链路层" → "数据链路层")
+    result = _CHAPTER_PREFIX.sub("", result).strip()
+    # Remove section number prefix (e.g. "5.1.3 成帧方法" → "成帧方法")
+    result = _SECTION_PREFIX.sub("", result).strip()
+    # Remove dedup suffix (e.g. "标题（4）" → "标题")
+    result = re.sub(r"（\d+）$", "", result).strip()
+    return result
+
+
+# Titles that are too broad (chapter-level, not specific concepts)
+_TOO_BROAD_TITLES = {
+    "数据链路层", "物理层", "网络层", "传输层", "应用层",
+    "计算机网络", "操作系统", "数据结构", "数据库",
+    "第五章", "第三章", "第四章", "第一章", "第二章",
+    "信道", "帧", "协议", "网络", "分组",
+    "Chapter3 Transport Layer", "Chapter1 Introduction",
+    "Date", "内容提要", "教学要求及内容",
+}
+
+# Patterns that indicate a title is noise (not a real knowledge point)
+_NOISE_TITLE_PATTERNS = [
+    re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"),  # IP address
+    re.compile(r"^[\d\.\s-]+$"),  # only numbers/dots/dashes
+    re.compile(r"^\d{4}\s"),  # starts with year
+    re.compile(r"^(标题\d|图\d|表\d|第\d+行)"),  # figure/table/meta refs
+    re.compile(r"^R\d\s"),  # router labels like "R3 R2"
+    re.compile(r"^[\d]+\s+更高层"),  # "13 更高层" style noise
+    # Pure-English multi-word titles (likely OCR noise, not real concepts)
+    # Short English abbreviations like "CSMA/CD" or "TCP/IP" still pass
+    re.compile(r"^[A-Za-z][A-Za-z\s/]{10,}$"),
+]
 
 
 def _format_chunks(chunks: list[dict]) -> str:
@@ -193,6 +266,22 @@ def generate(
 
     results: list[dict[str, Any]] = []
     for point in raw_points:
+        title = _clean_title(point.get("title", ""))
+        summary = _clean_text(point.get("summary", ""))
+
+        # Skip knowledge points with too-broad titles
+        if title in _TOO_BROAD_TITLES:
+            continue
+        # Skip empty titles after cleaning
+        if not title or len(title) < 2:
+            continue
+        # Skip titles that are just chapter numbers (e.g. "5.1", "3.2.1")
+        if re.match(r"^[\d.]+$", title):
+            continue
+        # Skip titles that match noise patterns (IP addresses, pure numbers, etc.)
+        if any(p.search(title) for p in _NOISE_TITLE_PATTERNS):
+            continue
+
         source_ids = _reconcile_chunk_ids(
             point.get("source_chunk_ids", []), valid_chunk_ids
         )
@@ -203,14 +292,14 @@ def generate(
             llm_importance = 3
         importance = calculate_importance(
             llm_importance,
-            point.get("title", ""),
+            title,
             source_ids,
             chunks,
         )
         results.append(
             {
-                "title": point.get("title", ""),
-                "summary": point.get("summary", ""),
+                "title": title,
+                "summary": summary,
                 "importance": importance,
                 "source_chunk_ids": source_ids,
                 "exam_style": point.get("exam_style", ""),

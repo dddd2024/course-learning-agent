@@ -242,6 +242,28 @@ async function handleCompare() {
   }
 }
 
+function cleanNodeLabel(title: string): string {
+  if (!title) return ''
+  // Remove noise symbols
+  let result = title.replace(/[□☐◆■►●○▪▫▶▷◇★☆▼▽▲△]/g, '')
+  // Remove date patterns (with or without 年)
+  result = result.replace(/\d{4}年(?:\d+月)?(?:春|秋|夏|冬)?/g, '')
+  result = result.replace(/\b\d{4}\b/g, '')
+  // Remove page references and bibliographic tags
+  result = result.replace(/第\d+页|P\d+|\[[A-Za-z]+\]/g, '')
+  // Remove chapter/section prefixes to show the concept name only
+  // e.g. "第五章 数据链路层" → "数据链路层", "第3章 处理机调度" → "处理机调度"
+  result = result.replace(/^第[一二三四五六七八九十\d]+章\s*/g, '')
+  // Remove section number prefixes like "1.1.3 "
+  result = result.replace(/^[\d.]+\s+/g, '')
+  // Collapse whitespace
+  result = result.replace(/\s+/g, ' ').trim()
+  // If cleaning removed everything (e.g. label was just "第10章"), 
+  // return the original so the node still has a visible label
+  if (!result) return title
+  return result
+}
+
 function nodeTitle(id: number): string {
   const n = nodes.value.find((x) => x.id === id)
   return n ? n.title : `#${id}`
@@ -404,7 +426,7 @@ onMounted(async () => {
                   text-anchor="middle"
                   class="node-label"
                 >
-                  {{ node.title }}
+                  {{ cleanNodeLabel(node.title) }}
                 </text>
                 <circle
                   v-if="node.weak_point_score > 0"
