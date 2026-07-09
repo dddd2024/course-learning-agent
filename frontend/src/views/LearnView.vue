@@ -203,7 +203,7 @@ async function loadChunks() {
   docLoading.value = true
   chunks.value = []
   try {
-    const { data } = await getChunks(selectedMaterialId.value, { page: 1, page_size: 200 })
+    const { data } = await getChunks(selectedMaterialId.value, { page: 1, page_size: 100 })
     chunks.value = data.items
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取资料内容失败'))
