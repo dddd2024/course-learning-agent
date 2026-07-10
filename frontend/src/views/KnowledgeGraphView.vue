@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Network } from 'vis-network'
-import { DataSet } from 'vis-data'
+import { ArrowDown, ArrowRight } from '@element-plus/icons-vue'
+import { Network, DataSet } from 'vis-network/standalone'
+import 'vis-network/styles/vis-network.css'
 import {
   rebuildGraph,
   getGraph,
@@ -25,6 +26,8 @@ const allCourses = ref<Course[]>([])
 
 const selectedNode = ref<NodeDetail | null>(null)
 const selectedEdge = ref<GraphEdge | null>(null)
+const detailDrawerVisible = ref(false)
+const legendCollapsed = ref(false)
 const compareDrawerVisible = ref(false)
 const compareReport = ref<CompareReport | null>(null)
 const compareLoading = ref(false)
@@ -84,6 +87,7 @@ const courseColors = computed(() => {
 // --- vis-network instance ---
 const graphContainer = ref<HTMLElement | null>(null)
 let network: Network | null = null
+let resizeObserver: ResizeObserver | null = null
 const nodesDataSet = new DataSet<any>([])
 const edgesDataSet = new DataSet<any>([])
 
@@ -219,15 +223,32 @@ function initNetwork() {
     } else {
       selectedNode.value = null
       selectedEdge.value = null
+      detailDrawerVisible.value = false
     }
   })
 
   network.on('stabilizationIterationsDone', () => {
     network?.setOptions({ physics: { enabled: false } })
+    network?.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } })
   })
+
+  // Observe container size changes so vis-network redraws when the layout
+  // changes (e.g. sidebar collapse) without a window resize event.
+  if (graphContainer.value) {
+    resizeObserver = new ResizeObserver(() => {
+      if (network && graphContainer.value) {
+        network.redraw()
+      }
+    })
+    resizeObserver.observe(graphContainer.value)
+  }
 }
 
 function destroyNetwork() {
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
   if (network) {
     network.destroy()
     network = null
@@ -247,10 +268,17 @@ async function fetchGraph() {
     await nextTick()
     buildVisData()
     if (!network) {
+      // Wait one animation frame to guarantee the browser has performed
+      // layout so the container has real, non-zero dimensions before
+      // vis-network measures it.  Without this the canvas can be
+      // created at 0×0 and nothing is rendered.
+      await new Promise(resolve => requestAnimationFrame(() => resolve(null)))
       initNetwork()
-    }
-    if (network) {
+    } else {
+      // Network already exists — re-enable physics and re-stabilize so
+      // the new data settles into a good layout, then fit the view.
       network.setOptions({ physics: { enabled: true } })
+      network.stabilize()
     }
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取图谱失败'))
@@ -285,6 +313,7 @@ async function handleRebuild() {
 
 async function handleNodeClick(node: GraphNode) {
   selectedEdge.value = null
+  detailDrawerVisible.value = true
   try {
     const { data } = await getNodeDetail(node.id)
     selectedNode.value = data
@@ -296,6 +325,7 @@ async function handleNodeClick(node: GraphNode) {
 function handleEdgeClick(edge: GraphEdge) {
   selectedNode.value = null
   selectedEdge.value = edge
+  detailDrawerVisible.value = true
 }
 
 async function handleConfirm() {
@@ -385,80 +415,98 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="kg-page">
-    <el-row :gutter="12" class="kg-row">
-      <!-- Left: filters -->
-      <el-col :span="4" class="kg-side">
-        <div class="side-card">
-          <div class="side-title">过滤</div>
-          <el-form label-position="top" size="small">
-            <el-form-item label="课程">
-              <el-select
-                v-model="filterCourseId"
-                placeholder="全部课程"
-                clearable
-              >
-                <el-option
-                  v-for="c in courseOptions"
-                  :key="c.id"
-                  :label="c.name"
-                  :value="String(c.id)"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="关系类型">
-              <el-select
-                v-model="filterRelationType"
-                placeholder="全部关系"
-                clearable
-              >
-                <el-option
-                  v-for="(label, key) in relationLabels"
-                  :key="key"
-                  :label="label"
-                  :value="key"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="状态">
-              <el-select
-                v-model="filterStatus"
-                placeholder="全部状态"
-                clearable
-              >
-                <el-option
-                  v-for="(label, key) in statusLabels"
-                  :key="key"
-                  :label="label"
-                  :value="key"
-                />
-              </el-select>
-            </el-form-item>
-          </el-form>
-          <el-button
-            type="primary"
-            :loading="loading"
-            class="rebuild-btn"
-            @click="handleRebuild"
-          >
-            重建图谱
-          </el-button>
-          <el-button class="fit-btn" size="small" @click="fitGraph">
-            适应视图
-          </el-button>
+    <!-- Top toolbar: compact filters + actions -->
+    <div class="kg-toolbar">
+      <div class="kg-filters">
+        <el-select
+          v-model="filterCourseId"
+          placeholder="全部课程"
+          clearable
+          size="small"
+          style="width: 150px"
+        >
+          <el-option
+            v-for="c in courseOptions"
+            :key="c.id"
+            :label="c.name"
+            :value="String(c.id)"
+          />
+        </el-select>
+        <el-select
+          v-model="filterRelationType"
+          placeholder="全部关系"
+          clearable
+          size="small"
+          style="width: 120px"
+        >
+          <el-option
+            v-for="(label, key) in relationLabels"
+            :key="key"
+            :label="label"
+            :value="key"
+          />
+        </el-select>
+        <el-select
+          v-model="filterStatus"
+          placeholder="全部状态"
+          clearable
+          size="small"
+          style="width: 120px"
+        >
+          <el-option
+            v-for="(label, key) in statusLabels"
+            :key="key"
+            :label="label"
+            :value="key"
+          />
+        </el-select>
+      </div>
+      <div class="kg-actions">
+        <span v-if="nodes.length > 0" class="kg-stats">{{ nodes.length }} 节点 · {{ edges.length }} 关系</span>
+        <el-button size="small" @click="fitGraph">适应视图</el-button>
+        <el-button
+          type="primary"
+          size="small"
+          :loading="loading"
+          @click="handleRebuild"
+        >
+          重建图谱
+        </el-button>
+      </div>
+    </div>
 
-          <div class="legend">
-            <div class="legend-title">课程图例</div>
+    <!-- Main graph canvas -->
+    <div class="kg-canvas-wrap" v-loading="loading">
+      <div
+        ref="graphContainer"
+        class="graph-canvas"
+      ></div>
+      <div v-if="!nodes.length && !loading" class="empty-tip-overlay">
+        <el-empty description="暂无图谱数据">
+          <el-button type="primary" @click="handleRebuild">重建图谱</el-button>
+        </el-empty>
+      </div>
+
+      <!-- Floating legend (collapsible) -->
+      <div v-if="nodes.length > 0" class="kg-legend" :class="{ 'kg-legend--collapsed': legendCollapsed }">
+        <div class="legend-header" @click="legendCollapsed = !legendCollapsed">
+          <span>图例</span>
+          <el-icon size="12"><ArrowDown v-if="!legendCollapsed" /><ArrowRight v-else /></el-icon>
+        </div>
+        <div v-show="!legendCollapsed" class="legend-body">
+          <div class="legend-section">
+            <div class="legend-subtitle">课程</div>
             <div
               v-for="[cid, color] in Array.from(courseColors.entries())"
               :key="cid"
               class="legend-item"
             >
               <span class="legend-dot" :style="{ background: color }" />
-              <span>{{
-                allCourses.find((c) => c.id === cid)?.name || `课程 #${cid}`
-              }}</span>
+              <span>{{ allCourses.find((c) => c.id === cid)?.name || `课程 #${cid}` }}</span>
             </div>
-            <div class="legend-title legend-title-second">关系图例</div>
+          </div>
+          <div class="legend-section">
+            <div class="legend-subtitle">关系</div>
             <div
               v-for="(color, key) in relationColors"
               :key="key"
@@ -469,141 +517,121 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
-      </el-col>
+      </div>
+    </div>
 
-      <!-- Center: interactive graph canvas -->
-      <el-col :span="14" class="kg-center">
-        <div class="graph-card" v-loading="loading">
+    <!-- Detail drawer -->
+    <el-drawer
+      v-model="detailDrawerVisible"
+      :title="selectedNode ? '节点详情' : '关系详情'"
+      size="360px"
+      direction="rtl"
+    >
+      <div v-if="selectedNode" class="detail-section">
+        <div class="detail-row">
+          <span class="detail-label">标题</span>
+          <span class="detail-value">{{ selectedNode?.title }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">课程</span>
+          <span class="detail-value">{{
+            allCourses.find(c => c.id === selectedNode?.course_id)?.name || '#' + selectedNode?.course_id
+          }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">重要度</span>
+          <span class="detail-value">{{ selectedNode?.importance }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">薄弱点</span>
+          <span class="detail-value">
+            {{ (selectedNode?.weak_point_score ?? 0) > 0 ? '是' : '否' }}
+          </span>
+        </div>
+        <div v-if="selectedNode?.summary" class="detail-block">
+          <div class="detail-label">摘要</div>
+          <div class="detail-text">{{ selectedNode?.summary }}</div>
+        </div>
+        <div v-if="selectedNode?.related_edges?.length" class="detail-block">
+          <div class="detail-label">关联关系 ({{ selectedNode?.related_edges.length }})</div>
           <div
-            ref="graphContainer"
-            class="graph-canvas"
-          ></div>
-          <div v-if="!nodes.length && !loading" class="empty-tip-overlay">
-            <el-empty description="暂无图谱数据">
-              <el-button type="primary" @click="handleRebuild">重建图谱</el-button>
-            </el-empty>
-          </div>
-          <div v-if="nodes.length > 0" class="graph-stats">
-            {{ nodes.length }} 节点 · {{ edges.length }} 关系
-          </div>
-        </div>
-      </el-col>
-
-      <!-- Right: detail panel -->
-      <el-col :span="6" class="kg-side">
-        <div class="side-card detail-card">
-          <div v-if="selectedNode" class="detail-section">
-            <div class="side-title">节点详情</div>
-            <div class="detail-row">
-              <span class="detail-label">标题</span>
-              <span class="detail-value">{{ selectedNode?.title }}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">课程</span>
-              <span class="detail-value">{{
-                allCourses.find(c => c.id === selectedNode?.course_id)?.name || '#' + selectedNode?.course_id
-              }}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">重要度</span>
-              <span class="detail-value">{{ selectedNode?.importance }}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">薄弱点</span>
-              <span class="detail-value">
-                {{ (selectedNode?.weak_point_score ?? 0) > 0 ? '是' : '否' }}
-              </span>
-            </div>
-            <div v-if="selectedNode?.summary" class="detail-block">
-              <div class="detail-label">摘要</div>
-              <div class="detail-text">{{ selectedNode?.summary }}</div>
-            </div>
-            <div v-if="selectedNode?.related_edges?.length" class="detail-block">
-              <div class="detail-label">关联关系 ({{ selectedNode?.related_edges.length }})</div>
-              <div
-                v-for="e in selectedNode?.related_edges"
-                :key="e.id"
-                class="related-edge"
-                @click="handleEdgeClick(e)"
-              >
-                <span
-                  class="related-tag"
-                  :style="{ background: relationColors[e.relation_type] || '#C0C4CC' }"
-                >
-                  {{ relationLabels[e.relation_type] || e.relation_type }}
-                </span>
-                <span class="related-target">
-                  ↔ {{ nodeTitle(e.source_node_id === selectedNode?.id ? e.target_node_id : e.source_node_id) }}
-                </span>
-                <span class="related-status">[{{ statusLabels[e.status] || e.status }}]</span>
-              </div>
-            </div>
-          </div>
-
-          <div v-else-if="selectedEdge" class="detail-section">
-            <div class="side-title">关系详情</div>
-            <div class="detail-row">
-              <span class="detail-label">类型</span>
-              <span class="detail-value">
-                {{ relationLabels[selectedEdge?.relation_type ?? ''] || selectedEdge?.relation_type }}
-              </span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">置信度</span>
-              <span class="detail-value">
-                {{ ((selectedEdge?.confidence ?? 0) * 100).toFixed(0) }}%
-              </span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">状态</span>
-              <span class="detail-value">
-                {{ statusLabels[selectedEdge?.status ?? ''] || selectedEdge?.status }}
-              </span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">源节点</span>
-              <span class="detail-value">{{ nodeTitle(selectedEdge?.source_node_id ?? 0) }}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">目标节点</span>
-              <span class="detail-value">{{ nodeTitle(selectedEdge?.target_node_id ?? 0) }}</span>
-            </div>
-            <div v-if="selectedEdge?.reason" class="detail-block">
-              <div class="detail-label">生成理由</div>
-              <div class="detail-text">{{ selectedEdge?.reason }}</div>
-            </div>
-            <div class="detail-actions">
-              <el-button
-                size="small"
-                type="success"
-                :disabled="selectedEdge?.status === 'confirmed'"
-                @click="handleConfirm"
-              >
-                确认
-              </el-button>
-              <el-button
-                size="small"
-                type="danger"
-                :disabled="selectedEdge?.status === 'rejected'"
-                @click="handleReject"
-              >
-                拒绝
-              </el-button>
-              <el-button size="small" type="primary" @click="handleCompare">
-                生成对比
-              </el-button>
-            </div>
-          </div>
-
-          <div v-else class="empty-detail">
-            <div class="empty-detail-text">
-              点击节点或边查看详情<br />
-              <span class="empty-hint">滚轮缩放 · 拖拽平移 · 拖拽节点</span>
-            </div>
+            v-for="e in selectedNode?.related_edges"
+            :key="e.id"
+            class="related-edge"
+            @click="handleEdgeClick(e)"
+          >
+            <span
+              class="related-tag"
+              :style="{ background: relationColors[e.relation_type] || '#C0C4CC' }"
+            >
+              {{ relationLabels[e.relation_type] || e.relation_type }}
+            </span>
+            <span class="related-target">
+              ↔ {{ nodeTitle(e.source_node_id === selectedNode?.id ? e.target_node_id : e.source_node_id) }}
+            </span>
+            <span class="related-status">[{{ statusLabels[e.status] || e.status }}]</span>
           </div>
         </div>
-      </el-col>
-    </el-row>
+      </div>
+
+      <div v-else-if="selectedEdge" class="detail-section">
+        <div class="detail-row">
+          <span class="detail-label">类型</span>
+          <span class="detail-value">
+            {{ relationLabels[selectedEdge?.relation_type ?? ''] || selectedEdge?.relation_type }}
+          </span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">置信度</span>
+          <span class="detail-value">
+            {{ ((selectedEdge?.confidence ?? 0) * 100).toFixed(0) }}%
+          </span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">状态</span>
+          <span class="detail-value">
+            {{ statusLabels[selectedEdge?.status ?? ''] || selectedEdge?.status }}
+          </span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">源节点</span>
+          <span class="detail-value">{{ nodeTitle(selectedEdge?.source_node_id ?? 0) }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">目标节点</span>
+          <span class="detail-value">{{ nodeTitle(selectedEdge?.target_node_id ?? 0) }}</span>
+        </div>
+        <div v-if="selectedEdge?.reason" class="detail-block">
+          <div class="detail-label">生成理由</div>
+          <div class="detail-text">{{ selectedEdge?.reason }}</div>
+        </div>
+        <div class="detail-actions">
+          <el-button
+            size="small"
+            type="success"
+            :disabled="selectedEdge?.status === 'confirmed'"
+            @click="handleConfirm"
+          >
+            确认
+          </el-button>
+          <el-button
+            size="small"
+            type="danger"
+            :disabled="selectedEdge?.status === 'rejected'"
+            @click="handleReject"
+          >
+            拒绝
+          </el-button>
+          <el-button size="small" type="primary" @click="handleCompare">
+            生成对比
+          </el-button>
+        </div>
+      </div>
+
+      <div v-else class="empty-detail-text">
+        点击节点或边查看详情
+      </div>
+    </el-drawer>
 
     <!-- Compare drawer -->
     <el-drawer
@@ -763,110 +791,134 @@ onBeforeUnmount(() => {
 <style scoped>
 .kg-page {
   height: calc(100vh - 100px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.kg-row {
-  height: 100%;
-}
-
-.kg-side,
-.kg-center {
-  height: 100%;
-}
-
-.side-card,
-.graph-card,
-.detail-card {
+/* --- Toolbar --- */
+.kg-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   background: #fff;
   border-radius: 8px;
-  padding: 16px;
-  height: 100%;
+  padding: 10px 16px;
   box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
-  overflow: auto;
+  flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
-.side-title {
-  font-size: 16px;
-  font-weight: 600;
-  margin-bottom: 12px;
-  color: #303133;
+.kg-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-.rebuild-btn {
+.kg-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.kg-stats {
+  font-size: 12px;
+  color: #909399;
+  white-space: nowrap;
+}
+
+/* --- Canvas wrapper --- */
+.kg-canvas-wrap {
+  flex: 1 1 0;
+  position: relative;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
+  overflow: hidden;
+  min-height: 300px;
+}
+
+.graph-canvas {
   width: 100%;
-  margin-top: 8px;
+  height: 100%;
+  background:
+    radial-gradient(circle at 1px 1px, rgba(64, 158, 255, 0.08) 1px, transparent 0);
+  background-size: 24px 24px;
+  border-radius: 8px;
 }
 
-.fit-btn {
-  width: 100%;
-  margin-top: 8px;
-}
-
-.legend {
-  margin-top: 16px;
+/* --- Floating legend --- */
+.kg-legend {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  padding: 8px 10px;
   font-size: 12px;
   color: #606266;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  max-width: 200px;
+  z-index: 10;
 }
 
-.legend-title {
+.legend-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   font-weight: 600;
-  margin: 8px 0 4px;
   color: #303133;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 4px;
 }
 
-.legend-title-second {
-  margin-top: 12px;
+.legend-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.legend-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.legend-subtitle {
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 2px;
 }
 
 .legend-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 2px 0;
 }
 
 .legend-dot {
   display: inline-block;
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .legend-line {
   display: inline-block;
-  width: 16px;
+  width: 14px;
   height: 3px;
   border-radius: 2px;
+  flex-shrink: 0;
 }
 
-/* --- Interactive graph canvas --- */
-.graph-card {
-  position: relative;
-  overflow: hidden;
-}
-
-.graph-canvas {
-  width: 100%;
-  height: 100%;
-  min-height: 500px;
-  background:
-    radial-gradient(circle at 1px 1px, rgba(64, 158, 255, 0.08) 1px, transparent 0);
-  background-size: 24px 24px;
-  border-radius: 6px;
-}
-
-.graph-stats {
-  position: absolute;
-  bottom: 12px;
-  right: 16px;
-  font-size: 12px;
-  color: #909399;
-  background: rgba(255, 255, 255, 0.85);
-  padding: 4px 10px;
-  border-radius: 4px;
-  pointer-events: none;
-}
-
+/* --- Empty overlay --- */
 .empty-tip-overlay {
   position: absolute;
   top: 0;
@@ -877,8 +929,13 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   background: rgba(255, 255, 255, 0.9);
-  border-radius: 6px;
-  z-index: 1;
+  border-radius: 8px;
+  z-index: 5;
+}
+
+/* --- Detail drawer content --- */
+.detail-section {
+  padding: 0 4px;
 }
 
 .detail-row {
@@ -953,16 +1010,6 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-.empty-detail {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  min-height: 200px;
-  color: #909399;
-  font-size: 14px;
-}
-
 .empty-detail-text {
   text-align: center;
   color: #909399;
@@ -970,11 +1017,7 @@ onBeforeUnmount(() => {
   line-height: 2;
 }
 
-.empty-hint {
-  font-size: 12px;
-  color: #C0C4CC;
-}
-
+/* --- Compare drawer --- */
 .compare-report {
   padding: 0 8px;
 }
@@ -1053,21 +1096,20 @@ onBeforeUnmount(() => {
   font-family: 'JetBrains Mono', monospace;
 }
 
-@media (max-width: 1024px) {
-  .kg-row .el-col {
-    max-width: 100%;
-    flex: 0 0 100%;
+@media (max-width: 768px) {
+  .kg-toolbar {
+    flex-direction: column;
+    align-items: stretch;
   }
-  .kg-side,
-  .kg-center {
-    height: auto;
+  .kg-filters {
+    justify-content: center;
   }
-  .kg-side {
-    margin-bottom: 12px;
+  .kg-actions {
+    justify-content: center;
   }
-  .graph-canvas {
-    height: 400px;
-    min-height: 400px;
+  .kg-legend {
+    max-width: 160px;
+    font-size: 11px;
   }
 }
 </style>

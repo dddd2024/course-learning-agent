@@ -189,7 +189,7 @@ onMounted(() => {
         当前处于 Mock 模式 — 尚未配置真实的大语言模型，AI 助手功能将返回模拟数据。
       </template>
       <template #default>
-        <el-link type="primary" :underline="false" @click="go('/profile')">
+        <el-link type="primary" underline="never" @click="go('/profile')">
           前往个人中心配置 LLM →
         </el-link>
       </template>
@@ -285,7 +285,7 @@ onMounted(() => {
           >
             <template #description>
               <span>今日暂无待办，</span>
-              <el-link type="primary" :underline="false" @click="go('/plans')">
+              <el-link type="primary" underline="never" @click="go('/plans')">
                 去计划页面创建学习计划吧
               </el-link>
             </template>
@@ -325,7 +325,7 @@ onMounted(() => {
           >
             <template #description>
               <span>暂无课程，</span>
-              <el-link type="primary" :underline="false" @click="go('/courses')">
+              <el-link type="primary" underline="never" @click="go('/courses')">
                 去添加你的第一门课程吧
               </el-link>
             </template>
@@ -375,7 +375,7 @@ onMounted(() => {
       >
         <template #description>
           <span>暂无 AI 助手活动记录，</span>
-          <el-link type="primary" :underline="false" @click="goQuickChat">
+          <el-link type="primary" underline="never" @click="goQuickChat">
             去与课程 AI 助手对话试试吧
           </el-link>
         </template>

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -176,7 +177,11 @@ def generate_quiz(
         ``explanation``, ``knowledge_point_id``).
     """
     if not knowledge_points:
-        return {"title": f"{course_name} 测验", "items": []}
+        return {
+            "title": f"{course_name} 测验 "
+            f"({datetime.now().strftime('%m-%d %H:%M')})",
+            "items": [],
+        }
 
     template = load_prompt("quiz_generate")
     prompt = template.format(
@@ -261,8 +266,19 @@ def generate_quiz(
         started_at=run_started_at,
     )
 
+    # Build a unique, descriptive title. Prefer the LLM-returned title
+    # (which summarises the knowledge-point topics); otherwise fall back
+    # to a course-name + timestamp title so repeated quizzes for the
+    # same course remain distinguishable.
+    timestamp = datetime.now().strftime("%m-%d %H:%M")
+    llm_title = output.get("title")
+    if isinstance(llm_title, str) and llm_title.strip():
+        title = f"{course_name} - {llm_title.strip()} ({timestamp})"
+    else:
+        title = f"{course_name} 测验 ({timestamp})"
+
     return {
-        "title": f"{course_name} 测验",
+        "title": title,
         "items": items,
     }
 

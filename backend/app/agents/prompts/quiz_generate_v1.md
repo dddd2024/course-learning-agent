@@ -20,6 +20,7 @@
 
 ```json
 {{
+  "title": "本次测验主题概述",
   "questions": [
     {{
       "question_type": "single_choice",
@@ -36,6 +37,7 @@
 ```
 
 ## 字段约束
+- `title`：本次测验的描述性标题，应概括所考查的知识点主题（如"树与图的遍历"），便于区分同一课程的不同测验。不要包含课程名称，不超过 20 个字。
 - `question_type`：`single_choice`/`multiple_choice`/`true_false`/`short_answer` 之一。
 - `difficulty`：1-5 整数。
 - `options`：选择题选项数组；简答题可为空数组。

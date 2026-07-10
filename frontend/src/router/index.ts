@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
-import MainLayout from '../layouts/MainLayout.vue'
 import { useAuthStore } from '../stores/auth'
 
 declare module 'vue-router' {
@@ -18,7 +17,7 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/',
-    component: MainLayout,
+    component: () => import('../layouts/MainLayout.vue'),
     redirect: '/dashboard',
     children: [
       {
