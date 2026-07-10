@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Search } from '@element-plus/icons-vue'
@@ -46,6 +46,12 @@ const auth = useAuthStore()
 
 const logs = ref<ErrorLog[]>([])
 const listLoading = ref(false)
+
+const query = reactive({
+  page: 1,
+  page_size: 20,
+})
+const total = ref(0)
 
 // Redo Task B: backend connection + load state so the empty table no
 // longer lies ("暂无异常日志") when the backend is actually down.
@@ -188,7 +194,7 @@ const presetMaterialId = computed(() => {
 })
 
 function buildListParams() {
-  const params: Record<string, unknown> = { page: 1, page_size: 50 }
+  const params: Record<string, unknown> = { page: query.page, page_size: query.page_size }
   if (filterCategory.value) params.category = filterCategory.value
   if (filterLevel.value) params.level = filterLevel.value
   if (filterStatus.value) params.status = filterStatus.value
@@ -349,6 +355,7 @@ async function fetchLogs() {
   try {
     const { data } = await listErrorLogs(buildListParams())
     logs.value = data.items
+    total.value = data.total
     backendConn.value = 'ok'
     // Task A1: /logs succeeded → endpoint is healthy and authed.
     logsEndpointStatus.value = 'ok'
@@ -572,6 +579,16 @@ function handleRowClick(row: ErrorLog) {
   openDetail(row)
 }
 
+function handlePageSizeChange() {
+  query.page = 1
+  fetchLogs()
+}
+
+function handleFilterChange() {
+  query.page = 1
+  fetchLogs()
+}
+
 // Logs-endpoint fix Task D1: sequential await so health and logs results
 // don't race and overwrite each other. Previously checkHealth() and
 // fetchLogs() ran concurrently; a slow health check could flip backendConn
@@ -605,7 +622,7 @@ onMounted(async () => {
           placeholder="分类"
           clearable
           style="width: 120px"
-          @change="fetchLogs"
+          @change="handleFilterChange"
         >
           <el-option
             v-for="opt in categoryOptions"
@@ -619,7 +636,7 @@ onMounted(async () => {
           placeholder="级别"
           clearable
           style="width: 120px"
-          @change="fetchLogs"
+          @change="handleFilterChange"
         >
           <el-option
             v-for="opt in levelOptions"
@@ -633,7 +650,7 @@ onMounted(async () => {
           placeholder="状态"
           clearable
           style="width: 120px"
-          @change="fetchLogs"
+          @change="handleFilterChange"
         >
           <el-option
             v-for="opt in statusOptions"
@@ -648,8 +665,8 @@ onMounted(async () => {
           clearable
           style="width: 200px"
           :prefix-icon="Search"
-          @clear="fetchLogs"
-          @keyup.enter="fetchLogs"
+          @clear="handleFilterChange"
+          @keyup.enter="handleFilterChange"
         />
         <el-button type="primary" :icon="Refresh" @click="handleRefresh">
           刷新
@@ -1041,6 +1058,16 @@ onMounted(async () => {
           </template>
         </el-table-column>
       </el-table>
+      <el-pagination
+        v-model:current-page="query.page"
+        v-model:page-size="query.page_size"
+        :total="total"
+        :page-sizes="[10, 20, 50, 100]"
+        layout="total, sizes, prev, pager, next"
+        class="pagination-bar"
+        @current-change="fetchLogs"
+        @size-change="handlePageSizeChange"
+      />
     </el-card>
 
     <el-drawer
@@ -1146,6 +1173,11 @@ onMounted(async () => {
 
 .section-card {
   margin-bottom: 16px;
+}
+
+.pagination-bar {
+  margin-top: 16px;
+  justify-content: flex-end;
 }
 
 .status-banner {

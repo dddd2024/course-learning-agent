@@ -12,6 +12,7 @@ import {
   Plus,
   Promotion,
   Search,
+  VideoPause,
 } from '@element-plus/icons-vue'
 import { getCourse, type Course } from '../api/course'
 import {
@@ -65,6 +66,9 @@ const filteredConversations = computed(() => {
 const messages = ref<ChatMessage[]>([])
 const inputText = ref('')
 const sending = ref(false)
+// AbortController for stopping an in-flight SSE stream. When non-null
+// a generation is running and the stop button is shown.
+const abortController = ref<AbortController | null>(null)
 
 const messageListRef = ref<HTMLElement | null>(null)
 // Scroll-to-bottom button visibility: shown when the user has scrolled
@@ -398,6 +402,17 @@ async function handleSend() {
   await runChat(question)
 }
 
+// Abort the in-flight SSE stream. The fetch inside sendMessageStream
+// will reject with an AbortError, which runChat's catch block handles
+// gracefully by keeping any partial content already received.
+function stopGeneration() {
+  if (abortController.value) {
+    abortController.value.abort()
+    abortController.value = null
+    sending.value = false
+  }
+}
+
 // Core SSE chat flow: push a pending agent bubble and stream the answer.
 // Shared by handleSend (new question) and handleRegenerate (re-ask the
 // previous question). Assumes a conversation is already selected.
@@ -413,6 +428,7 @@ async function runChat(question: string) {
       createdAt: new Date().toISOString(),
     }) - 1
   sending.value = true
+  abortController.value = new AbortController()
 
   // Phase 2 Task B: expand the status panel and reset step state.
   resetStreamState()
@@ -434,12 +450,25 @@ async function runChat(question: string) {
     let result: ChatResult | null = null
     let receivedAnyEvent = false
     try {
-      result = await sendMessageStream(payload, (evt) => {
-        receivedAnyEvent = true
-        handleStreamEvent(evt)
-      })
+      result = await sendMessageStream(
+        payload,
+        (evt) => {
+          receivedAnyEvent = true
+          handleStreamEvent(evt)
+        },
+        abortController.value.signal,
+      )
     } catch (streamErr) {
-      if (!receivedAnyEvent) {
+      if (streamErr instanceof Error && streamErr.name === 'AbortError') {
+        // User stopped generation, keep partial content
+        const msg = messages.value[pendingIndex]
+        if (msg) {
+          msg.pending = false
+          if (!msg.content || msg.content === '正在思考...') {
+            msg.content = '（已停止生成）'
+          }
+        }
+      } else if (!receivedAnyEvent) {
         // No events received → safe to retry via sync endpoint.
         const { data } = await sendMessage(payload)
         result = data
@@ -462,9 +491,21 @@ async function runChat(question: string) {
       ElMessage.error(streamError.value)
     }
   } catch (err) {
-    messages.value.splice(pendingIndex, 1)
-    ElMessage.error(parseApiError(err, '发送问题失败'))
+    if (err instanceof Error && err.name === 'AbortError') {
+      // User stopped generation, keep partial content
+      const msg = messages.value[pendingIndex]
+      if (msg) {
+        msg.pending = false
+        if (!msg.content || msg.content === '正在思考...') {
+          msg.content = '（已停止生成）'
+        }
+      }
+    } else {
+      messages.value.splice(pendingIndex, 1)
+      ElMessage.error(parseApiError(err, '发送问题失败'))
+    }
   } finally {
+    abortController.value = null
     sending.value = false
     await nextTick()
     scrollToBottom()
@@ -764,6 +805,14 @@ onMounted(async () => {
           >
             发送
           </el-button>
+          <el-button
+            v-if="sending"
+            type="danger"
+            :icon="VideoPause"
+            @click="stopGeneration"
+          >
+            停止
+          </el-button>
         </div>
       </div>
     </div>
@@ -1000,5 +1049,26 @@ onMounted(async () => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* Responsive: on narrow screens the sidebar becomes an off-canvas
+   drawer that slides in from the left. The main chat area takes the
+   full width. */
+@media (max-width: 768px) {
+  .chat-sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 100vh;
+    z-index: 1001;
+    transform: translateX(-100%);
+    transition: transform 0.3s;
+  }
+  .chat-sidebar--open {
+    transform: translateX(0);
+  }
+  .chat-main {
+    width: 100%;
+  }
 }
 </style>

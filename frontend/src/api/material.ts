@@ -25,6 +25,8 @@ export interface MaterialListResult {
 export interface MaterialListParams {
   type?: string
   status?: MaterialStatus
+  page?: number
+  page_size?: number
 }
 
 export interface ParseResult {

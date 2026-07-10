@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { ElMessageBox } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
 import { Odometer, Reading, Tickets, Calendar, EditPen, Share, Document, Fold, Expand } from '@element-plus/icons-vue'
 import AppBreadcrumbs from '../components/common/AppBreadcrumbs.vue'
@@ -39,15 +40,41 @@ function handleMenuSelect(index: string) {
   router.push(index)
 }
 
-function handleLogout() {
+async function handleLogout() {
+  try {
+    await ElMessageBox.confirm('确定要退出登录吗？', '退出确认', {
+      type: 'warning',
+      confirmButtonText: '退出',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
   auth.clearToken()
   router.push('/login')
 }
+
+function handleResize() {
+  if (window.innerWidth <= 768 && !isCollapse.value) {
+    isCollapse.value = true
+  }
+}
+
+onMounted(() => {
+  if (window.innerWidth <= 768) {
+    isCollapse.value = true
+  }
+  window.addEventListener('resize', handleResize)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', handleResize)
+})
 </script>
 
 <template>
   <el-container class="layout-container">
-    <el-aside :width="isCollapse ? '64px' : '220px'" class="aside">
+    <el-aside :width="isCollapse ? '64px' : '220px'" class="aside" :class="{ 'aside--collapsed': isCollapse }">
       <div class="logo">{{ isCollapse ? '课' : '课程学习助手' }}</div>
       <el-menu
         :default-active="activeMenu"
@@ -193,5 +220,24 @@ function handleLogout() {
   background-color: #f0f2f5;
   padding: 20px;
   overflow-y: auto;
+}
+
+@media (max-width: 768px) {
+  .aside {
+    position: fixed;
+    z-index: 1001;
+    height: 100vh;
+    left: 0;
+    top: 0;
+  }
+  .aside--collapsed {
+    transform: translateX(-100%);
+  }
+  .main {
+    margin-left: 0;
+  }
+  .header-title {
+    font-size: 16px;
+  }
 }
 </style>

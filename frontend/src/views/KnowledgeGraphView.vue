@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Network } from 'vis-network'
 import { DataSet } from 'vis-data'
 import {
@@ -260,6 +260,15 @@ async function fetchGraph() {
 }
 
 async function handleRebuild() {
+  try {
+    await ElMessageBox.confirm(
+      '重建图谱将重新分析所有知识点关系，可能需要较长时间。确定继续吗？',
+      '重建确认',
+      { type: 'warning', confirmButtonText: '重建', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
   loading.value = true
   try {
     const { data } = await rebuildGraph()
@@ -1033,5 +1042,23 @@ onBeforeUnmount(() => {
 
 .citation-tag {
   font-family: 'JetBrains Mono', monospace;
+}
+
+@media (max-width: 1024px) {
+  .kg-row .el-col {
+    max-width: 100%;
+    flex: 0 0 100%;
+  }
+  .kg-side,
+  .kg-center {
+    height: auto;
+  }
+  .kg-side {
+    margin-bottom: 12px;
+  }
+  .graph-canvas {
+    height: 400px;
+    min-height: 400px;
+  }
 }
 </style>

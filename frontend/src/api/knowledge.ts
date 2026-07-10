@@ -29,6 +29,7 @@ export function generateKnowledgePoints(
 
 export function listKnowledgePoints(
   courseId: number,
+  params?: { page?: number; page_size?: number },
 ): AxiosPromise<KnowledgeListResult> {
-  return request.get(`/courses/${courseId}/knowledge-points`)
+  return request.get(`/courses/${courseId}/knowledge-points`, { params })
 }

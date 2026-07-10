@@ -219,21 +219,31 @@
 
         <!-- Input -->
         <div class="ai-input-area">
-          <el-input
-            v-model="inputQuestion"
-            type="textarea"
-            :rows="2"
-            placeholder="输入问题，回车发送"
-            @keydown.enter.exact.prevent="askQuestion"
-          />
-          <el-button
-            type="primary"
-            @click="askQuestion"
-            :loading="aiLoading"
-            :disabled="!inputQuestion.trim()"
-          >
-            发送
-          </el-button>
+          <div class="ai-toolbar">
+            <el-button text size="small" @click="clearAiConversation" :disabled="aiMessages.length === 0">
+              清空对话
+            </el-button>
+            <el-button v-if="aiLoading" text size="small" type="danger" @click="stopAiGeneration">
+              停止生成
+            </el-button>
+          </div>
+          <div class="ai-input-row">
+            <el-input
+              v-model="inputQuestion"
+              type="textarea"
+              :rows="2"
+              placeholder="输入问题，回车发送"
+              @keydown.enter.exact.prevent="askQuestion"
+            />
+            <el-button
+              type="primary"
+              @click="askQuestion"
+              :loading="aiLoading"
+              :disabled="!inputQuestion.trim()"
+            >
+              发送
+            </el-button>
+          </div>
         </div>
       </div>
     </div>
@@ -279,6 +289,7 @@ const aiMessages = ref<Array<{
   citations?: Citation[]
 }>>([])
 const aiLoading = ref(false)
+const abortController = ref<AbortController | null>(null)
 const messagesRef = ref<HTMLElement | null>(null)
 const conversationId = ref<number | null>(null)
 
@@ -633,16 +644,23 @@ async function askQuestion() {
   selectedText.value = ''
   aiLoading.value = true
 
+  abortController.value = new AbortController()
+
   await nextTick()
   scrollToBottom()
 
   try {
     const convId = await ensureConversation()
-    const { data } = await sendMessage({
-      course_id: courseId.value,
-      conversation_id: convId,
-      question,
-    })
+    // If the user stopped generation during conversation creation, bail out
+    if (!abortController.value) return
+    const { data } = await sendMessage(
+      {
+        course_id: courseId.value,
+        conversation_id: convId,
+        question,
+      },
+      { signal: abortController.value.signal },
+    )
     const result = data as ChatResult
     aiMessages.value.push({
       role: 'assistant',
@@ -650,15 +668,41 @@ async function askQuestion() {
       citations: result.citations,
     })
   } catch (err) {
-    aiMessages.value.push({
-      role: 'assistant',
-      content: `抱歉，回答生成失败：${parseApiError(err, '请稍后重试')}`,
-    })
+    // axios cancels via AbortController produce a CanceledError with
+    // name 'CanceledError' / code 'ERR_CANCELED'; native AbortController
+    // uses name 'AbortError'. Handle both silently.
+    const isAborted =
+      err instanceof Error &&
+      (err.name === 'AbortError' ||
+        err.name === 'CanceledError' ||
+        (err as { code?: string }).code === 'ERR_CANCELED')
+    if (isAborted) {
+      // Keep partial content if any — request was cancelled by the user
+    } else {
+      aiMessages.value.push({
+        role: 'assistant',
+        content: `抱歉，回答生成失败：${parseApiError(err, '请稍后重试')}`,
+      })
+    }
   } finally {
     aiLoading.value = false
+    abortController.value = null
     await nextTick()
     scrollToBottom()
   }
+}
+
+function stopAiGeneration() {
+  if (abortController.value) {
+    abortController.value.abort()
+    abortController.value = null
+    aiLoading.value = false
+  }
+}
+
+function clearAiConversation() {
+  aiMessages.value = []
+  conversationId.value = null
 }
 
 function scrollToBottom() {
@@ -1109,6 +1153,18 @@ function goBack() {
   padding: 12px 16px;
   border-top: 1px solid #ebeef5;
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.ai-input-row {
+  display: flex;
   gap: 8px;
   align-items: flex-end;
 }
@@ -1259,5 +1315,24 @@ function goBack() {
 
 .markdown-content :deep(img) {
   max-width: 100%;
+}
+
+/* Responsive: stack panels vertically on narrow screens */
+@media (max-width: 1024px) {
+  .learn-body {
+    flex-direction: column;
+  }
+  .doc-toc {
+    width: 100%;
+    max-height: 200px;
+    border-right: none;
+    border-bottom: 1px solid #ebeef5;
+  }
+  .ai-assistant {
+    width: 100%;
+    max-height: 300px;
+    border-left: none;
+    border-top: 1px solid #ebeef5;
+  }
 }
 </style>

@@ -1,5 +1,5 @@
 import request from './index'
-import type { AxiosPromise } from 'axios'
+import type { AxiosPromise, AxiosRequestConfig } from 'axios'
 
 export interface Conversation {
   id: number
@@ -127,8 +127,11 @@ export function deleteConversation(
   return request.delete(`/conversations/${conversationId}`)
 }
 
-export function sendMessage(payload: ChatPayload): AxiosPromise<ChatResult> {
-  return request.post('/chat', payload)
+export function sendMessage(
+  payload: ChatPayload,
+  config?: AxiosRequestConfig,
+): AxiosPromise<ChatResult> {
+  return request.post('/chat', payload, config)
 }
 
 export function getCitations(

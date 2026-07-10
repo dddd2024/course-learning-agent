@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listCourses, type Course } from '../api/course'
@@ -358,6 +358,36 @@ function goNext() {
   goToQuestion(currentIndex.value + 1)
 }
 
+/**
+ * Keyboard shortcuts during quiz answering:
+ * - true_false: Y/T = true, N/F = false
+ * - choice: number keys 1-9 select the corresponding option
+ * - Enter: submit the quiz (only when the current question is answered)
+ */
+function handleKeydown(e: KeyboardEvent) {
+  if (!quizInProgress.value || !currentQuestion.value) return
+
+  const q = currentQuestion.value
+  const key = e.key.toLowerCase()
+
+  if (q.question_type === 'true_false') {
+    if (key === 'y' || key === 't') {
+      answers.value[q.id] = 'true'
+    } else if (key === 'n' || key === 'f') {
+      answers.value[q.id] = 'false'
+    }
+  } else if (q.question_type === 'choice') {
+    const num = parseInt(e.key)
+    if (num >= 1 && num <= (q.options?.length || 0)) {
+      answers.value[q.id] = q.options[num - 1]
+    }
+  }
+
+  if (e.key === 'Enter' && answers.value[q.id]) {
+    handleSubmit()
+  }
+}
+
 // Guard route-level navigation (clicking another menu item, back button,
 // etc.) while a quiz is in progress. The guard is async-aware and
 // cancels the navigation when the user declines the prompt.
@@ -382,8 +412,19 @@ onMounted(() => {
   window.addEventListener('beforeunload', handleBeforeUnload)
 })
 
+// Attach the keyboard-shortcut listener only while a quiz is actively
+// being answered (not during result review or list browsing).
+watch(quizInProgress, (val) => {
+  if (val) {
+    window.addEventListener('keydown', handleKeydown)
+  } else {
+    window.removeEventListener('keydown', handleKeydown)
+  }
+})
+
 onUnmounted(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
+  window.removeEventListener('keydown', handleKeydown)
 })
 </script>
 
@@ -567,6 +608,15 @@ onUnmounted(() => {
             />
           </div>
         </el-card>
+
+        <div
+          v-if="currentQuestion && currentQuestion.question_type !== 'short_answer'"
+          class="keyboard-hint"
+        >
+          <el-text type="info" size="small">
+            键盘快捷键：数字键选择选项，Enter 提交答案
+          </el-text>
+        </div>
 
         <div class="quiz-actions">
           <el-button :disabled="currentIndex === 0" @click="goPrev">
@@ -1003,5 +1053,10 @@ onUnmounted(() => {
   gap: 12px;
   font-size: 13px;
   color: #909399;
+}
+
+.keyboard-hint {
+  text-align: center;
+  margin: 8px 0;
 }
 </style>

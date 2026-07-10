@@ -25,6 +25,7 @@ export interface Quiz {
 
 export interface QuizListResult {
   items: Quiz[]
+  total?: number
 }
 
 export interface QuizSubmitAnswer {
@@ -83,12 +84,21 @@ export function createQuiz(
   return request.post('/quizzes', payload)
 }
 
-export function getQuizzes(courseId?: number): AxiosPromise<QuizListResult> {
-  const params: Record<string, unknown> = {}
+export function getQuizzes(
+  courseId?: number,
+  params?: { page?: number; page_size?: number },
+): AxiosPromise<QuizListResult> {
+  const query: Record<string, unknown> = {}
   if (courseId !== undefined) {
-    params.course_id = courseId
+    query.course_id = courseId
   }
-  return request.get('/quizzes', { params })
+  if (params?.page !== undefined) {
+    query.page = params.page
+  }
+  if (params?.page_size !== undefined) {
+    query.page_size = params.page_size
+  }
+  return request.get('/quizzes', { params: query })
 }
 
 export function getQuiz(id: number): AxiosPromise<Quiz> {

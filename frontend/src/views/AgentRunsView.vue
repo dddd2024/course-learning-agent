@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   getAgentRuns,
@@ -13,6 +13,12 @@ import { parseApiError } from '../utils/error'
 
 const runs = ref<AgentRun[]>([])
 const listLoading = ref(false)
+
+const query = reactive({
+  page: 1,
+  page_size: 20,
+})
+const total = ref(0)
 
 const filterRunType = ref<string>('')
 const filterStatus = ref<string>('')
@@ -133,7 +139,10 @@ const sortedSteps = computed<AgentStep[]>(() => {
 })
 
 function buildListParams(): AgentRunListParams {
-  const params: AgentRunListParams = { limit: 50, offset: 0 }
+  const params: AgentRunListParams = {
+    limit: query.page_size,
+    offset: (query.page - 1) * query.page_size,
+  }
   if (filterRunType.value) params.run_type = filterRunType.value
   if (filterStatus.value) params.status = filterStatus.value
   return params
@@ -144,6 +153,7 @@ async function fetchRuns() {
   try {
     const { data } = await getAgentRuns(buildListParams())
     runs.value = data.items
+    total.value = data.total
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取运行列表失败'))
   } finally {
@@ -169,6 +179,16 @@ function handleRefresh() {
   fetchRuns()
 }
 
+function handlePageSizeChange() {
+  query.page = 1
+  fetchRuns()
+}
+
+function handleFilterChange() {
+  query.page = 1
+  fetchRuns()
+}
+
 function handleRowClick(row: AgentRun) {
   openDetail(row)
 }
@@ -188,7 +208,7 @@ onMounted(() => {
           placeholder="运行类型"
           clearable
           style="width: 160px"
-          @change="fetchRuns"
+          @change="handleFilterChange"
         >
           <el-option
             v-for="opt in runTypeOptions"
@@ -202,7 +222,7 @@ onMounted(() => {
           placeholder="状态"
           clearable
           style="width: 140px"
-          @change="fetchRuns"
+          @change="handleFilterChange"
         >
           <el-option
             v-for="opt in statusOptions"
@@ -272,6 +292,16 @@ onMounted(() => {
           </template>
         </el-table-column>
       </el-table>
+      <el-pagination
+        v-model:current-page="query.page"
+        v-model:page-size="query.page_size"
+        :total="total"
+        :page-sizes="[10, 20, 50, 100]"
+        layout="total, sizes, prev, pager, next"
+        class="pagination-bar"
+        @current-change="fetchRuns"
+        @size-change="handlePageSizeChange"
+      />
     </el-card>
 
     <el-drawer
@@ -468,6 +498,11 @@ onMounted(() => {
 
 .section-card {
   margin-bottom: 20px;
+}
+
+.pagination-bar {
+  margin-top: 16px;
+  justify-content: flex-end;
 }
 
 .drawer-body {

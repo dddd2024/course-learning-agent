@@ -8,7 +8,7 @@ const request = axios.create({
   // the browser hits the same host uvicorn binds to. `localhost` could
   // resolve to IPv6 ::1 on Windows and produce a false unreachable.
   baseURL: API_BASE_URL,
-  timeout: 15000,
+  timeout: 30000,
 })
 
 request.interceptors.request.use(
