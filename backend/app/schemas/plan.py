@@ -125,6 +125,18 @@ class TodoUpdate(BaseModel):
     actual_minutes: Optional[int] = Field(default=None, ge=0)
 
 
+class TaskUpdate(BaseModel):
+    """Payload for PATCH /plans/tasks/{task_id}. All fields optional."""
+
+    status: Optional[str] = None
+
+
+class GoalUpdate(BaseModel):
+    """Payload for PATCH /plans/{goal_id}. All fields optional."""
+
+    status: Optional[str] = None
+
+
 class TodoListResponse(BaseModel):
     """List of todos for the current user."""
 

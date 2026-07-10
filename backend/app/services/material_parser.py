@@ -32,7 +32,7 @@ from app.core.timezone import utc_now
 from app.models.material import Material
 from app.models.material_chunk import MaterialChunk
 from app.models.security_finding import MaterialSecurityFinding
-from app.retrieval.chunker import build_chunks, clean_keyword_text
+from app.retrieval.chunker import build_chunks, clean_keyword_text, _is_low_quality_chunk
 from app.retrieval.parsers import parse_file
 from app.services import security_scanner
 from app.services.error_logger import log_error
@@ -116,6 +116,8 @@ def parse_with_retry(
             saved_chunks: list[MaterialChunk] = []
             for chunk in chunks:
                 text = chunk["text"]
+                if _is_low_quality_chunk(text):
+                    continue  # Don't store low-quality chunks
                 mc = MaterialChunk(
                     material_id=material_id,
                     course_id=material.course_id,

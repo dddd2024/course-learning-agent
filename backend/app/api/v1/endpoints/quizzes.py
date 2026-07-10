@@ -351,6 +351,7 @@ def submit_quiz(
 
     score = 0
     result_items: list[QuizResultItemOut] = []
+    wrong_knowledge_point_ids: set[int] = set()
     for item in sorted(quiz.items, key=lambda i: i.order_index):
         user_answer = answer_map.get(item.id, "")
         is_correct = _grade_item(item, user_answer) if user_answer else False
@@ -359,14 +360,12 @@ def submit_quiz(
         if is_correct:
             score += 1
         else:
-            # Record a weak point for the item's knowledge point (if any).
+            # Record each knowledge point once per submitted quiz. A generated
+            # quiz may contain multiple questions for the same point; counting
+            # each duplicate made severity depend on generator composition
+            # instead of the learner's number of failed review attempts.
             if item.knowledge_point_id is not None:
-                _upsert_weak_point(
-                    db,
-                    user_id=current_user.id,
-                    course_id=quiz.course_id,
-                    knowledge_point_id=item.knowledge_point_id,
-                )
+                wrong_knowledge_point_ids.add(item.knowledge_point_id)
         result_items.append(
             QuizResultItemOut(
                 id=item.id,
@@ -379,6 +378,14 @@ def submit_quiz(
                 explanation=item.explanation,
                 knowledge_point_id=item.knowledge_point_id,
             )
+        )
+
+    for knowledge_point_id in wrong_knowledge_point_ids:
+        _upsert_weak_point(
+            db,
+            user_id=current_user.id,
+            course_id=quiz.course_id,
+            knowledge_point_id=knowledge_point_id,
         )
 
     quiz.score = score
@@ -420,9 +427,12 @@ def list_weak_points(
     """List the current user's weak points for a course."""
     _get_owned_course(db, course_id, current_user.id)
 
+    # Use an inner join (not outerjoin) so WeakPoint rows whose
+    # KnowledgePoint has been deleted (e.g. when points are regenerated)
+    # are filtered out instead of returning an empty title.
     rows = (
         db.query(WeakPoint, KnowledgePoint)
-        .outerjoin(
+        .join(
             KnowledgePoint,
             KnowledgePoint.id == WeakPoint.knowledge_point_id,
         )

@@ -187,6 +187,7 @@ select {
   }
 
   .actions,
+  .toolbar-actions,
   .header-actions,
   .filters,
   .filter-bar {
@@ -197,6 +198,19 @@ select {
 
   .search-input {
     width: 100% !important;
+  }
+
+  .toolbar-actions {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 8px !important;
+  }
+
+  .toolbar-actions .el-select,
+  .toolbar-actions .el-input,
+  .toolbar-actions .el-button {
+    width: 100% !important;
+    margin-left: 0 !important;
   }
 
   .el-dialog {

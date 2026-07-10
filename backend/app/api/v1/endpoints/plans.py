@@ -42,12 +42,14 @@ from app.schemas.multi_plan import (
 )
 from app.schemas.plan import (
     GoalResponse,
+    GoalUpdate,
     PlanCreate,
     PlanListResponse,
     PlanProgressResponse,
     PlanResponse,
     PlanSummaryResponse,
     TaskResponse,
+    TaskUpdate,
     TodoListResponse,
     TodoResponse,
     TodoUpdate,
@@ -357,6 +359,108 @@ def get_plan(
     if goal is None:
         raise NotFoundException(message="学习计划不存在")
     return _load_plan_response(db, goal, current_user.id)
+
+
+@router.patch("/tasks/{task_id}", response_model=TaskResponse)
+def update_task(
+    task_id: int,
+    payload: TaskUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TaskResponse:
+    """Update a study task's status (404 if not owned)."""
+    task = (
+        db.query(StudyTask)
+        .join(StudyGoal, StudyGoal.id == StudyTask.goal_id)
+        .filter(
+            StudyTask.id == task_id,
+            StudyGoal.user_id == current_user.id,
+        )
+        .first()
+    )
+    if task is None:
+        raise NotFoundException(message="任务不存在")
+
+    if payload.status is not None:
+        task.status = payload.status
+
+    db.commit()
+    db.refresh(task)
+
+    course = db.query(Course).filter(Course.id == task.course_id).first()
+    course_name = course.name if course else ""
+    return TaskResponse(
+        id=task.id,
+        goal_id=task.goal_id,
+        course_id=task.course_id,
+        course_name=course_name,
+        title=task.title,
+        task_type=task.task_type,
+        estimate_minutes=task.estimate_minutes,
+        priority=task.priority,
+        acceptance=task.acceptance,
+        status=task.status,
+    )
+
+
+@router.patch("/{goal_id}", response_model=GoalResponse)
+def update_goal(
+    goal_id: int,
+    payload: GoalUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GoalResponse:
+    """Update a study goal's status (404 if not owned)."""
+    goal = (
+        db.query(StudyGoal)
+        .filter(
+            StudyGoal.id == goal_id,
+            StudyGoal.user_id == current_user.id,
+        )
+        .first()
+    )
+    if goal is None:
+        raise NotFoundException(message="学习计划不存在")
+
+    if payload.status is not None:
+        goal.status = payload.status
+
+    db.commit()
+    db.refresh(goal)
+    return GoalResponse(
+        id=goal.id,
+        title=goal.title,
+        deadline=goal.deadline,
+        daily_minutes=goal.daily_minutes,
+        status=goal.status,
+    )
+
+
+@router.delete("/{goal_id}", status_code=204)
+def delete_goal(
+    goal_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete a study goal and all its tasks and todos."""
+    goal = (
+        db.query(StudyGoal)
+        .filter(
+            StudyGoal.id == goal_id,
+            StudyGoal.user_id == current_user.id,
+        )
+        .first()
+    )
+    if goal is None:
+        raise NotFoundException(message="学习计划不存在")
+
+    # Delete associated todos and tasks first
+    task_ids = [t.id for t in db.query(StudyTask).filter(StudyTask.goal_id == goal_id).all()]
+    if task_ids:
+        db.query(Todo).filter(Todo.task_id.in_(task_ids)).delete(synchronize_session=False)
+        db.query(StudyTask).filter(StudyTask.goal_id == goal_id).delete(synchronize_session=False)
+    db.query(StudyGoal).filter(StudyGoal.id == goal_id).delete(synchronize_session=False)
+    db.commit()
 
 
 @router.post("", response_model=PlanResponse)

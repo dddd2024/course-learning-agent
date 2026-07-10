@@ -87,10 +87,18 @@ export function compareNodes(
   edgeId?: number,
   userFocus: string = 'concept',
 ): AxiosPromise<CompareReport> {
-  return request.post('/concept-graph/compare', {
-    source_node_id: sourceNodeId,
-    target_node_id: targetNodeId,
-    edge_id: edgeId ?? null,
-    user_focus: userFocus,
-  })
+  // The compare endpoint calls the user's LLM which can take 50-90s.
+  // Override the default 30s axios timeout so the request isn't
+  // aborted before the backend finishes generating and caching the
+  // report (which would leave the UI showing "暂无对比报告").
+  return request.post(
+    '/concept-graph/compare',
+    {
+      source_node_id: sourceNodeId,
+      target_node_id: targetNodeId,
+      edge_id: edgeId ?? null,
+      user_focus: userFocus,
+    },
+    { timeout: 120000 },
+  )
 }

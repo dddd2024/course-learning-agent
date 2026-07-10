@@ -413,6 +413,27 @@ function isUsefulChunk(chunk: Chunk): boolean {
     return false
   }
 
+  // Check for high line repetition (diagram text)
+  const uniqueLines = new Set(lines.map(l => l.trim().toLowerCase()))
+  if (lines.length > 3 && uniqueLines.size / lines.length < 0.5) {
+    return false
+  }
+
+  // Check for short-line stacking (diagram labels)
+  const shortLines = lines.filter(l => l.trim().length < 4).length
+  if (lines.length > 3 && shortLines / lines.length > 0.6) {
+    return false
+  }
+
+  // Check for vocabulary diversity
+  const cjkChars = text.match(/[\u4e00-\u9fff\w]/g)
+  if (cjkChars && cjkChars.length > 50) {
+    const uniqueChars = new Set(cjkChars)
+    if (uniqueChars.size / cjkChars.length < 0.3) {
+      return false
+    }
+  }
+
   return true
 }
 

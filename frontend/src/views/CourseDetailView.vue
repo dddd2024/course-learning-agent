@@ -68,11 +68,11 @@ function goToKnowledgeGraph() {
 }
 
 function goToPlans() {
-  router.push('/plans')
+  router.push({ path: '/plans', query: { course_id: String(route.params.id) } })
 }
 
 function goToQuizzes() {
-  router.push('/quizzes')
+  router.push({ path: '/quizzes', query: { course_id: String(route.params.id) } })
 }
 
 async function fetchCounts() {

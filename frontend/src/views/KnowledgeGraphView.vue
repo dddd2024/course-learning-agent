@@ -368,6 +368,9 @@ async function handleCompare() {
   if (!selectedEdge.value) return
   compareLoading.value = true
   compareDrawerVisible.value = true
+  // The compare endpoint calls the user's LLM which can take 50-90s.
+  // Tell the user upfront so they don't think the UI is frozen.
+  ElMessage.info('正在生成对比报告，可能需要 1-2 分钟...')
   // Don't clear compareReport here — keep the old one visible
   // until the new one arrives, so the user sees loading state
   // instead of "暂无对比报告".

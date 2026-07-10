@@ -29,6 +29,7 @@ from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
 from app.models.material import Material
 from app.models.material_chunk import MaterialChunk
+from app.models.quiz import WeakPoint
 from app.models.user import User
 from app.schemas.knowledge_point import (
     GenerateKnowledgePointsResponse,
@@ -146,6 +147,22 @@ def generate_knowledge_points(
     )
 
     # Re-generating replaces previous points so the operation is idempotent.
+    # Clean up orphaned weak points before deleting knowledge points so
+    # they don't linger with dangling knowledge_point_id references (which
+    # would otherwise show up as empty-titled entries in the weak-points list).
+    kp_ids_to_delete = [
+        kp.id
+        for kp in db.query(KnowledgePoint)
+        .filter(
+            KnowledgePoint.course_id == course_id,
+            KnowledgePoint.user_id == current_user.id,
+        )
+        .all()
+    ]
+    if kp_ids_to_delete:
+        db.query(WeakPoint).filter(
+            WeakPoint.knowledge_point_id.in_(kp_ids_to_delete)
+        ).delete(synchronize_session=False)
     db.query(KnowledgePoint).filter(
         KnowledgePoint.course_id == course_id,
         KnowledgePoint.user_id == current_user.id,

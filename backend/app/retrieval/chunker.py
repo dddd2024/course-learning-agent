@@ -99,6 +99,44 @@ def _split_by_headings(text: str) -> List[Tuple[Optional[str], str]]:
     return merged if merged else [(None, text)]
 
 
+def _is_low_quality_chunk(text: str) -> bool:
+    """Detect chunks that are likely extracted from diagrams/images.
+
+    These chunks typically have:
+    - High line repetition (same labels repeated)
+    - Many very short lines (diagram labels like "R1", "H2")
+    - Low vocabulary diversity
+    """
+    text = text.strip()
+    if not text:
+        return True
+
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if not lines:
+        return True
+
+    # Check line repetition: unique lines / total lines
+    unique_ratio = len(set(lines)) / len(lines)
+    if unique_ratio < 0.5:
+        return True
+
+    # Check short-line stacking: > 60% of lines are < 4 chars
+    short_lines = sum(1 for l in lines if len(l) < 4)
+    if len(lines) > 3 and short_lines / len(lines) > 0.6:
+        return True
+
+    # Check vocabulary diversity for longer chunks
+    if len(text) > 50:
+        # Simple CJK character-level diversity
+        chars = [c for c in text if "\u4e00" <= c <= "\u9fff" or c.isalpha()]
+        if chars:
+            unique_chars = len(set(chars))
+            if unique_chars / len(chars) < 0.3:
+                return True
+
+    return False
+
+
 def chunk_text(
     text: str,
     chunk_size: int = 600,
@@ -113,6 +151,9 @@ def chunk_text(
     shorter than ``chunk_size`` become a single chunk; longer sections
     are sliced with a sliding window of step ``chunk_size - overlap``
     so consecutive chunks overlap by ``overlap`` characters.
+
+    Chunks detected as low-quality (diagram text, repetitive labels)
+    are skipped so they never enter the retrieval store.
     """
     if not text or not text.strip():
         return []
@@ -127,6 +168,8 @@ def chunk_text(
         if not content:
             continue
         if len(content) <= chunk_size:
+            if _is_low_quality_chunk(content):
+                continue  # Skip low-quality chunks (diagram text, repetitive labels)
             chunks.append(
                 {
                     "text": content,
@@ -142,6 +185,9 @@ def chunk_text(
         content_len = len(content)
         while start < content_len:
             piece = content[start : start + chunk_size]
+            start += step
+            if _is_low_quality_chunk(piece):
+                continue  # Skip low-quality chunks (diagram text, repetitive labels)
             chunks.append(
                 {
                     "text": piece,
@@ -150,7 +196,6 @@ def chunk_text(
                     "page_no": None,
                 }
             )
-            start += step
             chunk_index += 1
     return chunks
 

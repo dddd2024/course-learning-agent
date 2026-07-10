@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { listCourses, type Course } from '../api/course'
 import {
   createPlan,
+  deletePlan,
   getPlan,
   listPlans,
+  updateGoal,
+  updateTask,
+  updateTodo,
   type PlanGoal,
   type PlanPayload,
   type PlanResult,
@@ -255,6 +259,10 @@ async function handlePlanSelect(planId: number) {
 
 function startNewPlan() {
   Object.assign(form, defaultForm())
+  const requestedCourseId = Number(route.query.course_id)
+  if (courses.value.some((course) => course.id === requestedCourseId)) {
+    form.course_ids = [requestedCourseId]
+  }
   formRef.value?.clearValidate()
   isCreating.value = true
 }
@@ -291,9 +299,73 @@ async function handleSubmit() {
   }
 }
 
-onMounted(() => {
-  void fetchCourses()
-  void restorePlans()
+async function toggleTaskStatus(task: PlanTask) {
+  const newStatus = task.status === 'done' ? 'pending' : 'done'
+  try {
+    const { data: updated } = await updateTask(task.id, { status: newStatus })
+    const idx = tasks.value.findIndex((t) => t.id === task.id)
+    if (idx >= 0) tasks.value[idx] = updated
+    ElMessage.success(newStatus === 'done' ? '任务已标记完成' : '任务已恢复待完成')
+    await restorePlans(selectedPlanId.value ?? undefined)
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '更新任务状态失败'))
+  }
+}
+
+async function toggleTodoStatus(todo: Todo) {
+  const newStatus = todo.status === 'completed' ? 'pending' : 'completed'
+  try {
+    const { data: updated } = await updateTodo(todo.id, { status: newStatus })
+    const idx = todos.value.findIndex((t) => t.id === todo.id)
+    if (idx >= 0) todos.value[idx] = updated
+    ElMessage.success(newStatus === 'completed' ? '待办已完成' : '待办已恢复')
+    await restorePlans(selectedPlanId.value ?? undefined)
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '更新待办状态失败'))
+  }
+}
+
+async function handleDeletePlan() {
+  if (!selectedPlanId.value) return
+  try {
+    await ElMessageBox.confirm('确定要删除该学习计划吗？关联的任务和待办也将被删除。', '删除计划', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  try {
+    await deletePlan(selectedPlanId.value)
+    ElMessage.success('计划已删除')
+    selectedPlanId.value = null
+    planResult.value = null
+    goal.value = null
+    tasks.value = []
+    todos.value = []
+    await restorePlans()
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '删除计划失败'))
+  }
+}
+
+async function handleCompleteGoal() {
+  if (!goal.value) return
+  try {
+    const { data: updated } = await updateGoal(goal.value.id, { status: 'done' })
+    goal.value = updated
+    ElMessage.success('学习计划已标记完成')
+    await restorePlans(updated.id)
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '更新计划状态失败'))
+  }
+}
+
+onMounted(async () => {
+  await fetchCourses()
+  await restorePlans()
+  if (Number.isInteger(Number(route.query.course_id))) startNewPlan()
 })
 </script>
 
@@ -459,9 +531,28 @@ onMounted(() => {
         <template #header>
           <div class="section-title-bar">
             <span class="section-title">学习目标</span>
-            <el-tag :type="goalStatusType(goal.status)">
-              {{ goalStatusLabel(goal.status) }}
-            </el-tag>
+            <div class="header-actions">
+              <el-tag :type="goalStatusType(goal.status)">
+                {{ goalStatusLabel(goal.status) }}
+              </el-tag>
+              <el-button
+                v-if="goal.status !== 'done'"
+                type="success"
+                size="small"
+                plain
+                @click="handleCompleteGoal"
+              >
+                标记完成
+              </el-button>
+              <el-button
+                type="danger"
+                size="small"
+                plain
+                @click="handleDeletePlan"
+              >
+                删除计划
+              </el-button>
+            </div>
           </div>
         </template>
         <div class="goal-info">
@@ -485,13 +576,13 @@ onMounted(() => {
           stripe
           empty-text="暂无阶段任务"
         >
-          <el-table-column prop="course_name" label="课程" min-width="140" show-overflow-tooltip />
-          <el-table-column prop="title" label="任务标题" min-width="180" show-overflow-tooltip />
-          <el-table-column label="类型" width="110">
+          <el-table-column prop="course_name" label="课程" min-width="120" show-overflow-tooltip />
+          <el-table-column prop="title" label="任务标题" min-width="160" show-overflow-tooltip />
+          <el-table-column label="类型" width="100">
             <template #default="{ row }">{{ taskTypeLabel(row.task_type) }}</template>
           </el-table-column>
-          <el-table-column prop="estimate_minutes" label="预计分钟" width="100" align="center" />
-          <el-table-column label="优先级" width="90" align="center">
+          <el-table-column prop="estimate_minutes" label="预计分钟" width="90" align="center" />
+          <el-table-column label="优先级" width="80" align="center">
             <template #default="{ row }">
               <el-tag
                 :type="priorityTagType(row.priority)"
@@ -501,7 +592,26 @@ onMounted(() => {
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="acceptance" label="完成标准" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="acceptance" label="完成标准" min-width="180" show-overflow-tooltip />
+          <el-table-column label="状态" width="90" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.status === 'done' ? 'success' : 'info'" size="small">
+                {{ row.status === 'done' ? '已完成' : '待完成' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="100" align="center" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                :type="row.status === 'done' ? 'default' : 'success'"
+                size="small"
+                link
+                @click="toggleTaskStatus(row)"
+              >
+                {{ row.status === 'done' ? '撤销完成' : '完成' }}
+              </el-button>
+            </template>
+          </el-table-column>
         </el-table>
       </el-card>
 
@@ -556,6 +666,7 @@ onMounted(() => {
               v-for="t in todosByDate[date]"
               :key="t.id"
               class="todo-item"
+              :class="{ 'todo-done': t.status === 'completed' }"
             >
               <div class="todo-main">
                 <el-tag
@@ -575,6 +686,14 @@ onMounted(() => {
                   </template>
                 </span>
                 <span>{{ t.estimate_minutes }} 分钟</span>
+                <el-button
+                  :type="t.status === 'completed' ? 'default' : 'success'"
+                  size="small"
+                  link
+                  @click="toggleTodoStatus(t)"
+                >
+                  {{ t.status === 'completed' ? '撤销完成' : '完成' }}
+                </el-button>
               </div>
             </div>
           </div>
@@ -590,8 +709,18 @@ onMounted(() => {
     <el-dialog v-model="dayTodosDialogVisible" title="当日待办" width="500">
       <ul class="day-todo-list">
         <li v-for="t in dayTodosFor" :key="t.id" class="day-todo-item">
-          <span>{{ t.title }}</span>
-          <el-tag size="small" :type="statusTagType[t.status]">{{ statusLabel[t.status] }}</el-tag>
+          <div class="day-todo-info">
+            <span>{{ t.title }}</span>
+            <el-tag size="small" :type="statusTagType[t.status]">{{ statusLabel[t.status] }}</el-tag>
+          </div>
+          <el-button
+            :type="t.status === 'completed' ? 'default' : 'success'"
+            size="small"
+            link
+            @click="toggleTodoStatus(t)"
+          >
+            {{ t.status === 'completed' ? '撤销完成' : '完成' }}
+          </el-button>
         </li>
       </ul>
     </el-dialog>
@@ -722,6 +851,30 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.todo-done .todo-title {
+  text-decoration: line-through;
+  color: #909399;
+}
+
+.day-todo-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+}
+
+.day-todo-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .section-tip {

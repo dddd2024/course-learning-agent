@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { onBeforeRouteLeave } from 'vue-router'
+import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listCourses, type Course } from '../api/course'
 import { MAX_PAGE_SIZE } from '../constants/pagination'
@@ -21,6 +21,8 @@ import {
 } from '../api/quiz'
 import { parseApiError } from '../utils/error'
 import EmptyState from '../components/common/EmptyState.vue'
+
+const route = useRoute()
 
 const courses = ref<Course[]>([])
 const coursesLoading = ref(false)
@@ -153,7 +155,10 @@ async function fetchCourses() {
     const { data } = await listCourses({ page: 1, page_size: MAX_PAGE_SIZE })
     courses.value = data.items
     if (courses.value.length > 0 && selectedCourseId.value === undefined) {
-      selectedCourseId.value = courses.value[0].id
+      const requestedCourseId = Number(route.query.course_id)
+      selectedCourseId.value = courses.value.some((course) => course.id === requestedCourseId)
+        ? requestedCourseId
+        : courses.value[0].id
       fetchQuizzes()
       fetchWeakPoints()
     }
@@ -808,10 +813,12 @@ onUnmounted(() => {
           <div class="section-title">薄弱知识点</div>
         </template>
         <div v-loading="weakPointsLoading">
-          <el-empty
+          <div
             v-if="!weakPointsLoading && weakPoints.length === 0"
-            description="暂无薄弱点数据"
-          />
+            class="empty-weak-points"
+          >
+            暂无薄弱知识点数据
+          </div>
           <div class="weak-points">
             <div
               v-for="wp in weakPoints"
@@ -1120,6 +1127,13 @@ onUnmounted(() => {
 
 .qnav-current::before {
   background: #fff;
+}
+
+.empty-weak-points {
+  text-align: center;
+  color: #909399;
+  padding: 40px 0;
+  font-size: 14px;
 }
 
 .weak-points {
