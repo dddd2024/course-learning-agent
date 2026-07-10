@@ -17,7 +17,7 @@ from app.models.error_log import AgentErrorLog
 from app.models.general_error_log import ErrorLog
 from app.models.knowledge_point import KnowledgePoint
 from app.models.llm_config import UserLLMConfig
-from app.models.material import Material
+from app.models.material import Material, MaterialVersion
 from app.models.material_chunk import MaterialChunk
 from app.models.material_image import MaterialImage
 from app.models.plan import StudyGoal, StudyTask, Todo
@@ -41,6 +41,7 @@ __all__ = [
     "Course",
     "KnowledgePoint",
     "Material",
+    "MaterialVersion",
     "MaterialChunk",
     "MaterialImage",
     "MaterialSecurityFinding",

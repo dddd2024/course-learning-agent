@@ -248,13 +248,9 @@ def test_delete_material_missing_disk_file_still_succeeds(
         client, headers, course_id, "notes.txt", b"content"
     )
 
-    # Read the stored relative path from the API (no direct DB access) and
-    # remove the file from disk before deleting the record.
-    list_resp = client.get(
-        f"/api/v1/courses/{course_id}/materials", headers=headers
-    )
-    mat = next(m for m in list_resp.json()["items"] if m["id"] == material_id)
-    disk_path = tmp_path / mat["file_path"]
+    # The API intentionally does not disclose storage paths.  Test the
+    # missing-file condition using the deterministic server-side layout.
+    disk_path = tmp_path / "1" / str(course_id) / str(material_id) / "original.txt"
     disk_path.unlink(missing_ok=True)
 
     resp = client.delete(

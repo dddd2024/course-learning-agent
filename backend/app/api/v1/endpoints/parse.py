@@ -19,6 +19,7 @@ another user is invisible (returned as 404).
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -28,6 +29,7 @@ from app.core.exceptions import BusinessException, NotFoundException
 from app.core.timezone import utc_now
 from app.models.material import Material
 from app.models.material_chunk import MaterialChunk
+from app.models.material_image import MaterialImage
 from app.models.user import User
 from app.schemas.material import (
     ChunkListResponse,
@@ -56,6 +58,48 @@ def _get_owned_material(
     if material is None:
         raise NotFoundException(message="资料不存在")
     return material
+
+
+def _safe_upload_path(relative_path: str) -> Path:
+    """Resolve a DB path and refuse paths escaping the upload root."""
+    root = Path(settings.UPLOAD_DIR).resolve()
+    candidate = (root / relative_path).resolve()
+    if root != candidate and root not in candidate.parents:
+        raise NotFoundException(message="文件不存在")
+    return candidate
+
+
+@router.get("/{material_id}/file")
+def get_material_file(
+    material_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    material = _get_owned_material(db, material_id, current_user.id)
+    path = _safe_upload_path(material.file_path)
+    if not path.is_file():
+        raise NotFoundException(message="文件不存在")
+    return FileResponse(path, filename=material.filename)
+
+
+@router.get("/images/{image_id}/file")
+def get_material_image_file(
+    image_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    image = (
+        db.query(MaterialImage)
+        .join(Material, Material.id == MaterialImage.material_id)
+        .filter(MaterialImage.id == image_id, Material.user_id == current_user.id)
+        .first()
+    )
+    if image is None:
+        raise NotFoundException(message="图片不存在")
+    path = _safe_upload_path(image.image_path)
+    if not path.is_file():
+        raise NotFoundException(message="图片不存在")
+    return FileResponse(path, filename=image.image_filename)
 
 
 def _run_parse_in_background(material_id: int, user_id: int) -> None:
@@ -173,7 +217,8 @@ def list_chunks(
     _get_owned_material(db, material_id, current_user.id)
 
     query = db.query(MaterialChunk).filter(
-        MaterialChunk.material_id == material_id
+        MaterialChunk.material_id == material_id,
+        MaterialChunk.is_active == 1,
     )
     total = query.count()
     items = (
@@ -203,7 +248,11 @@ def list_chunks(
         chunk_dict = ChunkResponse.model_validate(c).model_dump()
         if c.page_no and c.page_no in images_by_page:
             chunk_dict["images"] = [
-                ImageResponse.model_validate(img) for img in images_by_page[c.page_no]
+                ImageResponse(
+                    id=img.id, page_no=img.page_no, width=img.width,
+                    height=img.height, format=img.format,
+                    file_url=f"/api/v1/materials/images/{img.id}/file",
+                ) for img in images_by_page[c.page_no]
             ]
         chunk_responses.append(ChunkResponse(**chunk_dict))
 

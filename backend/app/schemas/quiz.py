@@ -13,7 +13,13 @@ class QuizCreate(BaseModel):
 
     course_id: int
     knowledge_point_ids: Optional[List[int]] = None
-    question_count: int = Field(default=5, ge=1)
+    question_count: int = Field(default=5, ge=1, le=30)
+
+
+class QuizOption(BaseModel):
+    label: str
+    text: str
+    value: str
 
 
 class QuizItemOut(BaseModel):
@@ -28,7 +34,7 @@ class QuizItemOut(BaseModel):
     id: int
     question_type: str
     question_text: str
-    options: List[str] = []
+    options: List[QuizOption] = []
     explanation: Optional[str] = None
     order_index: int
 
@@ -39,12 +45,21 @@ class QuizItemOut(BaseModel):
         if isinstance(value, str):
             try:
                 parsed = json.loads(value)
-                return parsed if isinstance(parsed, list) else []
+                value = parsed if isinstance(parsed, list) else []
             except (json.JSONDecodeError, TypeError):
                 return []
         if value is None:
             return []
-        return list(value)
+        result = []
+        for index, option in enumerate(value):
+            if isinstance(option, dict):
+                result.append(option)
+            else:
+                raw = str(option)
+                label = raw[:1].upper() if len(raw) > 1 and raw[1] in ".、)" else chr(65 + index)
+                text = raw[2:].strip() if len(raw) > 1 and raw[1] in ".、)" else raw
+                result.append({"label": label, "text": text, "value": label})
+        return result
 
 
 class QuizOut(BaseModel):
@@ -73,7 +88,7 @@ class QuizSubmitAnswer(BaseModel):
     """A single answer in a submit payload."""
 
     item_id: int
-    user_answer: str
+    user_answer: str | List[str]
 
 
 class QuizSubmit(BaseModel):
@@ -95,7 +110,7 @@ class QuizResultItemOut(BaseModel):
     id: int
     question_type: str
     question_text: str
-    options: List[str] = []
+    options: List[QuizOption] = []
     correct_answer: str = ""
     user_answer: Optional[str] = None
     is_correct: Optional[int] = None
@@ -109,12 +124,10 @@ class QuizResultItemOut(BaseModel):
         if isinstance(value, str):
             try:
                 parsed = json.loads(value)
-                return parsed if isinstance(parsed, list) else []
+                value = parsed if isinstance(parsed, list) else []
             except (json.JSONDecodeError, TypeError):
                 return []
-        if value is None:
-            return []
-        return list(value)
+        return QuizItemOut._parse_options(value)
 
 
 class QuizResultOut(BaseModel):

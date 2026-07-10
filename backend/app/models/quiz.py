@@ -82,6 +82,9 @@ class QuizItem(Base, TimestampMixin):
     # for short_answer). Never returned to the client before submit.
     answer = Column(Text, nullable=False)
     explanation = Column(Text)
+    difficulty = Column(Integer, nullable=True)
+    source_evidence_ids = Column(Text, default="[]")
+    evidence_snapshot = Column(Text)
     # Filled on submit.
     user_answer = Column(Text, nullable=True)
     is_correct = Column(Integer, nullable=True)  # 0/1 after submit

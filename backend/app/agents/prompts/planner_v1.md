@@ -41,7 +41,7 @@
 - `deadline`：ISO 日期字符串。
 - `daily_minutes`：每日投入分钟数，整数。
 - `tasks`：数组，按时间顺序排列。
-  - `task_type`：取值 `review`/`learn`/`practice`/`quiz` 之一。
+  - `task_type`：取值 `review`/`learn`/`quiz` 之一。
   - `estimate_minutes`：整数，预计耗时。
   - `priority`：1-5 整数，5 最优先。
   - `acceptance`：明确可观测的完成标准。

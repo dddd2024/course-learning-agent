@@ -45,11 +45,13 @@ def init_db() -> None:
     # alter existing tables, so we patch them explicitly.
     from app.db.migrations import (
         ensure_concept_compare_report_columns,
+        ensure_first_round_columns,
         ensure_material_parse_columns,
     )
 
     ensure_concept_compare_report_columns(engine)
     ensure_material_parse_columns(engine)
+    ensure_first_round_columns(engine)
     print("数据库表已创建（如已存在则跳过）。")
 
 

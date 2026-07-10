@@ -42,6 +42,13 @@ class AgentRun(Base, TimestampMixin):
     output_summary = Column(Text)
     prompt_version = Column(String(50))
     model_name = Column(String(50))
+    requested_provider = Column(String(50), nullable=True)
+    requested_model = Column(String(100), nullable=True)
+    actual_provider = Column(String(50), nullable=True)
+    actual_model = Column(String(100), nullable=True)
+    fallback_used = Column(Integer, nullable=False, default=0)
+    fallback_reason = Column(Text)
+    evidence_status = Column(String(30), nullable=True)
     # mock / real / user — invocation source for the LLM call.
     # - mock:  mock mode (no real LLM)
     # - real:  system-configured LLM

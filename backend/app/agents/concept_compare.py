@@ -82,6 +82,7 @@ def generate_compare(
             db, run.id,
             model_name=meta.get("model_name"),
             provider=meta.get("provider"),
+            meta=meta,
         )
 
         if _is_valid_compare_report(result):
@@ -155,6 +156,10 @@ def _mock_fallback(
 ) -> dict:
     """Generate a structured mock compare report when LLM is unavailable."""
     report = {
+        "status": "insufficient_evidence",
+        "reason": "真实模型未生成可验证的对比，且 mock 不会推断语义结论。",
+        "required_sources": ["概念 A 与概念 B 的原始资料证据"],
+        "next_action": "请检查资料解析结果后重新生成。",
         "concept_a": {
             "title": concept_a.get("title", ""),
             "explanation": concept_a.get("summary", ""),
@@ -163,17 +168,8 @@ def _mock_fallback(
             "title": concept_b.get("title", ""),
             "explanation": concept_b.get("summary", ""),
         },
-        "similarities": ["两者都是重要概念，需要理解其核心定义"],
-        "differences": [
-            {
-                "dimension": "所属领域",
-                "a": concept_a.get("summary", ""),
-                "b": concept_b.get("summary", ""),
-            }
-        ],
-        "transfer_learning": ["对比两者的核心思想，寻找可迁移的方法论"],
-        "confusions": ["注意两者的适用场景差异"],
-        "exam_questions": ["简述两者的联系与区别"],
+        "similarities": [], "differences": [], "transfer_learning": [],
+        "confusions": [], "exam_questions": [],
         "citations": [],
         "insufficient_evidence": True,
     }
@@ -182,7 +178,7 @@ def _mock_fallback(
         output_data={"fallback": True},
     )
     AgentAudit.finish_run(
-        db, run.id, status="success",
+        db, run.id, status="degraded",
         output_summary={"fallback": True},
     )
     return {

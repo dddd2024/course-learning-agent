@@ -24,6 +24,10 @@ class KnowledgePoint(Base, TimestampMixin):
         Integer, ForeignKey("users.id"), nullable=False, index=True
     )
     title = Column(String(255), nullable=False)
+    stable_key = Column(String(320), nullable=True, index=True)
+    title_normalized = Column(String(255), nullable=True, index=True)
+    status = Column(String(20), nullable=False, default="active")
+    source_version_ids = Column(Text, default="[]")
     summary = Column(Text)
     importance = Column(Integer, default=3)  # 1-5
     source_chunk_ids = Column(Text)  # JSON-serialised list of chunk ids

@@ -151,7 +151,6 @@ function taskTypeLabel(taskType: string): string {
   const labels: Record<string, string> = {
     review: '复习',
     learn: '学习',
-    practice: '练习',
     quiz: '测验',
   }
   return labels[taskType] || taskType

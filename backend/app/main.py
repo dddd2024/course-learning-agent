@@ -34,9 +34,5 @@ register_exception_handlers(app)
 app.include_router(api_router, prefix="/api/v1")
 
 # Serve uploaded files (including extracted images) as static files
-from pathlib import Path as _Path
-from fastapi.staticfiles import StaticFiles as _StaticFiles
-
-_upload_dir = _Path(settings.UPLOAD_DIR)
-_upload_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", _StaticFiles(directory=str(_upload_dir)), name="uploads")
+# Uploaded originals and extracted images are deliberately not mounted as a
+# static directory.  They are served through authenticated API endpoints.

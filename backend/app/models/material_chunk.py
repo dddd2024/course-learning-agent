@@ -18,6 +18,12 @@ class MaterialChunk(Base, TimestampMixin):
     material_id = Column(
         Integer, ForeignKey("materials.id"), nullable=False, index=True
     )
+    material_version_id = Column(
+        Integer, ForeignKey("material_versions.id"), nullable=True, index=True
+    )
+    stable_key = Column(String(128), nullable=True, index=True)
+    content_hash = Column(String(64), nullable=True, index=True)
+    is_active = Column(Integer, nullable=False, default=1)
     course_id = Column(
         Integer, ForeignKey("courses.id"), nullable=False, index=True
     )

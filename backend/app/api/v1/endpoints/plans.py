@@ -68,6 +68,11 @@ todos_router = APIRouter()
 _PROMPT_VERSION = "planner_v1"
 
 
+def _normalise_task_type(value: str | None) -> str:
+    value = (value or "review").strip().lower()
+    return "quiz" if value in {"practice", "exercise", "test"} else value if value in {"learn", "review", "quiz"} else "review"
+
+
 def _load_course_names(
     db: Session,
     course_ids: set[int],
@@ -580,7 +585,7 @@ def create_plan(
             goal_id=goal.id,
             course_id=course_id,
             title=task_data.get("title", ""),
-            task_type=task_data.get("task_type", "review"),
+            task_type=_normalise_task_type(task_data.get("task_type")),
             estimate_minutes=int(task_data.get("estimate_minutes", 60) or 60),
             priority=int(task_data.get("priority", 3) or 3),
             acceptance=task_data.get("acceptance", ""),
@@ -768,7 +773,7 @@ def create_multi_plan(
             goal_id=goal_by_course[course_id].id,
             course_id=course_id,
             title=item["title"],
-            task_type=item.get("task_type", "review"),
+            task_type=_normalise_task_type(item.get("task_type")),
             estimate_minutes=item["estimate_minutes"],
             priority=int(item.get("priority", 3) or 3),
             acceptance=item.get("acceptance", ""),

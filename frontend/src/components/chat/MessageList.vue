@@ -16,7 +16,7 @@ import type { ChatMessage } from './types'
 import CitationCapsules from './CitationCapsules.vue'
 import FollowUpSuggestions from './FollowUpSuggestions.vue'
 import { renderMarkdown } from '../../utils/markdown'
-import { formatLocalDateTime } from '@/utils/datetime'
+import { formatLocalDateTime } from '../../utils/datetime'
 
 defineProps<{
   messages: ChatMessage[]

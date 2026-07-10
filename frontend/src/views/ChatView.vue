@@ -35,7 +35,7 @@ import {
 } from '../api/chat'
 import { getChunk, type ChunkDetail } from '../api/material'
 import { parseApiError } from '../utils/error'
-import { formatLocalDateTime } from '@/utils/datetime'
+import { formatLocalDateTime } from '../utils/datetime'
 import type { ChatMessage, StreamStep } from '../components/chat/types'
 import MessageList from '../components/chat/MessageList.vue'
 import SseStatusPanel from '../components/chat/SseStatusPanel.vue'

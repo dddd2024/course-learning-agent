@@ -191,8 +191,8 @@
                   class="doc-chunk-image-item"
                 >
                   <el-image
-                    :src="`${UPLOAD_BASE_URL}/${img.image_path}`"
-                    :preview-src-list="[`${UPLOAD_BASE_URL}/${img.image_path}`]"
+                    :src="imageUrls[img.id] || ''"
+                    :preview-src-list="imageUrls[img.id] ? [imageUrls[img.id]] : []"
                     :alt="`${materials.find((m) => m.id === selectedMaterialId)?.filename || '课程资料'}第 ${chunk.page_no || '?'} 页插图`"
                     fit="contain"
                     style="max-width: 100%; max-height: 400px; border-radius: 6px;"
@@ -319,7 +319,7 @@ import {
 import { listKnowledgePoints } from '../api/knowledge'
 import { parseApiError } from '../utils/error'
 import { renderMarkdown } from '../utils/markdown'
-import { UPLOAD_BASE_URL } from '../config/api'
+import request from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -330,6 +330,7 @@ const materials = ref<Material[]>([])
 const selectedMaterialId = ref<number | null>(null)
 const rawChunks = ref<Chunk[]>([])
 const chunks = ref<Chunk[]>([])
+const imageUrls = ref<Record<number, string>>({})
 const docLoading = ref(false)
 const filteredCount = ref(0)
 const mobilePane = ref<'toc' | 'content' | 'assistant'>('content')
@@ -716,6 +717,7 @@ async function loadChunks() {
       rawChunks.value = materialChunks
       chunks.value = filterUsefulChunks(materialChunks)
     }
+    await preloadImages(chunks.value)
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取资料内容失败'))
   } finally {
@@ -734,6 +736,15 @@ function askAboutSelection() {
   if (!selectedText.value) return
   inputQuestion.value = `请解释这段内容：\n"${selectedText.value}"`
   askQuestion()
+}
+
+async function preloadImages(source: Chunk[]) {
+  const images = source.flatMap((chunk) => chunk.images || [])
+  await Promise.all(images.map(async (image) => {
+    if (!image.file_url || imageUrls.value[image.id]) return
+    const { data } = await request.get(image.file_url, { responseType: 'blob' })
+    imageUrls.value[image.id] = URL.createObjectURL(data)
+  }))
 }
 
 function askAboutKnowledgePoint() {

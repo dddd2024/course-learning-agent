@@ -141,6 +141,40 @@ def get_or_create_compare_report(
     evidence_chunks = _load_evidence_chunks(db, user_id, chunk_ids)
     evidence_hash = _compute_evidence_hash(evidence_chunks)
 
+    # A summary or title is not source evidence.  Persist a clearly marked
+    # non-report so the UI can explain the remediation without fabricating
+    # similarities, differences, transfer advice, or exam claims.
+    if not evidence_chunks:
+        cached = db.query(ConceptCompareReport).filter_by(
+            user_id=user_id, source_node_id=source_node_id,
+            target_node_id=target_node_id, user_focus=user_focus,
+            evidence_hash="",
+        ).first() or db.query(ConceptCompareReport).filter_by(
+            user_id=user_id, source_node_id=target_node_id,
+            target_node_id=source_node_id, user_focus=user_focus,
+            evidence_hash="",
+        ).first()
+        if cached is not None:
+            return _report_to_dict(cached)
+        report = ConceptCompareReport(
+            user_id=user_id, source_node_id=source_node_id,
+            target_node_id=target_node_id, edge_id=edge_id,
+            report_json=json.dumps({
+                "status": "insufficient_evidence",
+                "reason": "两个概念都缺少可访问的原始资料片段。",
+                "required_sources": ["已解析且仍可访问的资料原文"],
+                "next_action": "请重新解析资料并重建知识点后再生成对比。",
+                "concept_a": {"title": n1.title}, "concept_b": {"title": n2.title},
+                "similarities": [], "differences": [], "transfer_learning": [],
+                "confusions": [], "exam_questions": [],
+            }, ensure_ascii=False),
+            citation_chunk_ids="[]", prompt_version="v1", provider="mock",
+            model_name="mock", user_focus=user_focus, evidence_hash="",
+        )
+        db.add(report)
+        db.flush()
+        return _report_to_dict(report, {"fallback_used": False})
+
     # Cache lookup: same user + same node pair (either order)
     # + same user_focus + same evidence_hash.
     cached = db.query(ConceptCompareReport).filter_by(

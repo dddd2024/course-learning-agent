@@ -77,6 +77,8 @@ class AgentAudit:
             prompt_version=prompt_version,
             model_name=model_name,
             provider=provider,
+            requested_provider=provider,
+            requested_model=model_name,
             config_id=config_id,
             started_at=datetime.now(),
         )
@@ -145,6 +147,7 @@ class AgentAudit:
         run_id: int | None,
         model_name: str | None = None,
         provider: str | None = None,
+        meta: dict | None = None,
     ) -> None:
         """Update an existing AgentRun's model_name/provider after the LLM
         call completes, so the audit record reflects the actual provider
@@ -159,6 +162,13 @@ class AgentAudit:
                     run.model_name = model_name
                 if provider is not None:
                     run.provider = provider
+                if meta:
+                    run.actual_provider = meta.get("actual_provider", provider)
+                    run.actual_model = meta.get("actual_model", model_name)
+                    run.fallback_used = 1 if meta.get("fallback_used") else 0
+                    run.fallback_reason = meta.get("fallback_reason")
+                    if meta.get("degraded"):
+                        run.status = "degraded"
                 db.flush()
         except Exception:
             pass  # audit must not break the main flow

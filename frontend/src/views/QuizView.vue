@@ -45,7 +45,7 @@ const genForm = reactive({
 
 const activeQuiz = ref<Quiz | null>(null)
 const activeQuizLoading = ref(false)
-const answers = ref<Record<number, string>>({})
+const answers = ref<Record<number, string | string[]>>({})
 const submitting = ref(false)
 const quizResult = ref<QuizResult | null>(null)
 const deletingQuizId = ref<number | null>(null)
@@ -70,7 +70,7 @@ const quizInProgress = computed(
 
 function isAnswered(itemId: number): boolean {
   const ans = answers.value[itemId]
-  return ans !== undefined && ans !== ''
+  return ans !== undefined && ans !== '' && (!Array.isArray(ans) || ans.length > 0)
 }
 
 const answeredCount = computed(() => {
@@ -271,7 +271,7 @@ async function openQuiz(quiz: Quiz) {
       )
     } else {
       activeQuiz.value = data
-      answers.value = Object.fromEntries(data.items.map((item) => [item.id, '']))
+      answers.value = Object.fromEntries(data.items.map((item) => [item.id, item.question_type === 'multiple_choice' ? [] : '']))
       quizResult.value = null
     }
     currentIndex.value = 0
@@ -321,7 +321,7 @@ async function handleSubmit() {
   if (!activeQuiz.value) return
   const unanswered = activeQuiz.value.items.filter((item) => {
     const ans = answers.value[item.id]
-    return ans === undefined || ans === ''
+    return ans === undefined || ans === '' || (Array.isArray(ans) && ans.length === 0)
   })
   if (unanswered.length > 0) {
     ElMessage.warning(`还有 ${unanswered.length} 道题未作答`)
@@ -417,7 +417,7 @@ function handleKeydown(e: KeyboardEvent) {
   } else if (q.question_type === 'choice') {
     const num = parseInt(e.key)
     if (num >= 1 && num <= (q.options?.length || 0)) {
-      answers.value[q.id] = q.options[num - 1]
+      answers.value[q.id] = q.options[num - 1].value
     }
   }
 
@@ -625,12 +625,21 @@ onUnmounted(() => {
               <el-radio
                 v-for="(opt, i) in currentQuestion.options"
                 :key="i"
-                :value="opt"
+                :value="opt.value"
                 class="answer-option"
               >
-                {{ opt }}
+                {{ opt.label }}. {{ opt.text }}
               </el-radio>
             </el-radio-group>
+            <el-checkbox-group
+              v-else-if="currentQuestion.question_type === 'multiple_choice'"
+              v-model="answers[currentQuestion.id]"
+              class="answer-radio-group"
+            >
+              <el-checkbox v-for="opt in currentQuestion.options" :key="opt.value" :value="opt.value" class="answer-option">
+                {{ opt.label }}. {{ opt.text }}
+              </el-checkbox>
+            </el-checkbox-group>
             <el-radio-group
               v-else-if="currentQuestion.question_type === 'true_false'"
               v-model="answers[currentQuestion.id]"

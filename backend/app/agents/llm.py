@@ -89,18 +89,35 @@ def call_llm_with_meta(
             return result, {
                 "provider": "real",
                 "model_name": user_config.get("model", ""),
+                "requested_provider": "user", "requested_model": user_config.get("model", ""),
+                "actual_provider": "user", "actual_model": user_config.get("model", ""),
                 "fallback_used": False,
                 "fallback_reason": None,
+                "fallback_chain": [{"provider": "user", "status": "success"}], "degraded": False,
             }
         except Exception as exc:  # noqa: BLE001 - demo must stay up
-            logger.warning(
-                "User LLM config failed, falling back to mock: %s", exc
-            )
+            user_reason = str(exc) or exc.__class__.__name__
+            logger.warning("User LLM config failed, trying system provider: %s", exc)
+            if (settings.LLM_PROVIDER or "mock").lower() == "real":
+                try:
+                    result = _real_response(prompt, agent_type, schema, None, timeout_override)
+                    return result, {
+                        "provider": "real", "model_name": settings.LLM_MODEL,
+                        "requested_provider": "user", "requested_model": user_config.get("model", ""),
+                        "actual_provider": "system", "actual_model": settings.LLM_MODEL,
+                        "fallback_used": True, "fallback_reason": user_reason,
+                        "fallback_chain": [{"provider":"user","status":"failed","reason":user_reason},{"provider":"system","status":"success"}],
+                        "degraded": False,
+                    }
+                except Exception as system_exc:  # noqa: BLE001
+                    user_reason = f"user: {user_reason}; system: {system_exc}"
             return _mock_response(agent_type, prompt), {
-                "provider": "mock",
-                "model_name": "mock",
-                "fallback_used": True,
-                "fallback_reason": str(exc) or exc.__class__.__name__,
+                "provider": "mock", "model_name": "mock",
+                "requested_provider": "user", "requested_model": user_config.get("model", ""),
+                "actual_provider": "mock", "actual_model": "mock",
+                "fallback_used": True, "fallback_reason": user_reason,
+                "fallback_chain": [{"provider":"user","status":"failed","reason":user_reason},{"provider":"mock","status":"success"}],
+                "degraded": True,
             }
 
     # 2. Otherwise defer to the system provider setting.
@@ -113,8 +130,11 @@ def call_llm_with_meta(
             return result, {
                 "provider": "real",
                 "model_name": settings.LLM_MODEL,
+                "requested_provider": "system", "requested_model": settings.LLM_MODEL,
+                "actual_provider": "system", "actual_model": settings.LLM_MODEL,
                 "fallback_used": False,
                 "fallback_reason": None,
+                "fallback_chain": [{"provider":"system","status":"success"}], "degraded": False,
             }
         except Exception as exc:  # noqa: BLE001 - demo must stay up
             logger.warning(
@@ -123,16 +143,22 @@ def call_llm_with_meta(
             return _mock_response(agent_type, prompt), {
                 "provider": "mock",
                 "model_name": "mock",
+                "requested_provider": "system", "requested_model": settings.LLM_MODEL,
+                "actual_provider": "mock", "actual_model": "mock",
                 "fallback_used": True,
                 "fallback_reason": str(exc) or exc.__class__.__name__,
+                "fallback_chain": [{"provider":"system","status":"failed","reason":str(exc)},{"provider":"mock","status":"success"}], "degraded": True,
             }
 
     # 3. Mock provider (default, or unknown provider) keeps the demo alive.
     return _mock_response(agent_type, prompt), {
         "provider": "mock",
         "model_name": "mock",
+        "requested_provider": "mock", "requested_model": "mock",
+        "actual_provider": "mock", "actual_model": "mock",
         "fallback_used": False,
         "fallback_reason": None,
+        "fallback_chain": [{"provider":"mock","status":"success"}], "degraded": True,
     }
 
 
@@ -552,10 +578,10 @@ def _mock_planner(prompt: str = "") -> dict[str, Any]:
     # Build tasks spread across the available courses
     task_templates = [
         ("复习核心概念", "review", 60, 5, "能口述核心概念并举例。"),
-        ("完成配套练习", "practice", 45, 4, "习题正确率 ≥ 80%。"),
+        ("完成配套测验", "quiz", 45, 4, "测验正确率 ≥ 80%。"),
         ("梳理知识框架", "review", 90, 4, "能画出知识结构图。"),
-        ("重难点专项突破", "practice", 60, 5, "能独立解决典型难题。"),
-        ("阶段性自测", "practice", 45, 3, "自测得分 ≥ 70%。"),
+        ("重难点专项测验", "quiz", 60, 5, "测验正确率 ≥ 80%。"),
+        ("阶段性自测", "quiz", 45, 3, "自测得分 ≥ 70%。"),
     ]
 
     tasks = []
@@ -618,7 +644,7 @@ def _mock_multi_course_schedule(prompt: str = "") -> dict[str, Any]:
                 "date": "2026-07-07",
                 "course_name": "数据结构",
                 "title": "练习链表题",
-                "task_type": "practice",
+                "task_type": "quiz",
                 "estimate_minutes": 60,
                 "priority": 4,
                 "acceptance": "完成 5 道链表题。",
@@ -716,7 +742,8 @@ def _mock_concept_compare(prompt: str = "") -> dict[str, Any]:
         for cid in chunk_ids
     ]
 
-    # Generate meaningful similarities based on title/summary overlap
+    # Mock output is evidence-extractive only.  It must not infer semantic
+    # similarity from title characters or n-grams.
     from app.services.concept_graph_service import (
         _keyword_set, _jaccard, _cjk_chars,
     )
@@ -727,69 +754,21 @@ def _mock_concept_compare(prompt: str = "") -> dict[str, Any]:
     shared_chars = _cjk_chars(title_a) & _cjk_chars(title_b)
 
     similarities: list[str] = []
-    if shared_kws:
-        sample = list(shared_kws)[:5]
-        similarities.append(
-            f"两者都涉及关键词：{('、'.join(sample))}"
-        )
-    if shared_chars:
-        similarities.append(
-            f"标题中都包含字：{('、'.join(list(shared_chars)[:4]))}"
-        )
-    if not similarities:
-        similarities.append("两者都是课程中的重要概念，在各自的知识体系中占据关键位置")
 
     # Generate meaningful differences
     differences: list[dict] = []
-    differences.append({
-        "dimension": "概念定义",
-        "a": summary_a[:120] if summary_a else f"{title_a}的具体定义",
-        "b": summary_b[:120] if summary_b else f"{title_b}的具体定义",
-    })
 
     # Extract distinguishing keywords (in A but not B, and vice versa)
     only_a = list(kw_a - kw_b)[:3]
     only_b = list(kw_b - kw_a)[:3]
-    if only_a or only_b:
-        differences.append({
-            "dimension": "核心关注点",
-            "a": f"侧重：{('、'.join(only_a))}" if only_a else "无显著独有关键词",
-            "b": f"侧重：{('、'.join(only_b))}" if only_b else "无显著独有关键词",
-        })
+    _ = (shared_kws, shared_chars, only_a, only_b)
 
     # Focus-specific content
     transfer_learning: list[str] = []
     confusions: list[str] = []
     exam_questions: list[str] = []
 
-    if user_focus == "exam":
-        exam_questions = [
-            f"简述「{title_a}」与「{title_b}」的联系与区别",
-            f"在什么场景下应选择「{title_a}」而非「{title_b}」？反之呢？",
-        ]
-        confusions = [
-            f"注意「{title_a}」和「{title_b}」虽然看似相关，但适用场景不同",
-        ]
-        transfer_learning = [
-            f"理解「{title_a}」的核心思想是否可以迁移到「{title_b}」的理解中",
-        ]
-    elif user_focus == "transfer":
-        transfer_learning = [
-            f"「{title_a}」的思维方式可否迁移到「{title_b}」的学习中",
-            f"两者在方法论层面是否有可复用的模式",
-        ]
-        exam_questions = [f"分析「{title_a}」与「{title_b}」的异同"]
-        confusions = [f"避免将「{title_a}」的适用条件混淆到「{title_b}」"]
-    else:  # concept
-        transfer_learning = [
-            f"对比两者的核心思想，寻找可迁移的方法论",
-        ]
-        confusions = [
-            f"注意「{title_a}」和「{title_b}」的适用场景差异",
-        ]
-        exam_questions = [
-            f"简述「{title_a}」与「{title_b}」的联系与区别",
-        ]
+    # Intentionally leave all semantic-conclusion sections empty.
 
     return {
         "concept_a": {

@@ -103,7 +103,14 @@ def _quiz_to_response(quiz: Quiz) -> QuizOut:
     )
 
 
-def _grade_item(item: QuizItem, user_answer: str) -> bool:
+def _normalise_option_answer(value) -> str:
+    if isinstance(value, list):
+        return ",".join(sorted({_normalise_option_answer(v) for v in value if _normalise_option_answer(v)}))
+    text = str(value or "").strip().upper()
+    return text[0] if text and text[0].isalpha() else text
+
+
+def _grade_item(item: QuizItem, user_answer) -> bool:
     """Grade a single item.
 
     - ``choice`` / ``true_false``: case-insensitive exact match on the
@@ -112,11 +119,17 @@ def _grade_item(item: QuizItem, user_answer: str) -> bool:
       answer must appear in the user's answer).
     """
     answer = (item.answer or "").strip()
-    user_answer = (user_answer or "").strip()
+    user_answer = _normalise_option_answer(user_answer) if item.question_type in ("choice", "multiple_choice", "true_false") else str(user_answer or "").strip()
     if not user_answer:
         return False
     if item.question_type in ("choice", "true_false"):
-        return user_answer.upper() == answer.upper()
+        return user_answer == _normalise_option_answer(answer)
+    if item.question_type == "multiple_choice":
+        try:
+            correct = json.loads(answer) if answer.startswith("[") else answer.split(",")
+        except json.JSONDecodeError:
+            correct = answer.split(",")
+        return set(filter(None, user_answer.split(","))) == set(filter(None, _normalise_option_answer(correct).split(",")))
     if item.question_type == "short_answer":
         return answer.lower() in user_answer.lower()
     # Unknown type: fall back to exact match.
@@ -224,6 +237,9 @@ def create_quiz(
             ),
             answer=item_data.get("answer", ""),
             explanation=item_data.get("explanation", ""),
+            difficulty=item_data.get("difficulty"),
+            source_evidence_ids=json.dumps(item_data.get("source_evidence_ids", [])),
+            evidence_snapshot=json.dumps(item_data.get("source_evidence_ids", [])),
             order_index=item_data.get("order_index", 0),
         )
         db.add(item)
@@ -325,7 +341,7 @@ def submit_quiz(
 
     # Index items by id for O(1) lookup.
     items_by_id: dict[int, QuizItem] = {item.id: item for item in quiz.items}
-    answer_map: dict[int, str] = {
+    answer_map: dict[int, str | list[str]] = {
         a.item_id: a.user_answer for a in payload.answers
     }
 
@@ -355,7 +371,7 @@ def submit_quiz(
     for item in sorted(quiz.items, key=lambda i: i.order_index):
         user_answer = answer_map.get(item.id, "")
         is_correct = _grade_item(item, user_answer) if user_answer else False
-        item.user_answer = user_answer
+        item.user_answer = json.dumps(user_answer, ensure_ascii=False) if isinstance(user_answer, list) else user_answer
         item.is_correct = 1 if is_correct else 0
         if is_correct:
             score += 1

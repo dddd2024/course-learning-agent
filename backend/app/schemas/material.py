@@ -19,7 +19,9 @@ class MaterialResponse(BaseModel):
     course_id: int
     filename: str
     file_type: str
-    file_path: str
+    # Storage paths are intentionally not exposed; clients use this URL with
+    # their bearer token to retrieve the original file.
+    file_url: Optional[str] = None
     status: str
     version: int
     error_message: Optional[str] = None
@@ -70,7 +72,7 @@ class ImageResponse(BaseModel):
 
     id: int
     page_no: int
-    image_path: str
+    file_url: Optional[str] = None
     width: Optional[int] = None
     height: Optional[int] = None
     format: str = "png"

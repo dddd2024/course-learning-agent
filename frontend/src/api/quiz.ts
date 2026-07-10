@@ -1,14 +1,15 @@
 import request from './index'
 import type { AxiosPromise } from 'axios'
 
-export type QuestionType = 'choice' | 'true_false' | 'short_answer'
+export type QuestionType = 'choice' | 'multiple_choice' | 'true_false' | 'short_answer'
+export interface QuizOption { label: string; text: string; value: string }
 export type QuizStatus = 'draft' | 'submitted'
 
 export interface QuizItem {
   id: number
   question_type: QuestionType
   question_text: string
-  options: string[]
+  options: QuizOption[]
   explanation: string
   order_index: number
 }
@@ -31,7 +32,7 @@ export interface QuizListResult {
 
 export interface QuizSubmitAnswer {
   item_id: number
-  user_answer: string
+  user_answer: string | string[]
 }
 
 export interface QuizSubmitPayload {
@@ -42,9 +43,9 @@ export interface QuizResultItem {
   id: number
   question_text: string
   question_type: QuestionType
-  options: string[]
+  options: QuizOption[]
   correct_answer: string
-  user_answer: string
+  user_answer: string | string[]
   is_correct: boolean
   explanation: string
   knowledge_point_id: number | null

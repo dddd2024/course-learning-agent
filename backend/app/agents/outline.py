@@ -375,6 +375,7 @@ def _fetch_chunks(db: Session, course_id: int) -> list[dict]:
         .join(Material, Material.id == MaterialChunk.material_id)
         .filter(
             MaterialChunk.course_id == course_id,
+            MaterialChunk.is_active == 1,
             Material.status == "ready",
         )
         .order_by(MaterialChunk.material_id, MaterialChunk.chunk_index.asc())

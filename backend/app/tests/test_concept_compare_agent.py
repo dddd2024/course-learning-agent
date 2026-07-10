@@ -164,7 +164,9 @@ def test_compare_passes_user_config(db_session, monkeypatch):
     get_or_create_compare_report(
         db_session, user.id, n1.id, n2.id, user_config=my_config
     )
-    assert captured["user_config"] == my_config
+    # With no raw evidence, the service must not invoke an LLM merely to
+    # fabricate a formal comparison.
+    assert "user_config" not in captured
 
 
 def test_compare_rejects_foreign_edge_id(db_session):
@@ -303,7 +305,7 @@ def test_compare_service_passes_user_focus(db_session, monkeypatch):
     get_or_create_compare_report(
         db_session, user.id, n1.id, n2.id, user_focus="exam"
     )
-    assert captured["user_focus"] == "exam", "service 必须把 user_focus 传给 agent"
+    assert "user_focus" not in captured
 
 
 def test_compare_cache_separates_user_focus(db_session, monkeypatch):
@@ -335,7 +337,7 @@ def test_compare_cache_separates_user_focus(db_session, monkeypatch):
     )
     reports = db_session.query(ConceptCompareReport).all()
     assert len(reports) == 2, "不同 user_focus 必须生成不同报告"
-    assert call_count["n"] == 2
+    assert call_count["n"] == 0
 
 
 def test_compare_cache_invalidates_when_evidence_changes(db_session, monkeypatch):

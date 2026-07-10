@@ -56,7 +56,7 @@ class StudyTask(Base, TimestampMixin):
         Integer, ForeignKey("courses.id"), nullable=False, index=True
     )
     title = Column(String(255), nullable=False)
-    task_type = Column(String(30), nullable=False)  # review/learn/practice/quiz
+    task_type = Column(String(30), nullable=False)  # review/learn/quiz
     estimate_minutes = Column(Integer, nullable=False, default=60)
     priority = Column(Integer, nullable=False, default=3)  # 1-5, 5 highest
     acceptance = Column(Text)
