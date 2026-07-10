@@ -15,6 +15,9 @@ import io
 from app.main import app
 from app.tests.conftest import auth_headers, create_course, upload_material
 
+# Diverse OS text that passes _is_low_quality_chunk filter
+from app.tests._test_data import DIVERSE_OS_TEXT
+
 
 def test_upload_material_success(client, tmp_path, monkeypatch) -> None:
     """POST /api/v1/courses/{id}/materials returns 201 with metadata."""
@@ -204,7 +207,7 @@ def test_delete_material_clears_chunks(client, tmp_path, monkeypatch) -> None:
         headers,
         course_id,
         "notes.txt",
-        ("操作系统是管理硬件资源的系统软件。" * 30).encode("utf-8"),
+        (DIVERSE_OS_TEXT * 2).encode("utf-8"),
     )
     # Parse so chunks exist (background task, returns processing).
     parse_resp = client.post(

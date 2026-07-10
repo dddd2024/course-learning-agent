@@ -35,6 +35,7 @@ from app.models.security_finding import MaterialSecurityFinding
 from app.retrieval.chunker import build_chunks, clean_keyword_text, _is_low_quality_chunk
 from app.retrieval.parsers import parse_file
 from app.services import security_scanner
+from app.services.chunk_quality import evaluate_chunks_quality
 from app.services.error_logger import log_error
 
 logger = logging.getLogger(__name__)
@@ -114,10 +115,25 @@ def parse_with_retry(
             ).delete(synchronize_session=False)
 
             saved_chunks: list[MaterialChunk] = []
+            # Step 1: Rule-based pre-filter (fast, no API calls)
+            candidate_chunks = []
             for chunk in chunks:
                 text = chunk["text"]
                 if _is_low_quality_chunk(text):
-                    continue  # Don't store low-quality chunks
+                    continue
+                candidate_chunks.append(chunk)
+
+            # Step 2: AI quality evaluation (batch LLM call)
+            eval_input = [
+                {"text": c["text"], "index": i}
+                for i, c in enumerate(candidate_chunks)
+            ]
+            quality_results = evaluate_chunks_quality(eval_input)
+
+            # Step 3: Store with quality scores
+            for i, chunk in enumerate(candidate_chunks):
+                text = chunk["text"]
+                qr = quality_results[i] if i < len(quality_results) else {"quality": 0.5, "reason": ""}
                 mc = MaterialChunk(
                     material_id=material_id,
                     course_id=material.course_id,
@@ -127,6 +143,8 @@ def parse_with_retry(
                     text=text,
                     token_count=len(text),
                     keyword_text=clean_keyword_text(text),
+                    quality_score=qr.get("quality", 0.5),
+                    quality_reason=qr.get("reason", ""),
                 )
                 db.add(mc)
                 saved_chunks.append(mc)

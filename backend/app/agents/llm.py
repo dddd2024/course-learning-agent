@@ -822,6 +822,101 @@ def _extract_prompt_field(prompt: str, field_name: str) -> str:
     return ""
 
 
+def _heuristic_quality_score(text: str) -> tuple[float, str]:
+    """Return (score, reason) using enhanced heuristics for chunk quality.
+
+    Goes beyond _is_low_quality_chunk by also checking:
+    - Sentence structure (presence of periods, conjunctions)
+    - Information density (meaningful word ratio)
+    - Content coherence (transitions between ideas)
+    """
+    import re as _re
+
+    if not text or len(text.strip()) < 10:
+        return 0.1, "内容过短，无实质信息"
+
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if not lines:
+        return 0.1, "内容为空"
+
+    # 1. Line repetition check
+    unique_ratio = len(set(lines)) / len(lines)
+    if unique_ratio < 0.5:
+        return 0.15, "行重复率高，疑似图表标签文本"
+
+    # 2. Short-line stacking
+    short_lines = sum(1 for l in lines if len(l) < 4)
+    if len(lines) > 3 and short_lines / len(lines) > 0.6:
+        return 0.15, "短行堆叠，疑似图表或编号文本"
+
+    # 3. Vocabulary diversity
+    cjk_chars = [c for c in text if "\u4e00" <= c <= "\u9fff" or c.isalpha()]
+    if not cjk_chars:
+        return 0.2, "无有效文字字符"
+    unique_chars = len(set(cjk_chars))
+    diversity = unique_chars / len(cjk_chars)
+    if diversity < 0.3:
+        return 0.2, "词汇多样性低，疑似重复文本"
+
+    # 4. Sentence structure - look for sentence endings
+    sentence_endings = text.count("。") + text.count("；") + text.count(".") + text.count(";")
+    if sentence_endings == 0 and len(text) > 50:
+        return 0.3, "无句尾标点，缺乏完整句子结构"
+
+    # 5. Information density - meaningful CJK words (2+ consecutive CJK chars)
+    cjk_sequences = _re.findall(r"[\u4e00-\u9fff]{2,}", text)
+    meaningful_words = len(cjk_sequences)
+    if len(text) > 100 and meaningful_words < 5:
+        return 0.35, "有效词汇密度低"
+
+    # 6. Noise patterns - years, page numbers, teacher info
+    noise_patterns = [
+        r"\d{4}年(?:春|秋|夏|冬)",
+        r"第\d+页",
+        r"[主讲教师|教师][:：]",
+    ]
+    noise_count = sum(len(_re.findall(p, text)) for p in noise_patterns)
+    if noise_count > 2 and noise_count / max(len(lines), 1) > 0.3:
+        return 0.4, "噪声内容占比高"
+
+    # Passed all checks - assign score based on content quality
+    if len(text) > 80 and sentence_endings >= 2 and diversity > 0.5:
+        return 0.9, "内容完整，信息密度高"
+    if len(text) > 30 and sentence_endings >= 1:
+        return 0.7, "内容较为完整"
+    return 0.55, "内容基本可用"
+
+
+def _mock_chunk_quality(prompt: str = "") -> dict[str, Any]:
+    """Evaluate chunk quality using enhanced heuristics.
+
+    Parses chunks from the prompt and returns a quality score (0.0-1.0)
+    and reason for each. This mock uses sentence structure, information
+    density, and noise detection beyond the basic _is_low_quality_chunk rules.
+    """
+    chunk_pattern = re.compile(
+        r"\[片段(\d+)\]\s*\n(.+?)(?=\n\n|\[片段\d+\]|\Z)",
+        re.DOTALL,
+    )
+    matches = chunk_pattern.findall(prompt)
+
+    if not matches:
+        return {"evaluations": []}
+
+    evaluations = []
+    for idx_str, text in matches:
+        idx = int(idx_str)
+        text = text.strip()
+        score, reason = _heuristic_quality_score(text)
+        evaluations.append({
+            "index": idx,
+            "quality": round(score, 2),
+            "reason": reason,
+        })
+
+    return {"evaluations": evaluations}
+
+
 _MOCK_BUILDERS = {
     "course_qa": _mock_course_qa,
     "outline": _mock_outline,
@@ -831,6 +926,7 @@ _MOCK_BUILDERS = {
     "quiz_generate": _mock_quiz_generate,
     "citation_verify": _mock_citation_verify,
     "concept_compare": _mock_concept_compare,
+    "chunk_quality": _mock_chunk_quality,
 }
 
 

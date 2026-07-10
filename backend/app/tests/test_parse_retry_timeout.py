@@ -94,7 +94,7 @@ def test_parse_retries_then_succeeds(client, tmp_path, monkeypatch) -> None:
         headers,
         course_id,
         "notes.txt",
-        ("操作系统管理硬件资源。" * 20).encode("utf-8"),
+        (__import__('app.tests._test_data', fromlist=['DIVERSE_OS_TEXT']).DIVERSE_OS_TEXT * 2).encode("utf-8"),
     )
 
     # parse_file fails twice then succeeds.
@@ -194,7 +194,7 @@ def test_reparse_failure_with_old_chunks_keeps_ready_warning(
         headers,
         course_id,
         "notes.txt",
-        ("操作系统管理硬件资源。" * 20).encode("utf-8"),
+        (__import__('app.tests._test_data', fromlist=['DIVERSE_OS_TEXT']).DIVERSE_OS_TEXT * 2).encode("utf-8"),
     )
 
     # First parse succeeds so chunks exist.

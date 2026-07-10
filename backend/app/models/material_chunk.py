@@ -4,7 +4,7 @@ A chunk is a fixed-size slice of a parsed material used for retrieval
 and citation. Chunks are produced by the parse pipeline
 (``POST /materials/{id}/parse``) and stored alongside the material.
 """
-from sqlalchemy import Column, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, ForeignKey, Integer, String, Text, Float
 
 from app.models.base import Base, TimestampMixin
 
@@ -28,6 +28,8 @@ class MaterialChunk(Base, TimestampMixin):
     token_count = Column(Integer)
     keyword_text = Column(Text)  # cleaned text used for keyword retrieval
     embedding_id = Column(String(100))
+    quality_score = Column(Float, nullable=True)  # AI quality score 0.0-1.0
+    quality_reason = Column(String(500))  # AI quality assessment reason
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (

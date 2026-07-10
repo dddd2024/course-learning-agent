@@ -52,6 +52,8 @@ export interface Chunk {
   text: string
   keyword_text?: string
   images?: ChunkImage[]
+  quality_score?: number | null
+  quality_reason?: string | null
 }
 
 export interface ChunkListResult {

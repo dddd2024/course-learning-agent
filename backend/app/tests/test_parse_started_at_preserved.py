@@ -50,7 +50,8 @@ def test_parse_with_retry_preserves_parse_started_at(
     def fake_parse(path, file_type):
         # Capture the value visible to the parse function.
         captured["started_at"] = material.parse_started_at
-        return [(1, "操作系统管理硬件资源。" * 20)]
+        from app.tests._test_data import DIVERSE_OS_TEXT
+        return [(1, DIVERSE_OS_TEXT * 2)]
 
     status, count = parse_with_retry(
         db_session, material, sample_user.id, parse_fn=fake_parse

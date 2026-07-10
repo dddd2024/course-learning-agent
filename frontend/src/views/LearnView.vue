@@ -171,6 +171,14 @@
                 <span v-if="chunk.title" class="doc-chunk-title">
                   {{ chunk.title }}
                 </span>
+                <span
+                  v-if="chunk.quality_score !== null && chunk.quality_score !== undefined"
+                  class="quality-badge"
+                  :class="getQualityClass(chunk.quality_score)"
+                  :title="chunk.quality_reason || ''"
+                >
+                  AI 质量 {{ Math.round(chunk.quality_score * 100) }}%
+                </span>
               </div>
               <div
                 class="doc-chunk-text"
@@ -434,6 +442,11 @@ function isUsefulChunk(chunk: Chunk): boolean {
     }
   }
 
+  // AI quality score filter - chunks with quality_score < 0.3 are filtered
+  if (chunk.quality_score !== null && chunk.quality_score !== undefined) {
+    if (chunk.quality_score < 0.3) return false
+  }
+
   return true
 }
 
@@ -469,6 +482,12 @@ function getChunkLabel(chunk: Chunk): string {
   }
   if (chunk.page_no) return `第${chunk.page_no}页`
   return '片段'
+}
+
+function getQualityClass(score: number): string {
+  if (score >= 0.7) return 'quality-high'
+  if (score >= 0.4) return 'quality-medium'
+  return 'quality-low'
 }
 
 // --- Term highlighting ---
@@ -1095,6 +1114,34 @@ function goBack() {
   font-size: 14px;
   font-weight: 600;
   color: #303133;
+}
+
+.quality-badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+  cursor: help;
+}
+
+.quality-high {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border: 1px solid #a5d6a7;
+}
+
+.quality-medium {
+  background: #fff3e0;
+  color: #e65100;
+  border: 1px solid #ffcc80;
+}
+
+.quality-low {
+  background: #ffebee;
+  color: #c62828;
+  border: 1px solid #ef9a9a;
 }
 
 .doc-chunk-text {

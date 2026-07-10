@@ -373,7 +373,8 @@ def test_parse_failure_without_old_chunks_still_failed(
 
 def test_chunk_size_strategy() -> None:
     """Unit test: chunk_text on long text produces overlapping chunks."""
-    text = "操作系统" * 500  # 2000 chars
+    from app.tests._test_data import DIVERSE_OS_TEXT
+    text = DIVERSE_OS_TEXT * 2  # ~1880 chars, enough for multiple chunks
     chunks = chunk_text(text, chunk_size=600, overlap=100)
     assert len(chunks) > 1
     # Each non-final chunk should be in the 500-800 range (chunk_size=600).
@@ -419,7 +420,8 @@ def test_parse_pdf_unit(tmp_path) -> None:
 
 def test_build_chunks_preserves_page_no() -> None:
     """build_chunks propagates page_no from parsed pages."""
-    pages = [(1, "甲" * 1500), (2, "乙" * 200)]
+    from app.tests._test_data import DIVERSE_OS_TEXT
+    pages = [(1, DIVERSE_OS_TEXT), (2, DIVERSE_OS_TEXT[:400])]
     chunks = build_chunks(pages, chunk_size=600, overlap=100)
     assert len(chunks) > 0
     # All chunks carry a page_no from the originating page.
