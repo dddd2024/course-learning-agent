@@ -4,6 +4,9 @@
 persists ``StudyGoal`` / ``StudyTask`` rows, then calls the
 ``scheduler`` to expand tasks into per-day ``Todo`` rows.
 
+``GET /api/v1/plans`` lists the current user's persisted goals with
+task/todo progress. ``GET /api/v1/plans/{id}`` restores a complete plan.
+
 ``GET /api/v1/todos`` lists the current user's todos with optional
 ``date`` / ``status`` / ``course_id`` filters.
 
@@ -40,7 +43,10 @@ from app.schemas.multi_plan import (
 from app.schemas.plan import (
     GoalResponse,
     PlanCreate,
+    PlanListResponse,
+    PlanProgressResponse,
     PlanResponse,
+    PlanSummaryResponse,
     TaskResponse,
     TodoListResponse,
     TodoResponse,
@@ -60,12 +66,76 @@ todos_router = APIRouter()
 _PROMPT_VERSION = "planner_v1"
 
 
-def _load_course_names(db: Session, course_ids: set[int]) -> dict[int, str]:
+def _load_course_names(
+    db: Session,
+    course_ids: set[int],
+    user_id: int | None = None,
+) -> dict[int, str]:
     """Return ``{course_id: course_name}`` for the given course ids."""
     if not course_ids:
         return {}
-    rows = db.query(Course).filter(Course.id.in_(course_ids)).all()
+    query = db.query(Course).filter(Course.id.in_(course_ids))
+    if user_id is not None:
+        query = query.filter(Course.user_id == user_id)
+    rows = query.all()
     return {r.id: r.name for r in rows}
+
+
+def _resolve_user_courses(
+    db: Session,
+    user_id: int,
+    payload: PlanCreate,
+) -> list[Course]:
+    """Resolve owned courses, preferring stable ids over legacy names."""
+    if payload.course_ids:
+        requested_ids = list(dict.fromkeys(payload.course_ids))
+        rows = (
+            db.query(Course)
+            .filter(
+                Course.user_id == user_id,
+                Course.id.in_(requested_ids),
+            )
+            .all()
+        )
+        by_id = {course.id: course for course in rows}
+        if any(course_id not in by_id for course_id in requested_ids):
+            raise NotFoundException(message="部分课程不存在或无权访问")
+        return [by_id[course_id] for course_id in requested_ids]
+
+    # Backward-compatible name lookup.  Duplicate names cannot be expressed
+    # unambiguously by the legacy contract, so choose the oldest matching row
+    # deterministically; new clients submit ``course_ids`` instead.
+    requested_names = list(dict.fromkeys(payload.courses))
+    rows = (
+        db.query(Course)
+        .filter(
+            Course.user_id == user_id,
+            Course.name.in_(requested_names),
+        )
+        .order_by(Course.id.asc())
+        .all()
+    )
+    by_name: dict[str, Course] = {}
+    for course in rows:
+        by_name.setdefault(course.name, course)
+    if any(name not in by_name for name in requested_names):
+        raise NotFoundException(message="部分课程不存在或无权访问")
+    return [by_name[name] for name in requested_names]
+
+
+def _build_course_map(courses: list[Course]) -> dict[str, int]:
+    """Build unambiguous planner labels mapped to stable course ids."""
+    name_counts: dict[str, int] = {}
+    for course in courses:
+        name_counts[course.name] = name_counts.get(course.name, 0) + 1
+    return {
+        (
+            f"{course.name}（课程 #{course.id}）"
+            if name_counts[course.name] > 1
+            else course.name
+        ): course.id
+        for course in courses
+    }
 
 
 def _build_weak_point_review_tasks(
@@ -145,6 +215,150 @@ def _todo_to_response(todo: Todo, course_name: str) -> TodoResponse:
     )
 
 
+def _load_plan_response(
+    db: Session,
+    goal: StudyGoal,
+    user_id: int,
+) -> PlanResponse:
+    """Restore a persisted goal with its tasks and scheduled todos."""
+    tasks = (
+        db.query(StudyTask)
+        .filter(StudyTask.goal_id == goal.id)
+        .order_by(StudyTask.id.asc())
+        .all()
+    )
+    task_ids = [task.id for task in tasks]
+    todos = []
+    if task_ids:
+        todos = (
+            db.query(Todo)
+            .filter(
+                Todo.user_id == user_id,
+                Todo.task_id.in_(task_ids),
+            )
+            .order_by(Todo.scheduled_date.asc(), Todo.id.asc())
+            .all()
+        )
+    course_name_by_id = _load_course_names(
+        db,
+        {task.course_id for task in tasks}
+        | {todo.course_id for todo in todos},
+        user_id=user_id,
+    )
+    return PlanResponse(
+        goal=GoalResponse.model_validate(goal),
+        tasks=[
+            _task_to_response(task, course_name_by_id.get(task.course_id, ""))
+            for task in tasks
+        ],
+        todos=[
+            _todo_to_response(todo, course_name_by_id.get(todo.course_id, ""))
+            for todo in todos
+        ],
+    )
+
+
+@router.get("", response_model=PlanListResponse)
+def list_plans(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PlanListResponse:
+    """List the current user's persisted learning goals and progress."""
+    goals = (
+        db.query(StudyGoal)
+        .filter(StudyGoal.user_id == current_user.id)
+        .order_by(StudyGoal.created_at.desc(), StudyGoal.id.desc())
+        .all()
+    )
+    goal_ids = [goal.id for goal in goals]
+    tasks = []
+    if goal_ids:
+        tasks = (
+            db.query(StudyTask)
+            .filter(StudyTask.goal_id.in_(goal_ids))
+            .order_by(StudyTask.id.asc())
+            .all()
+        )
+    task_ids = [task.id for task in tasks]
+    todos = []
+    if task_ids:
+        todos = (
+            db.query(Todo)
+            .filter(
+                Todo.user_id == current_user.id,
+                Todo.task_id.in_(task_ids),
+            )
+            .order_by(Todo.id.asc())
+            .all()
+        )
+
+    tasks_by_goal: dict[int, list[StudyTask]] = {goal_id: [] for goal_id in goal_ids}
+    goal_id_by_task_id: dict[int, int] = {}
+    for task in tasks:
+        tasks_by_goal.setdefault(task.goal_id, []).append(task)
+        goal_id_by_task_id[task.id] = task.goal_id
+    todos_by_goal: dict[int, list[Todo]] = {goal_id: [] for goal_id in goal_ids}
+    for todo in todos:
+        goal_id = goal_id_by_task_id.get(todo.task_id)
+        if goal_id is not None:
+            todos_by_goal.setdefault(goal_id, []).append(todo)
+
+    course_name_by_id = _load_course_names(
+        db,
+        {task.course_id for task in tasks},
+        user_id=current_user.id,
+    )
+    items: list[PlanSummaryResponse] = []
+    for goal in goals:
+        goal_tasks = tasks_by_goal.get(goal.id, [])
+        goal_todos = todos_by_goal.get(goal.id, [])
+        course_ids = list(dict.fromkeys(task.course_id for task in goal_tasks))
+        items.append(
+            PlanSummaryResponse(
+                goal=GoalResponse.model_validate(goal),
+                course_ids=course_ids,
+                course_names=[
+                    course_name_by_id.get(course_id, "")
+                    for course_id in course_ids
+                ],
+                progress=PlanProgressResponse(
+                    tasks_total=len(goal_tasks),
+                    tasks_completed=sum(
+                        task.status in {"done", "completed"}
+                        for task in goal_tasks
+                    ),
+                    todos_total=len(goal_todos),
+                    todos_completed=sum(
+                        todo.status == "completed" for todo in goal_todos
+                    ),
+                ),
+                created_at=goal.created_at,
+                updated_at=goal.updated_at,
+            )
+        )
+    return PlanListResponse(items=items, total=len(items))
+
+
+@router.get("/{goal_id}", response_model=PlanResponse)
+def get_plan(
+    goal_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PlanResponse:
+    """Restore one complete plan owned by the current user."""
+    goal = (
+        db.query(StudyGoal)
+        .filter(
+            StudyGoal.id == goal_id,
+            StudyGoal.user_id == current_user.id,
+        )
+        .first()
+    )
+    if goal is None:
+        raise NotFoundException(message="学习计划不存在")
+    return _load_plan_response(db, goal, current_user.id)
+
+
 @router.post("", response_model=PlanResponse)
 def create_plan(
     payload: PlanCreate,
@@ -153,20 +367,8 @@ def create_plan(
 ) -> PlanResponse:
     """Create a study plan: goal + tasks + per-day todos."""
     # 1. Validate every requested course belongs to the user.
-    user_courses = (
-        db.query(Course)
-        .filter(
-            Course.user_id == current_user.id,
-            Course.name.in_(payload.courses),
-        )
-        .all()
-    )
-    found_names = {c.name for c in user_courses}
-    missing = [n for n in payload.courses if n not in found_names]
-    if missing:
-        raise NotFoundException(message="部分课程不存在或无权访问")
-
-    course_map = {c.name: c.id for c in user_courses}
+    user_courses = _resolve_user_courses(db, current_user.id, payload)
+    course_map = _build_course_map(user_courses)
 
     active_config = get_active_config(db, current_user.id)
     user_config = build_user_config(active_config) if active_config else None
@@ -189,7 +391,8 @@ def create_plan(
             run_type="planner",
             input_summary={
                 "goal": payload.goal,
-                "courses": list(payload.courses),
+                "course_ids": [course.id for course in user_courses],
+                "courses": [course.name for course in user_courses],
                 "deadline": str(payload.deadline),
                 "daily_minutes": payload.daily_minutes,
             },
@@ -214,7 +417,7 @@ def create_plan(
             db=db,
             user_id=current_user.id,
             goal=payload.goal,
-            courses=list(payload.courses),
+            courses=list(course_map),
             deadline=payload.deadline,
             daily_minutes=payload.daily_minutes,
             user_config=user_config,
@@ -505,10 +708,12 @@ def list_todos(
     date: date | None = Query(None),
     status: str | None = Query(None),
     course_id: int | None = Query(None),
+    page: int | None = Query(None, ge=1),
+    page_size: int | None = Query(None, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> TodoListResponse:
-    """List the current user's todos with optional filters."""
+    """List owned todos, applying pagination when either page field is sent."""
     query = db.query(Todo).filter(Todo.user_id == current_user.id)
     if date is not None:
         query = query.filter(Todo.scheduled_date == date)
@@ -517,15 +722,25 @@ def list_todos(
     if course_id is not None:
         query = query.filter(Todo.course_id == course_id)
 
-    rows = (
-        query.order_by(Todo.scheduled_date.asc(), Todo.id.asc()).all()
+    total = query.count()
+    ordered_query = query.order_by(Todo.scheduled_date.asc(), Todo.id.asc())
+    if page is not None or page_size is not None:
+        effective_page = page or 1
+        effective_page_size = page_size or 20
+        ordered_query = ordered_query.offset(
+            (effective_page - 1) * effective_page_size
+        ).limit(effective_page_size)
+    rows = ordered_query.all()
+    course_name_by_id = _load_course_names(
+        db,
+        {r.course_id for r in rows},
+        user_id=current_user.id,
     )
-    course_name_by_id = _load_course_names(db, {r.course_id for r in rows})
     items = [
         _todo_to_response(r, course_name_by_id.get(r.course_id, ""))
         for r in rows
     ]
-    return TodoListResponse(items=items, total=len(items))
+    return TodoListResponse(items=items, total=total)
 
 
 @todos_router.patch("/{todo_id}", response_model=TodoResponse)
@@ -549,6 +764,8 @@ def update_todo(
         todo.status = update_data["status"]
         if update_data["status"] == "completed":
             todo.completed_at = datetime.now()
+        else:
+            todo.completed_at = None
     if "actual_minutes" in update_data and update_data["actual_minutes"] is not None:
         todo.actual_minutes = update_data["actual_minutes"]
 

@@ -38,6 +38,15 @@ export const API_BASE_URL: string = ENV_BASE_URL || '/api/v1'
 export const BACKEND_PROXY_TARGET = 'http://127.0.0.1:8000'
 
 /**
+ * Public material-image base. Keep it same-origin when the API uses the
+ * development proxy, and derive it from an explicitly configured backend
+ * origin for remote deployments.
+ */
+export const UPLOAD_BASE_URL: string = ENV_BASE_URL
+  ? `${ENV_BASE_URL.replace(/\/api\/v1\/?$/, '')}/uploads`
+  : '/uploads'
+
+/**
  * Whether API_BASE_URL is a relative path (same-origin via proxy) vs.
  * an absolute URL (cross-origin). Used to decide whether to show the
  * "same-origin proxy" hint in the diagnostics panel.

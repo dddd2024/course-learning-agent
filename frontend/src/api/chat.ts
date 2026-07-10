@@ -1,5 +1,6 @@
 import request from './index'
 import type { AxiosPromise, AxiosRequestConfig } from 'axios'
+import { useAuthStore } from '../stores/auth'
 
 export interface Conversation {
   id: number
@@ -161,7 +162,10 @@ export async function sendMessageStream(
   onEvent: (event: ChatStreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<ChatResult | null> {
-  const token = localStorage.getItem('token')
+  // Keep native-fetch authentication aligned with the axios interceptor.
+  // The auth store already applies the app's sessionStorage/localStorage
+  // remember-login rules, so SSE must not read only one storage directly.
+  const token = useAuthStore().token
   // Phase 2 bugfix P2: use a relative URL so the Vite dev-server proxy
   // (or the production reverse proxy) handles routing. The previous
   // hardcoded http://localhost:8000 broke any non-default port.

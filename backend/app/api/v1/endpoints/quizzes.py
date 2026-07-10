@@ -5,7 +5,10 @@ knowledge points, persists ``Quiz`` + ``QuizItem`` rows, and returns
 the quiz (without answers).
 
 ``GET /api/v1/quizzes`` / ``GET /api/v1/quizzes/{id}`` list / fetch
-quizzes for the current user (answers never leak to the client).
+quizzes for the current user (answers never leak before submission).
+
+``GET /api/v1/quizzes/{id}/result`` returns the persisted result of a
+submitted quiz so it can be reviewed again without re-submitting it.
 
 ``POST /api/v1/quizzes/{id}/submit`` grades the submitted answers,
 fills ``score`` / ``status`` / per-item ``user_answer`` /
@@ -254,6 +257,39 @@ def get_quiz(
     """Return a single quiz with its items (answers excluded)."""
     quiz = _get_owned_quiz(db, quiz_id, current_user.id)
     return _quiz_to_response(quiz)
+
+
+@router.get("/{quiz_id}/result", response_model=QuizResultOut)
+def get_quiz_result(
+    quiz_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> QuizResultOut:
+    """Return a submitted quiz's persisted answers and grading details."""
+    quiz = _get_owned_quiz(db, quiz_id, current_user.id)
+    if quiz.status != "submitted":
+        raise BusinessException(message="该测验尚未提交，暂无结果")
+
+    items = [
+        QuizResultItemOut(
+            id=item.id,
+            question_type=item.question_type,
+            question_text=item.question_text,
+            options=item.options,
+            correct_answer=item.answer or "",
+            user_answer=item.user_answer,
+            is_correct=item.is_correct,
+            explanation=item.explanation,
+            knowledge_point_id=item.knowledge_point_id,
+        )
+        for item in sorted(quiz.items, key=lambda i: i.order_index)
+    ]
+    return QuizResultOut(
+        id=quiz.id,
+        score=quiz.score or 0,
+        total=len(items),
+        items=items,
+    )
 
 
 @router.delete("/{quiz_id}", status_code=204)

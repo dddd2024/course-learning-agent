@@ -2,6 +2,7 @@ import request from './index'
 import type { AxiosPromise } from 'axios'
 
 export type QuestionType = 'choice' | 'true_false' | 'short_answer'
+export type QuizStatus = 'draft' | 'submitted'
 
 export interface QuizItem {
   id: number
@@ -17,7 +18,7 @@ export interface Quiz {
   course_id: number
   title: string
   question_count: number
-  status: string
+  status: QuizStatus
   score: number | null
   created_at: string
   items: QuizItem[]
@@ -103,6 +104,10 @@ export function getQuizzes(
 
 export function getQuiz(id: number): AxiosPromise<Quiz> {
   return request.get(`/quizzes/${id}`)
+}
+
+export function getQuizResult(id: number): AxiosPromise<QuizResult> {
+  return request.get(`/quizzes/${id}/result`)
 }
 
 export function deleteQuiz(id: number): AxiosPromise<void> {

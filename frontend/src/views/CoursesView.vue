@@ -23,6 +23,7 @@ const router = useRouter()
 const courses = ref<Course[]>([])
 const total = ref(0)
 const loading = ref(false)
+const loadError = ref('')
 
 const query = reactive({
   page: 1,
@@ -40,7 +41,7 @@ const defaultForm = (): CoursePayload => ({
   teacher: '',
   semester: '',
   description: '',
-  color: '#409eff',
+  color: '#2563eb',
 })
 
 const form = reactive<CoursePayload & { id?: number }>(defaultForm())
@@ -57,6 +58,7 @@ const formRules: FormRules<typeof form> = {
 
 async function fetchCourses() {
   loading.value = true
+  loadError.value = ''
   try {
     const { data } = await listCourses({
       page: query.page,
@@ -66,7 +68,7 @@ async function fetchCourses() {
     courses.value = data.items
     total.value = data.total
   } catch (err) {
-    ElMessage.error(parseApiError(err, '获取课程列表失败'))
+    loadError.value = parseApiError(err, '获取课程列表失败')
   } finally {
     loading.value = false
   }
@@ -111,7 +113,7 @@ function openEdit(course: Course) {
     teacher: course.teacher,
     semester: course.semester,
     description: course.description,
-    color: course.color || '#409eff',
+    color: course.color || '#2563eb',
   })
   dialogVisible.value = true
 }
@@ -186,7 +188,10 @@ onMounted(() => {
 <template>
   <div class="page">
     <div class="toolbar">
-      <h2 class="title">课程管理</h2>
+      <div>
+        <h2 class="title">课程管理</h2>
+        <p class="subtitle">课程是资料、问答、计划与测验的共同学习空间</p>
+      </div>
       <div class="actions">
         <el-input
           v-model="query.keyword"
@@ -200,7 +205,20 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-loading="loading" class="course-grid">
+    <el-alert
+      v-if="loadError"
+      :title="loadError"
+      type="error"
+      show-icon
+      :closable="false"
+      class="load-error"
+    >
+      <template #default>
+        <el-button size="small" @click="fetchCourses">重新加载</el-button>
+      </template>
+    </el-alert>
+
+    <div v-if="!loadError" v-loading="loading" class="course-grid">
       <EmptyState
         v-if="!loading && courses.length === 0"
         title="还没有课程"
@@ -213,9 +231,14 @@ onMounted(() => {
         :key="course.id"
         class="course-card"
         shadow="hover"
+        role="button"
+        tabindex="0"
+        :aria-label="`打开课程 ${course.name}`"
         @click="goToDetail(course)"
+        @keydown.enter="goToDetail(course)"
+        @keydown.space.prevent="goToDetail(course)"
       >
-        <div class="card-color" :style="{ backgroundColor: course.color || '#409eff' }" />
+        <div class="card-color" :style="{ backgroundColor: course.color || '#2563eb' }" />
         <div class="card-body">
           <div class="card-name">{{ course.name }}</div>
           <div class="card-meta">
@@ -309,6 +332,16 @@ onMounted(() => {
   color: #303133;
 }
 
+.subtitle {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.load-error {
+  margin-bottom: 16px;
+}
+
 .actions {
   display: flex;
   align-items: center;
@@ -330,6 +363,11 @@ onMounted(() => {
   cursor: pointer;
   position: relative;
   overflow: hidden;
+}
+
+.course-card:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.42);
+  outline-offset: 2px;
 }
 
 .course-card :deep(.el-card__body) {
@@ -379,5 +417,39 @@ onMounted(() => {
   margin-top: 24px;
   display: flex;
   justify-content: flex-end;
+}
+
+@media (max-width: 768px) {
+  .page {
+    padding: 16px;
+  }
+
+  .actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .search-input {
+    width: 100%;
+  }
+
+  .course-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pagination {
+    justify-content: center;
+  }
+}
+
+@media (max-width: 420px) {
+  .actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .actions :deep(.el-button) {
+    width: 100%;
+    margin-left: 0;
+  }
 }
 </style>

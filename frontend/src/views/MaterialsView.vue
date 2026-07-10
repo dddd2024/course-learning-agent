@@ -33,6 +33,7 @@ const courseLoading = ref(false)
 
 const materials = ref<Material[]>([])
 const tableLoading = ref(false)
+const materialsLoadError = ref('')
 
 interface UploadTask {
   uid: number
@@ -121,6 +122,7 @@ async function fetchCourse() {
 async function fetchMaterials() {
   if (!courseId.value) return
   tableLoading.value = true
+  materialsLoadError.value = ''
   try {
     const { data } = await listMaterials(courseId.value, {
       status: statusFilter.value || undefined,
@@ -128,7 +130,7 @@ async function fetchMaterials() {
     materials.value = data.items
     ensurePolling()
   } catch (err) {
-    ElMessage.error(parseApiError(err, '获取资料列表失败'))
+    materialsLoadError.value = parseApiError(err, '获取资料列表失败')
   } finally {
     tableLoading.value = false
   }
@@ -242,9 +244,11 @@ function customUpload(options: UploadRequestOptions): Promise<unknown> {
       throw err
     })
     .finally(() => {
-      setTimeout(() => {
-        uploadTasks.value = uploadTasks.value.filter((t) => t.uid !== task.uid)
-      }, 2000)
+      if (task.status === 'success') {
+        setTimeout(() => {
+          uploadTasks.value = uploadTasks.value.filter((t) => t.uid !== task.uid)
+        }, 2000)
+      }
     })
 }
 
@@ -533,7 +537,7 @@ onUnmounted(() => {
         </div>
         <template #tip>
           <div class="upload-tip">
-            支持 txt、pdf、docx、pptx、md 格式，可多文件上传
+            支持 txt、pdf、docx、pptx、md，可多选；单个文件默认不超过 30 MB
           </div>
         </template>
       </el-upload>
@@ -558,6 +562,9 @@ onUnmounted(() => {
             :percentage="task.percent"
             :status="task.status === 'error' ? 'exception' : task.status === 'success' ? 'success' : undefined"
           />
+          <p v-if="task.status === 'error' && task.error" class="upload-task-error">
+            {{ task.error }}，请检查文件后重新选择上传。
+          </p>
         </div>
         <div class="upload-tasks-actions">
           <el-button text size="small" @click="clearFinishedTasks">清除已完成</el-button>
@@ -588,11 +595,26 @@ onUnmounted(() => {
         </div>
       </template>
 
+      <el-alert
+        v-if="materialsLoadError"
+        :title="materialsLoadError"
+        type="error"
+        show-icon
+        :closable="false"
+        class="materials-load-error"
+      >
+        <template #default>
+          <el-button size="small" @click="fetchMaterials">重新加载</el-button>
+        </template>
+      </el-alert>
+
       <el-table
+        v-else
         v-loading="tableLoading"
         :data="materials"
         stripe
         empty-text="暂无资料，请上传文件"
+        class="materials-table"
       >
         <el-table-column prop="filename" label="文件名" min-width="220" show-overflow-tooltip />
         <el-table-column prop="file_type" label="类型" width="100" />
@@ -672,6 +694,61 @@ onUnmounted(() => {
           </template>
         </el-table-column>
       </el-table>
+
+      <div v-if="!materialsLoadError" v-loading="tableLoading" class="materials-mobile-list">
+        <el-empty v-if="!tableLoading && materials.length === 0" description="暂无资料，请上传文件" />
+        <article v-for="row in materials" :key="row.id" class="material-mobile-card">
+          <div class="material-mobile-head">
+            <strong>{{ row.filename }}</strong>
+            <el-tag :type="isStaleReady(row) ? 'warning' : statusTagType[row.status]" size="small">
+              {{ isStaleReady(row) ? staleReadyLabel() : statusLabel[row.status] }}
+            </el-tag>
+          </div>
+          <div class="material-mobile-meta">
+            <span>{{ row.file_type.toUpperCase() }}</span>
+            <span>版本 {{ row.version }}</span>
+            <span>{{ formatLocalDateTime(row.uploaded_at) }}</span>
+          </div>
+          <p v-if="row.status === 'processing' && row.parse_started_at" class="elapsed-hint">
+            已解析 {{ secondsSince(row.parse_started_at) }} 秒
+          </p>
+          <p v-if="row.error_message" class="material-mobile-error">{{ row.error_message }}</p>
+          <div class="material-mobile-actions">
+            <el-button
+              size="small"
+              type="primary"
+              :disabled="row.status === 'processing'"
+              @click="handleParse(row)"
+            >
+              {{ row.status === 'uploaded' ? '处理' : '重新处理' }}
+            </el-button>
+            <el-button
+              size="small"
+              :icon="View"
+              :disabled="row.status !== 'ready'"
+              @click="openChunksDialog(row)"
+            >
+              查看片段
+            </el-button>
+            <el-button
+              v-if="row.status === 'failed' || isStaleReady(row)"
+              size="small"
+              type="warning"
+              @click="goToLogs(row)"
+            >
+              查看原因
+            </el-button>
+            <el-button
+              size="small"
+              type="danger"
+              :disabled="row.status === 'processing'"
+              @click="handleDelete(row)"
+            >
+              删除
+            </el-button>
+          </div>
+        </article>
+      </div>
     </el-card>
 
     <el-card class="section-card" shadow="never">
@@ -982,6 +1059,22 @@ onUnmounted(() => {
   justify-content: flex-end;
 }
 
+.upload-task-error,
+.material-mobile-error {
+  margin-top: 6px;
+  color: var(--color-danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.materials-load-error {
+  margin-bottom: 12px;
+}
+
+.materials-mobile-list {
+  display: none;
+}
+
 .search-bar {
   display: flex;
   gap: 12px;
@@ -1213,5 +1306,123 @@ onUnmounted(() => {
 
 .overview-alert {
   margin-top: 4px;
+}
+
+@media (max-width: 768px) {
+  .page {
+    padding: 0;
+  }
+
+  .header,
+  .course-brief,
+  .section-title-bar,
+  .section-actions,
+  .search-results-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .header,
+  .section-title-bar,
+  .search-results-head {
+    gap: 10px;
+  }
+
+  .course-brief {
+    gap: 4px;
+  }
+
+  .section-actions {
+    width: 100%;
+    gap: 8px;
+  }
+
+  .section-actions :deep(.el-select),
+  .section-actions :deep(.el-button) {
+    width: 100% !important;
+    margin-left: 0;
+  }
+
+  .section-card :deep(.el-card__body),
+  .section-card :deep(.el-card__header) {
+    padding: 16px;
+  }
+
+  :deep(.el-upload),
+  :deep(.el-upload-dragger) {
+    width: 100%;
+  }
+
+  :deep(.el-upload-dragger) {
+    padding: 28px 12px;
+  }
+
+  .materials-table {
+    display: none;
+  }
+
+  .materials-mobile-list {
+    display: grid;
+    gap: 12px;
+  }
+
+  .material-mobile-card {
+    min-width: 0;
+    padding: 14px;
+    border: 1px solid var(--border-base);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+  }
+
+  .material-mobile-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .material-mobile-head strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .material-mobile-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    margin-top: 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+
+  .material-mobile-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .material-mobile-actions :deep(.el-button) {
+    margin-left: 0;
+  }
+
+  .search-bar {
+    flex-direction: column;
+  }
+
+  .search-bar :deep(.el-button) {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .search-item-foot {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .search-item-score {
+    width: 100%;
+    margin-left: 0;
+  }
 }
 </style>

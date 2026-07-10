@@ -186,12 +186,13 @@ function applyTodoUpdate(updated: Todo) {
 }
 
 async function handleComplete(todo: Todo) {
+  const nextStatus: TodoStatus = todo.status === 'completed' ? 'pending' : 'completed'
   try {
-    const { data } = await updateTodo(todo.id, { status: 'completed' })
+    const { data } = await updateTodo(todo.id, { status: nextStatus })
     applyTodoUpdate(data)
-    ElMessage.success('已完成')
+    ElMessage.success(nextStatus === 'completed' ? '已完成' : '已恢复为待完成')
   } catch (err) {
-    ElMessage.error(parseApiError(err, '完成待办失败'))
+    ElMessage.error(parseApiError(err, nextStatus === 'completed' ? '完成待办失败' : '恢复待办失败'))
   }
 }
 
@@ -231,11 +232,21 @@ function goToCourse(todo: Todo) {
 }
 
 async function handlePostpone(todo: Todo) {
+  if (todo.status === 'postponed') {
+    try {
+      const { data } = await updateTodo(todo.id, { status: 'pending' })
+      applyTodoUpdate(data)
+      ElMessage.success('已恢复为待完成')
+    } catch (err) {
+      ElMessage.error(parseApiError(err, '恢复待办失败'))
+    }
+    return
+  }
   try {
     await ElMessageBox.confirm(
-      `确定延后待办「${todo.title}」吗？`,
-      '延期确认',
-      { type: 'warning', confirmButtonText: '延期', cancelButtonText: '取消' },
+      `暂缓「${todo.title}」会保留原计划日期，并标记为已暂缓。稍后可恢复。`,
+      '暂缓待办',
+      { type: 'warning', confirmButtonText: '确认暂缓', cancelButtonText: '取消' },
     )
   } catch {
     return
@@ -243,7 +254,7 @@ async function handlePostpone(todo: Todo) {
   try {
     const { data } = await updateTodo(todo.id, { status: 'postponed' })
     applyTodoUpdate(data)
-    ElMessage.success('已延期')
+    ElMessage.success('已暂缓，可随时恢复')
   } catch (err) {
     ElMessage.error(parseApiError(err, '延期待办失败'))
   }
@@ -339,11 +350,13 @@ onMounted(() => {
               </el-tag>
             </div>
             <div
-              class="today-card-title today-card-title-link"
+              class="today-card-title-link"
+              link
+              type="primary"
               @click="goToCourse(todo)"
             >
               {{ todo.title }}
-            </div>
+            </el-button>
             <div class="today-card-meta">
               <span v-if="todo.scheduled_start">
                 {{ formatTime(todo.scheduled_start) }}
@@ -361,17 +374,15 @@ onMounted(() => {
               <el-button
                 size="small"
                 type="success"
-                :disabled="todo.status === 'completed'"
                 @click="handleComplete(todo)"
               >
-                完成
+                {{ todo.status === 'completed' ? '撤销完成' : '完成' }}
               </el-button>
               <el-button
                 size="small"
-                :disabled="todo.status === 'postponed'"
                 @click="handlePostpone(todo)"
               >
-                延期
+                {{ todo.status === 'postponed' ? '恢复' : '暂缓' }}
               </el-button>
               <el-button size="small" @click="openRecordDialog(todo)">
                 记录时长
@@ -436,6 +447,7 @@ onMounted(() => {
         stripe
         :row-class-name="tableRowClassName"
         empty-text="暂无待办"
+        class="todos-table"
       >
         <el-table-column label="标题" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">
@@ -481,17 +493,15 @@ onMounted(() => {
             <el-button
               size="small"
               type="success"
-              :disabled="row.status === 'completed'"
               @click="handleComplete(row)"
             >
-              完成
+              {{ row.status === 'completed' ? '撤销' : '完成' }}
             </el-button>
             <el-button
               size="small"
-              :disabled="row.status === 'postponed'"
               @click="handlePostpone(row)"
             >
-              延期
+              {{ row.status === 'postponed' ? '恢复' : '暂缓' }}
             </el-button>
             <el-button size="small" @click="openRecordDialog(row)">
               记录
@@ -499,6 +509,50 @@ onMounted(() => {
           </template>
         </el-table-column>
       </el-table>
+
+      <div v-loading="allLoading" class="todos-mobile-list">
+        <EmptyState
+          v-if="!allLoading && allTodos.length === 0"
+          title="暂无待办"
+          description="调整筛选条件，或先创建一份学习计划"
+        />
+        <article
+          v-for="todo in allTodos"
+          :key="todo.id"
+          class="todo-mobile-card"
+          :class="{ overdue: isOverdue(todo) }"
+        >
+          <div class="todo-mobile-head">
+            <el-tag :color="getCourseColor(todo.course_name)" effect="dark" size="small">
+              {{ todo.course_name }}
+            </el-tag>
+            <el-tag v-if="isOverdue(todo)" type="danger" size="small">已逾期</el-tag>
+            <el-tag v-else :type="statusTagType[todo.status]" size="small">
+              {{ statusLabel[todo.status] }}
+            </el-tag>
+          </div>
+          <el-button link type="primary" class="todo-mobile-title" @click="goToCourse(todo)">
+            {{ todo.title }}
+          </el-button>
+          <div class="todo-mobile-meta">
+            <span>{{ todo.scheduled_date }}</span>
+            <span v-if="todo.scheduled_start">
+              {{ formatTime(todo.scheduled_start) }}<template v-if="todo.scheduled_end"> - {{ formatTime(todo.scheduled_end) }}</template>
+            </span>
+            <span>预计 {{ todo.estimate_minutes }} 分钟</span>
+            <span v-if="todo.actual_minutes !== null">实际 {{ todo.actual_minutes }} 分钟</span>
+          </div>
+          <div class="todo-mobile-actions">
+            <el-button size="small" type="success" @click="handleComplete(todo)">
+              {{ todo.status === 'completed' ? '撤销完成' : '完成' }}
+            </el-button>
+            <el-button size="small" @click="handlePostpone(todo)">
+              {{ todo.status === 'postponed' ? '恢复' : '暂缓' }}
+            </el-button>
+            <el-button size="small" @click="openRecordDialog(todo)">记录时长</el-button>
+          </div>
+        </article>
+      </div>
 
       <div v-if="allTotal > 0" class="pagination">
         <el-pagination

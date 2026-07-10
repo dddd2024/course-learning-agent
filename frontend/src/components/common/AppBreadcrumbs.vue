@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { getCourse } from '../../api/course'
 
 const route = useRoute()
-const router = useRouter()
 const courseName = ref('')
 
 const courseId = computed(() => {
@@ -62,43 +61,52 @@ const crumbs = computed<Crumb[]>(() => {
     result.push({ label: '个人中心' })
   } else if (path === '/logs') {
     result.push({ label: '日志中心' })
+  } else if (path === '/agent-runs') {
+    result.push({ label: 'AI 运行记录' })
   }
 
   return result
 })
-
-function navigate(to: string | undefined, isLast: boolean) {
-  if (to && !isLast) router.push(to)
-}
 </script>
 
 <template>
-  <el-breadcrumb separator="/" class="app-breadcrumbs">
-    <el-breadcrumb-item
-      v-for="(crumb, i) in crumbs"
-      :key="i"
-      @click="navigate(crumb.to, i === crumbs.length - 1)"
-    >
-      <span :class="{ clickable: crumb.to && i < crumbs.length - 1 }">
-        {{ crumb.label }}
-      </span>
-    </el-breadcrumb-item>
-  </el-breadcrumb>
+  <nav aria-label="面包屑导航" class="breadcrumbs-nav">
+    <el-breadcrumb separator="/" class="app-breadcrumbs">
+      <el-breadcrumb-item v-for="(crumb, i) in crumbs" :key="`${crumb.label}-${i}`">
+        <router-link v-if="crumb.to && i < crumbs.length - 1" :to="crumb.to">
+          {{ crumb.label }}
+        </router-link>
+        <span v-else aria-current="page">{{ crumb.label }}</span>
+      </el-breadcrumb-item>
+    </el-breadcrumb>
+  </nav>
 </template>
 
 <style scoped>
+.breadcrumbs-nav {
+  min-width: 0;
+}
 .app-breadcrumbs {
   padding: 0 20px;
   height: 36px;
   line-height: 36px;
   background: #fff;
   border-bottom: 1px solid #f0f0f0;
+  overflow: hidden;
+  white-space: nowrap;
 }
-.clickable {
-  cursor: pointer;
-  color: #409eff;
-}
-.clickable:hover {
+.app-breadcrumbs a:hover {
   text-decoration: underline;
+}
+
+@media (max-width: 768px) {
+  .app-breadcrumbs {
+    padding: 0 12px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .app-breadcrumbs::-webkit-scrollbar {
+    display: none;
+  }
 }
 </style>

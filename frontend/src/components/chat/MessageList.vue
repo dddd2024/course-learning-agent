@@ -136,7 +136,8 @@ function formatTime(dt: string | null | undefined): string {
           />
         </div>
 
-        <!-- Per-message actions: copy the raw answer and regenerate it. -->
+        <!-- The backend cannot replace an answer in place. The parent keeps
+             this answer and confirms before sending a visible new request. -->
         <div
           v-if="msg.role === 'agent' && !msg.pending"
           class="message-actions"
@@ -144,8 +145,14 @@ function formatTime(dt: string | null | undefined): string {
           <el-button text size="small" @click="copyMessage(msg.content)">
             <el-icon><CopyDocument /></el-icon> 复制
           </el-button>
-          <el-button text size="small" @click="emit('regenerate', msg)">
-            <el-icon><Refresh /></el-icon> 重新生成
+          <el-button
+            text
+            size="small"
+            title="保留当前回答，将原问题作为新问题再次提问"
+            aria-label="保留当前回答并再次提问"
+            @click="emit('regenerate', msg)"
+          >
+            <el-icon><Refresh /></el-icon> 再次提问
           </el-button>
         </div>
       </div>

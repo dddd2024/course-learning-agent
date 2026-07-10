@@ -1,18 +1,18 @@
 /* ===== Design Tokens ===== */
 :root {
   /* Primary colors */
-  --color-primary: #409eff;
-  --color-success: #67c23a;
-  --color-warning: #e6a23c;
-  --color-danger: #f56c6c;
-  --color-info: #909399;
+  --color-primary: #2563eb;
+  --color-success: #2f8f3a;
+  --color-warning: #b54708;
+  --color-danger: #d92d20;
+  --color-info: #667085;
   --color-purple: #9c27b0;
 
   /* Text colors */
   --text-primary: #303133;
-  --text-regular: #606266;
-  --text-secondary: #909399;
-  --text-placeholder: #c0c4cc;
+  --text-regular: #475467;
+  --text-secondary: #667085;
+  --text-placeholder: #7b8494;
 
   /* Background colors */
   --bg-page: #f0f2f5;
@@ -43,6 +43,21 @@
   /* Transitions */
   --transition-fast: 0.15s ease;
   --transition-normal: 0.25s ease;
+
+  /* Keep Element Plus controls aligned with the accessible product palette. */
+  --el-color-primary: #2563eb;
+  --el-color-primary-light-3: #5f87ef;
+  --el-color-primary-light-5: #92adf5;
+  --el-color-primary-light-8: #dbe6fc;
+  --el-color-primary-light-9: #eff4ff;
+  --el-color-primary-dark-2: #1d4ed8;
+  --el-color-success: #2f8f3a;
+  --el-color-warning: #b54708;
+  --el-color-danger: #d92d20;
+  --el-text-color-primary: #1d2939;
+  --el-text-color-regular: #475467;
+  --el-text-color-secondary: #667085;
+  --el-text-color-placeholder: #7b8494;
 }
 
 * {
@@ -74,6 +89,20 @@ a {
 
 a:hover {
   opacity: 0.85;
+}
+
+:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.42);
+  outline-offset: 2px;
+}
+
+button,
+[role='button'],
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* ===== Reusable utility classes ===== */
@@ -131,4 +160,81 @@ a:hover {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+@media (max-width: 768px) {
+  body {
+    font-size: 14px;
+  }
+
+  .page-container,
+  .page,
+  .section-card {
+    min-width: 0;
+  }
+
+  .section-card {
+    padding: 16px;
+  }
+
+  /* Common page headers should stack instead of squeezing titles vertically. */
+  .toolbar,
+  .page-header,
+  .section-head {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 12px;
+  }
+
+  .actions,
+  .header-actions,
+  .filters,
+  .filter-bar {
+    width: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .search-input {
+    width: 100% !important;
+  }
+
+  .el-dialog {
+    width: calc(100vw - 24px) !important;
+    max-width: 560px;
+    margin: 12px auto !important;
+  }
+
+  .el-message-box {
+    width: calc(100vw - 32px) !important;
+    max-width: 420px;
+  }
+
+  .el-pagination {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px 2px;
+  }
+
+  .el-pagination .el-pagination__sizes {
+    display: none;
+  }
+
+  .el-date-editor,
+  .el-select,
+  .el-input-number {
+    max-width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

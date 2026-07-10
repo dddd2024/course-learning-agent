@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
-import { Odometer, Reading, Tickets, Calendar, EditPen, Share, Document, Fold, Expand, User } from '@element-plus/icons-vue'
+import { Odometer, Reading, Tickets, Calendar, EditPen, Share, Document, Fold, Expand, User, Monitor } from '@element-plus/icons-vue'
 import AppBreadcrumbs from '../components/common/AppBreadcrumbs.vue'
 
 const router = useRouter()
@@ -11,6 +11,13 @@ const route = useRoute()
 const auth = useAuthStore()
 
 const isCollapse = ref(false)
+const isMobile = ref(false)
+const mobileMenuOpen = ref(false)
+
+const asideWidth = computed(() => {
+  if (isMobile.value) return '272px'
+  return isCollapse.value ? '64px' : '220px'
+})
 
 const activeMenu = computed(() => {
   if (route.path.startsWith('/plans')) return '/plans'
@@ -21,6 +28,15 @@ const pageTitle = computed(() => (route.meta.title as string) || '课程学习�
 
 function handleMenuSelect(index: string) {
   router.push(index)
+  if (isMobile.value) mobileMenuOpen.value = false
+}
+
+function toggleNavigation() {
+  if (isMobile.value) {
+    mobileMenuOpen.value = !mobileMenuOpen.value
+    return
+  }
+  isCollapse.value = !isCollapse.value
 }
 
 async function handleLogout() {
@@ -38,40 +54,58 @@ async function handleLogout() {
 }
 
 function handleResize() {
-  if (window.innerWidth <= 768 && !isCollapse.value) {
-    isCollapse.value = true
-  }
+  const nextMobile = window.innerWidth <= 768
+  if (isMobile.value !== nextMobile) mobileMenuOpen.value = false
+  isMobile.value = nextMobile
 }
 
 onMounted(() => {
-  if (window.innerWidth <= 768) {
-    isCollapse.value = true
-  }
+  handleResize()
   window.addEventListener('resize', handleResize)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
 })
+
+watch(() => route.fullPath, () => {
+  if (isMobile.value) mobileMenuOpen.value = false
+})
 </script>
 
 <template>
   <el-container class="layout-container">
-    <el-aside :width="isCollapse ? '64px' : '220px'" class="aside" :class="{ 'aside--collapsed': isCollapse }">
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
+    <div
+      v-if="isMobile && mobileMenuOpen"
+      class="mobile-menu-scrim"
+      aria-hidden="true"
+      @click="mobileMenuOpen = false"
+    />
+    <el-aside
+      :width="asideWidth"
+      class="aside"
+      :class="{
+        'aside--collapsed': !isMobile && isCollapse,
+        'aside--mobile': isMobile,
+        'aside--mobile-open': isMobile && mobileMenuOpen,
+      }"
+      :aria-hidden="isMobile && !mobileMenuOpen"
+    >
       <div class="logo">
-        <span class="logo-icon">📚</span>
-        <span v-if="!isCollapse" class="logo-text">课程学习助手</span>
+        <el-icon class="logo-icon" aria-hidden="true"><Reading /></el-icon>
+        <span v-if="isMobile || !isCollapse" class="logo-text">课程学习助手</span>
       </div>
       <el-menu
         :default-active="activeMenu"
-        :collapse="isCollapse"
+        :collapse="!isMobile && isCollapse"
         class="menu"
         background-color="#001529"
         text-color="#bfcbd9"
-        active-text-color="#409eff"
+        active-text-color="#69a9ff"
         @select="handleMenuSelect"
       >
-        <li class="menu-section-label" v-if="!isCollapse">学习</li>
+        <li class="menu-section-label" v-if="isMobile || !isCollapse">学习</li>
         <el-menu-item index="/dashboard">
           <el-icon><Odometer /></el-icon>
           <span>仪表盘</span>
@@ -93,17 +127,23 @@ onUnmounted(() => {
           <span>测验</span>
         </el-menu-item>
 
-        <li class="menu-section-label" v-if="!isCollapse">工具</li>
+        <li class="menu-section-label" v-if="isMobile || !isCollapse">学习洞察</li>
         <el-menu-item index="/knowledge-graph">
           <el-icon><Share /></el-icon>
           <span>知识图谱</span>
         </el-menu-item>
+
+        <li class="menu-section-label" v-if="isMobile || !isCollapse">帮助与诊断</li>
         <el-menu-item index="/logs">
           <el-icon><Document /></el-icon>
           <span>日志中心</span>
         </el-menu-item>
+        <el-menu-item index="/agent-runs">
+          <el-icon><Monitor /></el-icon>
+          <span>AI 运行记录</span>
+        </el-menu-item>
 
-        <li class="menu-section-label" v-if="!isCollapse">设置</li>
+        <li class="menu-section-label" v-if="isMobile || !isCollapse">设置</li>
         <el-menu-item index="/profile">
           <el-icon><User /></el-icon>
           <span>个人中心</span>
@@ -113,18 +153,28 @@ onUnmounted(() => {
     <el-container>
       <el-header class="header">
         <div class="header-left">
-          <el-icon class="collapse-btn" @click="isCollapse = !isCollapse">
-            <Fold v-if="!isCollapse" />
-            <Expand v-else />
-          </el-icon>
-          <div class="header-title">{{ pageTitle }}</div>
+          <button
+            type="button"
+            class="collapse-btn"
+            :aria-label="isMobile ? (mobileMenuOpen ? '关闭主导航' : '打开主导航') : (isCollapse ? '展开主导航' : '收起主导航')"
+            :aria-expanded="isMobile ? mobileMenuOpen : !isCollapse"
+            @click="toggleNavigation"
+          >
+            <el-icon>
+              <Fold v-if="(!isMobile && !isCollapse) || (isMobile && mobileMenuOpen)" />
+              <Expand v-else />
+            </el-icon>
+          </button>
+          <div class="header-title" role="heading" aria-level="1">{{ pageTitle }}</div>
         </div>
         <div class="header-right">
-          <span class="username">{{ auth.username || '游客' }}</span>
-          <el-button type="danger" size="small" @click="handleLogout">登出</el-button>
+          <el-button text class="username" @click="router.push('/profile')">
+            {{ auth.username || '游客' }}
+          </el-button>
+          <el-button type="danger" plain size="small" @click="handleLogout">退出</el-button>
         </div>
       </el-header>
-      <el-main class="main">
+      <el-main id="main-content" class="main" tabindex="-1">
         <AppBreadcrumbs />
         <router-view />
       </el-main>
@@ -137,10 +187,28 @@ onUnmounted(() => {
   height: 100vh;
 }
 
+.skip-link {
+  position: fixed;
+  left: 16px;
+  top: -48px;
+  z-index: 3000;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: #fff;
+  color: #1d4ed8;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  transition: top 0.15s ease;
+}
+
+.skip-link:focus {
+  top: 12px;
+}
+
 .aside {
   background-color: #001529;
   overflow-y: auto;
   overflow-x: hidden;
+  transition: width 0.2s ease, transform 0.2s ease;
 }
 
 .logo {
@@ -158,7 +226,8 @@ onUnmounted(() => {
 }
 
 .logo-icon {
-  font-size: 22px;
+  font-size: 24px;
+  color: #69a9ff;
 }
 
 .logo-text {
@@ -171,6 +240,10 @@ onUnmounted(() => {
 
 .menu:not(.el-menu--collapse) {
   width: 220px;
+}
+
+.aside--mobile .menu:not(.el-menu--collapse) {
+  width: 272px;
 }
 
 .menu-section-label {
@@ -199,15 +272,25 @@ onUnmounted(() => {
 }
 
 .collapse-btn {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   font-size: 20px;
   cursor: pointer;
   color: #606266;
-  margin-right: 12px;
+  margin-right: 8px;
   transition: color 0.2s;
 }
 
-.collapse-btn:hover {
-  color: #409eff;
+.collapse-btn:hover,
+.collapse-btn:focus-visible {
+  color: #2563eb;
+  background: #eff6ff;
 }
 
 .header-title {
@@ -223,7 +306,7 @@ onUnmounted(() => {
 }
 
 .username {
-  color: #606266;
+  color: #475467;
   font-size: 14px;
 }
 
@@ -234,21 +317,48 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
-  .aside {
+  .aside--mobile {
     position: fixed;
-    z-index: 1001;
+    z-index: 1200;
     height: 100vh;
     left: 0;
     top: 0;
-  }
-  .aside--collapsed {
     transform: translateX(-100%);
+    box-shadow: 12px 0 30px rgba(0, 0, 0, 0.2);
+  }
+  .aside--mobile-open {
+    transform: translateX(0);
+  }
+  .mobile-menu-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    background: rgba(15, 23, 42, 0.48);
   }
   .main {
     margin-left: 0;
+    padding: 12px;
   }
   .header-title {
     font-size: 16px;
+  }
+  .header {
+    height: 60px;
+    padding: 0 12px;
+  }
+  .header-right {
+    gap: 4px;
+  }
+  .username {
+    max-width: 88px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .collapse-btn {
+    width: 44px;
+    height: 44px;
+    margin-left: -8px;
+    margin-right: 2px;
   }
 }
 </style>

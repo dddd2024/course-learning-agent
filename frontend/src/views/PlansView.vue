@@ -1,51 +1,52 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { listCourses, type Course } from '../api/course'
 import {
   createPlan,
+  getPlan,
+  listPlans,
   type PlanGoal,
   type PlanPayload,
   type PlanResult,
+  type PlanSummary,
   type PlanTask,
   type Todo,
 } from '../api/plan'
 import { MAX_PAGE_SIZE } from '../constants/pagination'
+import { formatLocalDateTime } from '../utils/datetime'
 import { parseApiError } from '../utils/error'
 
+const route = useRoute()
 const router = useRouter()
 
 const courses = ref<Course[]>([])
 const coursesLoading = ref(false)
+const plans = ref<PlanSummary[]>([])
+const plansLoading = ref(false)
+const planLoading = ref(false)
 const submitting = ref(false)
+const isCreating = ref(false)
+const selectedPlanId = ref<number | null>(null)
 
 const formRef = ref<FormInstance>()
 
 const defaultForm = (): PlanPayload => ({
   goal: '',
-  courses: [],
+  course_ids: [],
   deadline: '',
   daily_minutes: 60,
 })
 
 const form = reactive<PlanPayload>(defaultForm())
 
-const deadlineDate = computed<Date | undefined>({
-  get() {
-    return form.deadline ? new Date(form.deadline) : undefined
-  },
-  set(val) {
-    form.deadline = val ? toDateString(val) : ''
-  },
-})
-
 const formRules: FormRules<typeof form> = {
   goal: [
     { required: true, message: '请输入学习目标', trigger: 'blur' },
     { min: 2, max: 200, message: '目标 2-200 字', trigger: 'blur' },
   ],
-  courses: [
+  course_ids: [
     {
       required: true,
       type: 'array',
@@ -67,26 +68,33 @@ const todos = ref<Todo[]>([])
 
 const calendarDate = ref<Date>(new Date())
 
+const selectedSummary = computed<PlanSummary | null>(() => {
+  return plans.value.find((plan) => plan.goal.id === selectedPlanId.value) ?? null
+})
+
+const selectedProgress = computed(() => {
+  const progress = selectedSummary.value?.progress
+  if (!progress) return 0
+  if (progress.todos_total > 0) {
+    return Math.round((progress.todos_completed / progress.todos_total) * 100)
+  }
+  if (progress.tasks_total > 0) {
+    return Math.round((progress.tasks_completed / progress.tasks_total) * 100)
+  }
+  return 0
+})
+
 const todosByDate = computed<Record<string, Todo[]>>(() => {
   const map: Record<string, Todo[]> = {}
-  for (const t of todos.value) {
-    const key = t.scheduled_date
+  for (const todo of todos.value) {
+    const key = todo.scheduled_date
     if (!map[key]) map[key] = []
-    map[key].push(t)
+    map[key].push(todo)
   }
   return map
 })
 
-const sortedDates = computed<string[]>(() => {
-  return Object.keys(todosByDate.value).sort()
-})
-
-function toDateString(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
+const sortedDates = computed<string[]>(() => Object.keys(todosByDate.value).sort())
 
 function disablePastDate(date: Date): boolean {
   return date.getTime() < Date.now() - 24 * 60 * 60 * 1000
@@ -94,43 +102,138 @@ function disablePastDate(date: Date): boolean {
 
 function formatTime(time: string | null): string {
   if (!time) return ''
-  // 兼容 "HH:MM:SS" / "HH:MM"
   return time.length >= 5 ? time.slice(0, 5) : time
 }
 
-const priorityTagType: Record<string, 'danger' | 'warning' | 'info'> = {
-  high: 'danger',
-  medium: 'warning',
-  low: 'info',
+function formatPlanLabel(plan: PlanSummary): string {
+  const courseText = plan.course_names.filter(Boolean).join('、') || '未关联课程'
+  return `${plan.goal.title} · ${courseText}`
 }
 
-function priorityLabel(p: string): string {
-  const map: Record<string, string> = { high: '高', medium: '中', low: '低' }
-  return map[p] || p
+function goalStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    active: '进行中',
+    done: '已完成',
+    completed: '已完成',
+    archived: '已归档',
+  }
+  return labels[status] || status
+}
+
+function goalStatusType(status: string): 'success' | 'warning' | 'info' {
+  if (status === 'done' || status === 'completed') return 'success'
+  if (status === 'archived') return 'info'
+  return 'warning'
+}
+
+function priorityLabel(priority: number): string {
+  const labels: Record<number, string> = {
+    5: '最高',
+    4: '高',
+    3: '中',
+    2: '低',
+    1: '最低',
+  }
+  return labels[priority] || String(priority)
+}
+
+function priorityTagType(priority: number): 'danger' | 'warning' | 'info' {
+  if (priority >= 5) return 'danger'
+  if (priority >= 3) return 'warning'
+  return 'info'
+}
+
+function taskTypeLabel(taskType: string): string {
+  const labels: Record<string, string> = {
+    review: '复习',
+    learn: '学习',
+    practice: '练习',
+    quiz: '测验',
+  }
+  return labels[taskType] || taskType
 }
 
 const statusTagType: Record<string, 'warning' | 'success' | 'info'> = {
   pending: 'warning',
   completed: 'success',
   postponed: 'info',
+  skipped: 'info',
 }
 
 const statusLabel: Record<string, string> = {
   pending: '待完成',
   completed: '已完成',
   postponed: '已延期',
+  skipped: '已跳过',
 }
 
 const dayTodosDialogVisible = ref(false)
 const dayTodosFor = ref<Todo[]>([])
 
-function getTodosForDay(day: string): Todo[] {
-  return todosByDate.value[day] ?? []
+function showDayTodos(day: string) {
+  dayTodosFor.value = todosByDate.value[day] ?? []
+  dayTodosDialogVisible.value = true
 }
 
-function showDayTodos(day: string) {
-  dayTodosFor.value = getTodosForDay(day)
-  dayTodosDialogVisible.value = true
+function applyPlan(data: PlanResult) {
+  planResult.value = data
+  goal.value = data.goal
+  tasks.value = data.tasks
+  todos.value = data.todos
+  const focusDate = data.todos[0]?.scheduled_date || data.goal.deadline
+  if (focusDate) calendarDate.value = new Date(`${focusDate}T00:00:00`)
+}
+
+async function syncPlanQuery(planId: number) {
+  if (String(route.query.plan_id ?? '') === String(planId)) return
+  await router.replace({
+    query: { ...route.query, plan_id: String(planId) },
+  })
+}
+
+async function loadSavedPlan(planId: number, updateQuery = true) {
+  planLoading.value = true
+  try {
+    const { data } = await getPlan(planId)
+    applyPlan(data)
+    selectedPlanId.value = planId
+    isCreating.value = false
+    if (updateQuery) await syncPlanQuery(planId)
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '读取学习计划失败'))
+  } finally {
+    planLoading.value = false
+  }
+}
+
+async function restorePlans(preferredId?: number) {
+  plansLoading.value = true
+  try {
+    const { data } = await listPlans()
+    plans.value = data.items
+    if (data.items.length === 0) {
+      selectedPlanId.value = null
+      planResult.value = null
+      goal.value = null
+      tasks.value = []
+      todos.value = []
+      isCreating.value = true
+      return
+    }
+
+    const queryId = Number(route.query.plan_id)
+    const requestedId = preferredId || (Number.isInteger(queryId) ? queryId : 0)
+    const target =
+      data.items.find((plan) => plan.goal.id === requestedId)
+      ?? data.items.find((plan) => plan.goal.status === 'active')
+      ?? data.items[0]
+    await loadSavedPlan(target.goal.id)
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '获取已保存计划失败'))
+    if (!planResult.value) isCreating.value = true
+  } finally {
+    plansLoading.value = false
+  }
 }
 
 async function fetchCourses() {
@@ -145,6 +248,21 @@ async function fetchCourses() {
   }
 }
 
+async function handlePlanSelect(planId: number) {
+  if (planId === selectedPlanId.value && !isCreating.value) return
+  await loadSavedPlan(planId)
+}
+
+function startNewPlan() {
+  Object.assign(form, defaultForm())
+  formRef.value?.clearValidate()
+  isCreating.value = true
+}
+
+function returnToSavedPlan() {
+  if (selectedPlanId.value) isCreating.value = false
+}
+
 async function handleSubmit() {
   if (!formRef.value) return
   try {
@@ -156,19 +274,16 @@ async function handleSubmit() {
   try {
     const { data } = await createPlan({
       goal: form.goal,
-      courses: form.courses,
+      course_ids: form.course_ids,
       deadline: form.deadline,
       daily_minutes: form.daily_minutes,
     })
-    planResult.value = data
-    goal.value = data.goal
-    tasks.value = data.tasks
-    todos.value = data.todos
-    if (data.todos.length > 0) {
-      const firstDate = data.todos[0].scheduled_date
-      calendarDate.value = new Date(firstDate)
-    }
-    ElMessage.success('学习计划已生成')
+    applyPlan(data)
+    selectedPlanId.value = data.goal.id
+    isCreating.value = false
+    await syncPlanQuery(data.goal.id)
+    await restorePlans(data.goal.id)
+    ElMessage.success('新学习计划已保存，原有计划仍保留')
   } catch (err) {
     ElMessage.error(parseApiError(err, '生成计划失败'))
   } finally {
@@ -176,39 +291,94 @@ async function handleSubmit() {
   }
 }
 
-function handleReset() {
-  planResult.value = null
-  goal.value = null
-  tasks.value = []
-  todos.value = []
-  Object.assign(form, defaultForm())
-}
-
 onMounted(() => {
-  fetchCourses()
+  void fetchCourses()
+  void restorePlans()
 })
 </script>
 
 <template>
   <div class="page">
     <div class="toolbar">
-      <h2 class="title">学习计划</h2>
+      <div>
+        <h2 class="title">学习计划</h2>
+        <p class="page-intro">打开即可继续上次计划，也可以另存一份新计划。</p>
+      </div>
       <div class="toolbar-actions">
-        <el-button type="primary" @click="router.push('/plans/multi')">
+        <el-button @click="router.push('/plans/multi')">
           多课程规划
         </el-button>
-        <el-button v-if="planResult" @click="handleReset">重新规划</el-button>
+        <el-button
+          v-if="!isCreating"
+          type="primary"
+          @click="startNewPlan"
+        >
+          新建计划
+        </el-button>
+        <el-button
+          v-else-if="selectedPlanId"
+          @click="returnToSavedPlan"
+        >
+          返回已保存计划
+        </el-button>
       </div>
     </div>
 
-    <el-empty
-      v-if="!planResult"
-      description="填写学习目标，生成专属学习计划与每日待办"
-    />
+    <el-card
+      v-if="plans.length > 0"
+      class="section-card plan-picker-card"
+      shadow="never"
+      v-loading="plansLoading"
+    >
+      <div class="plan-picker">
+        <div class="plan-picker-control">
+          <label class="picker-label" for="saved-plan-select">已保存计划</label>
+          <el-select
+            id="saved-plan-select"
+            :model-value="selectedPlanId"
+            filterable
+            :disabled="planLoading"
+            placeholder="选择要查看的计划"
+            @change="handlePlanSelect"
+          >
+            <el-option
+              v-for="plan in plans"
+              :key="plan.goal.id"
+              :label="formatPlanLabel(plan)"
+              :value="plan.goal.id"
+            >
+              <div class="plan-option">
+                <span class="plan-option-title">{{ plan.goal.title }}</span>
+                <span class="plan-option-meta">
+                  {{ plan.course_names.filter(Boolean).join('、') || '未关联课程' }}
+                  · 待办 {{ plan.progress.todos_completed }}/{{ plan.progress.todos_total }}
+                </span>
+              </div>
+            </el-option>
+          </el-select>
+        </div>
+        <div v-if="selectedSummary" class="plan-picker-progress">
+          <div class="progress-copy">
+            <span>待办进度 {{ selectedSummary.progress.todos_completed }}/{{ selectedSummary.progress.todos_total }}</span>
+            <strong>{{ selectedProgress }}%</strong>
+          </div>
+          <el-progress :percentage="selectedProgress" :show-text="false" :stroke-width="8" />
+          <span class="saved-at">创建于 {{ formatLocalDateTime(selectedSummary.created_at) }}</span>
+        </div>
+      </div>
+    </el-card>
 
-    <el-card v-if="!planResult" class="section-card" shadow="never">
+    <el-card
+      v-if="isCreating"
+      class="section-card"
+      shadow="never"
+      v-loading="plansLoading && plans.length === 0"
+    >
       <template #header>
-        <div class="section-title">设定学习目标</div>
+        <div>
+          <div class="section-title">创建新学习计划</div>
+          <div class="section-tip form-tip">新计划会单独保存，不会覆盖或删除已有计划。</div>
+        </div>
       </template>
       <el-form
         ref="formRef"
@@ -227,9 +397,9 @@ onMounted(() => {
             placeholder="如：7 天复习完操作系统"
           />
         </el-form-item>
-        <el-form-item label="选择课程" prop="courses">
+        <el-form-item label="选择课程" prop="course_ids">
           <el-select
-            v-model="form.courses"
+            v-model="form.course_ids"
             multiple
             filterable
             collapse-tags
@@ -241,7 +411,7 @@ onMounted(() => {
               v-for="c in courses"
               :key="c.id"
               :label="c.name"
-              :value="c.name"
+              :value="c.id"
             />
           </el-select>
         </el-form-item>
@@ -249,7 +419,7 @@ onMounted(() => {
           <el-col :span="12">
             <el-form-item label="截止日期" prop="deadline">
               <el-date-picker
-                v-model="deadlineDate"
+                v-model="form.deadline"
                 type="date"
                 placeholder="选择截止日期"
                 format="YYYY-MM-DD"
@@ -277,19 +447,20 @@ onMounted(() => {
             :loading="submitting"
             @click="handleSubmit"
           >
-            生成学习计划
+            生成并保存计划
           </el-button>
         </el-form-item>
       </el-form>
     </el-card>
 
-    <template v-if="planResult">
+    <div v-else v-loading="planLoading" class="plan-detail-loading">
+      <template v-if="planResult">
       <el-card v-if="goal" class="section-card" shadow="never">
         <template #header>
           <div class="section-title-bar">
             <span class="section-title">学习目标</span>
-            <el-tag :type="goal.status === 'completed' ? 'success' : 'warning'">
-              {{ goal.status === 'completed' ? '已完成' : '进行中' }}
+            <el-tag :type="goalStatusType(goal.status)">
+              {{ goalStatusLabel(goal.status) }}
             </el-tag>
           </div>
         </template>
@@ -300,6 +471,7 @@ onMounted(() => {
             <span>每日时间：{{ goal.daily_minutes }} 分钟</span>
             <span>阶段任务：{{ tasks.length }} 个</span>
             <span>每日待办：{{ todos.length }} 条</span>
+            <span v-if="selectedSummary">已完成：{{ selectedSummary.progress.todos_completed }} 条</span>
           </div>
         </div>
       </el-card>
@@ -315,12 +487,14 @@ onMounted(() => {
         >
           <el-table-column prop="course_name" label="课程" min-width="140" show-overflow-tooltip />
           <el-table-column prop="title" label="任务标题" min-width="180" show-overflow-tooltip />
-          <el-table-column prop="task_type" label="类型" width="110" />
+          <el-table-column label="类型" width="110">
+            <template #default="{ row }">{{ taskTypeLabel(row.task_type) }}</template>
+          </el-table-column>
           <el-table-column prop="estimate_minutes" label="预计分钟" width="100" align="center" />
           <el-table-column label="优先级" width="90" align="center">
             <template #default="{ row }">
               <el-tag
-                :type="priorityTagType[row.priority] || 'info'"
+                :type="priorityTagType(row.priority)"
                 size="small"
               >
                 {{ priorityLabel(row.priority) }}
@@ -406,7 +580,12 @@ onMounted(() => {
           </div>
         </div>
       </el-card>
-    </template>
+      </template>
+      <el-empty
+        v-else-if="!plansLoading && !planLoading"
+        description="还没有可显示的计划，请新建一份学习计划"
+      />
+    </div>
 
     <el-dialog v-model="dayTodosDialogVisible" title="当日待办" width="500">
       <ul class="day-todo-list">
@@ -445,8 +624,92 @@ onMounted(() => {
   color: #303133;
 }
 
+.page-intro {
+  margin: 6px 0 0;
+  color: #909399;
+  font-size: 13px;
+}
+
 .section-card {
   margin-bottom: 20px;
+}
+
+.plan-picker-card {
+  background: #f8fbff;
+  border-color: #d9ecff;
+}
+
+.plan-picker {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(220px, 320px);
+  align-items: end;
+  gap: 28px;
+}
+
+.plan-picker-control {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-picker-control :deep(.el-select) {
+  width: 100%;
+}
+
+.picker-label {
+  color: #303133;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.plan-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+}
+
+.plan-option-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-option-meta {
+  flex: none;
+  color: #909399;
+  font-size: 12px;
+}
+
+.plan-picker-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.progress-copy {
+  display: flex;
+  justify-content: space-between;
+  color: #606266;
+  font-size: 13px;
+}
+
+.progress-copy strong {
+  color: #303133;
+}
+
+.saved-at {
+  color: #909399;
+  font-size: 12px;
+}
+
+.form-tip {
+  margin-top: 6px;
+}
+
+.plan-detail-loading {
+  min-height: 160px;
 }
 
 .section-title {
@@ -627,5 +890,49 @@ onMounted(() => {
   gap: 12px;
   font-size: 13px;
   color: #606266;
+}
+
+@media (max-width: 768px) {
+  .page {
+    padding: 16px;
+  }
+
+  .toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .toolbar-actions {
+    width: 100%;
+  }
+
+  .toolbar-actions :deep(.el-button) {
+    flex: 1;
+    margin-left: 0;
+  }
+
+  .plan-picker {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .plan-option-meta {
+    display: none;
+  }
+
+  .todo-item {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .todo-main {
+    width: 100%;
+  }
+
+  .todo-course {
+    display: none;
+  }
 }
 </style>

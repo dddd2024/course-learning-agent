@@ -6,6 +6,8 @@ Strict TDD: these tests are written first and fail until the
 
 Covers:
 - POST /api/v1/plans (create plan with goal + tasks + todos)
+- GET  /api/v1/plans (persisted goal list with progress)
+- GET  /api/v1/plans/{id} (restore tasks + todos after refresh)
 - GET  /api/v1/todos (list by date / status / course_id, user-scoped)
 - PATCH /api/v1/todos/{id} (complete / postpone, isolation)
 - PlannerAgent.generate unit test (persistable task JSON)
@@ -94,6 +96,86 @@ def test_create_plan(client) -> None:
         assert "status" in todo
 
 
+def test_create_plan_with_stable_course_ids(client) -> None:
+    """The preferred contract selects a course by id, even for duplicate names."""
+    headers = auth_headers(client, username="alice")
+    first_id = create_course(client, headers, "同名课程")
+    selected_id = create_course(client, headers, "同名课程")
+
+    resp = client.post(
+        "/api/v1/plans",
+        json={
+            "goal": "完成指定课程",
+            "course_ids": [selected_id],
+            "deadline": "2026-07-30",
+            "daily_minutes": 120,
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert first_id != selected_id
+    assert body["tasks"]
+    assert {task["course_id"] for task in body["tasks"]} == {selected_id}
+    assert {todo["course_id"] for todo in body["todos"]} == {selected_id}
+
+
+def test_list_and_restore_persisted_plan(client) -> None:
+    """A saved plan can be listed with progress and restored in full."""
+    headers = auth_headers(client, username="alice")
+    created = _create_plan(client, headers)
+    goal_id = created["goal"]["id"]
+    completed_todo_id = created["todos"][0]["id"]
+    complete_resp = client.patch(
+        f"/api/v1/todos/{completed_todo_id}",
+        json={"status": "completed"},
+        headers=headers,
+    )
+    assert complete_resp.status_code == 200
+
+    list_resp = client.get("/api/v1/plans", headers=headers)
+    assert list_resp.status_code == 200
+    payload = list_resp.json()
+    assert payload["total"] == 1
+    summary = payload["items"][0]
+    assert summary["goal"]["id"] == goal_id
+    assert summary["course_names"] == ["操作系统"]
+    assert summary["progress"]["tasks_total"] == len(created["tasks"])
+    assert summary["progress"]["todos_total"] == len(created["todos"])
+    assert summary["progress"]["todos_completed"] == 1
+
+    detail_resp = client.get(f"/api/v1/plans/{goal_id}", headers=headers)
+    assert detail_resp.status_code == 200
+    restored = detail_resp.json()
+    assert restored["goal"] == created["goal"]
+    assert [task["id"] for task in restored["tasks"]] == [
+        task["id"] for task in created["tasks"]
+    ]
+    restored_todo = next(
+        todo for todo in restored["todos"] if todo["id"] == completed_todo_id
+    )
+    assert restored_todo["status"] == "completed"
+
+
+def test_plan_list_and_detail_are_user_scoped(client) -> None:
+    """Another user's saved goal is neither listed nor readable."""
+    headers_a = auth_headers(client, username="alice")
+    created = _create_plan(client, headers_a)
+    goal_id = created["goal"]["id"]
+
+    headers_b = auth_headers(client, username="bob")
+    list_resp = client.get("/api/v1/plans", headers=headers_b)
+    assert list_resp.status_code == 200
+    assert list_resp.json() == {"items": [], "total": 0}
+
+    detail_resp = client.get(f"/api/v1/plans/{goal_id}", headers=headers_b)
+    assert detail_resp.status_code == 404
+
+    anonymous_resp = client.get("/api/v1/plans")
+    assert anonymous_resp.status_code == 401
+
+
 def test_list_todos(client) -> None:
     """GET /api/v1/todos?date=YYYY-MM-DD returns the day's todos."""
     headers = auth_headers(client, username="alice")
@@ -142,6 +224,30 @@ def test_list_todos_by_status(client) -> None:
     assert len(items2) == 0
 
 
+def test_list_todos_honors_pagination_and_keeps_filtered_total(client) -> None:
+    """page/page_size slice items while total remains the filtered count."""
+    headers = auth_headers(client, username="alice")
+    body = _create_plan(client, headers)
+    assert len(body["todos"]) >= 2
+
+    first_page = client.get(
+        "/api/v1/todos?page=1&page_size=1",
+        headers=headers,
+    )
+    second_page = client.get(
+        "/api/v1/todos?page=2&page_size=1",
+        headers=headers,
+    )
+
+    assert first_page.status_code == 200
+    assert second_page.status_code == 200
+    assert first_page.json()["total"] == len(body["todos"])
+    assert second_page.json()["total"] == len(body["todos"])
+    assert len(first_page.json()["items"]) == 1
+    assert len(second_page.json()["items"]) == 1
+    assert first_page.json()["items"][0]["id"] != second_page.json()["items"][0]["id"]
+
+
 def test_complete_todo(client) -> None:
     """PATCH /api/v1/todos/{id} {status:"completed"} returns 200."""
     headers = auth_headers(client, username="alice")
@@ -159,6 +265,16 @@ def test_complete_todo(client) -> None:
     assert updated["status"] == "completed"
     assert updated["actual_minutes"] == 55
     assert updated["completed_at"] is not None
+
+    reopened_resp = client.patch(
+        f"/api/v1/todos/{todo_id}",
+        json={"status": "pending"},
+        headers=headers,
+    )
+    assert reopened_resp.status_code == 200
+    reopened = reopened_resp.json()
+    assert reopened["status"] == "pending"
+    assert reopened["completed_at"] is None
 
 
 def test_postpone_todo(client) -> None:

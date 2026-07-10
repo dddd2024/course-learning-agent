@@ -10,11 +10,13 @@ import {
   deleteQuiz,
   getQuizzes,
   getQuiz,
+  getQuizResult,
   submitQuiz,
   getWeakPoints,
   type Quiz,
   type QuizResult,
   type QuizResultItem,
+  type QuizStatus,
   type WeakPoint,
 } from '../api/quiz'
 import { parseApiError } from '../utils/error'
@@ -61,7 +63,7 @@ const currentQuestion = computed(() => {
  * open AND no result has been produced yet.
  */
 const quizInProgress = computed(
-  () => activeQuiz.value !== null && quizResult.value === null,
+  () => activeQuiz.value?.status === 'draft' && quizResult.value === null,
 )
 
 function isAnswered(itemId: number): boolean {
@@ -91,16 +93,32 @@ const resultMap = computed<Record<number, QuizResultItem>>(() => {
   return map
 })
 
-const statusLabel: Record<string, string> = {
-  pending: '待完成',
-  in_progress: '进行中',
-  completed: '已完成',
+const statusLabel: Record<QuizStatus, string> = {
+  draft: '待作答',
+  submitted: '已提交',
 }
 
-const statusTagType: Record<string, 'info' | 'warning' | 'success'> = {
-  pending: 'info',
-  in_progress: 'warning',
-  completed: 'success',
+const statusTagType: Record<QuizStatus, 'warning' | 'success'> = {
+  draft: 'warning',
+  submitted: 'success',
+}
+
+function formatQuizStatus(status: string): string {
+  return statusLabel[status as QuizStatus] ?? '状态未知'
+}
+
+function quizStatusTagType(status: string): 'info' | 'warning' | 'success' {
+  return statusTagType[status as QuizStatus] ?? 'info'
+}
+
+function quizActionLabel(status: string): string {
+  if (status === 'submitted') return '查看结果'
+  if (status === 'draft') return '开始答题'
+  return '暂不可用'
+}
+
+function isQuizOpenable(status: string): status is QuizStatus {
+  return status === 'draft' || status === 'submitted'
 }
 
 function questionTypeLabel(t: string): string {
@@ -222,7 +240,7 @@ async function handleGenerate() {
     dialogVisible.value = false
     ElMessage.success('测验已生成')
     fetchQuizzes()
-    startQuiz(data)
+    openQuiz(data)
   } catch (err) {
     ElMessage.error(parseApiError(err, '生成测验失败'))
   } finally {
@@ -230,17 +248,27 @@ async function handleGenerate() {
   }
 }
 
-async function startQuiz(quiz: Quiz) {
+async function openQuiz(quiz: Quiz) {
   activeQuizLoading.value = true
   try {
     const { data } = await getQuiz(quiz.id)
-    activeQuiz.value = data
-    const ans: Record<number, string> = {}
-    for (const item of data.items) {
-      ans[item.id] = ''
+    if (!isQuizOpenable(data.status)) {
+      ElMessage.error('测验状态异常，请刷新后重试')
+      return
     }
-    answers.value = ans
-    quizResult.value = null
+
+    if (data.status === 'submitted') {
+      const { data: result } = await getQuizResult(data.id)
+      activeQuiz.value = data
+      quizResult.value = result
+      answers.value = Object.fromEntries(
+        result.items.map((item) => [item.id, item.user_answer ?? '']),
+      )
+    } else {
+      activeQuiz.value = data
+      answers.value = Object.fromEntries(data.items.map((item) => [item.id, '']))
+      quizResult.value = null
+    }
     currentIndex.value = 0
   } catch (err) {
     ElMessage.error(parseApiError(err, '加载测验详情失败'))
@@ -302,6 +330,11 @@ async function handleSubmit() {
     }))
     const { data } = await submitQuiz(activeQuiz.value.id, payload)
     quizResult.value = data
+    activeQuiz.value = {
+      ...activeQuiz.value,
+      status: 'submitted',
+      score: data.score,
+    }
     ElMessage.success('提交成功')
     fetchQuizzes()
     fetchWeakPoints()
@@ -435,8 +468,8 @@ onUnmounted(() => {
       <div class="toolbar-actions">
         <el-select
           v-model="selectedCourseId"
+          class="course-select"
           placeholder="请选择课程"
-          style="width: 240px"
           :loading="coursesLoading"
           @change="handleCourseChange"
         >
@@ -448,6 +481,7 @@ onUnmounted(() => {
           />
         </el-select>
         <el-button
+          class="generate-button"
           type="primary"
           :disabled="selectedCourseId === undefined"
           @click="openGenerateDialog"
@@ -650,64 +684,123 @@ onUnmounted(() => {
           title="还没有测验"
           description="生成测验来检验学习效果"
         />
-        <el-table
+        <div
           v-else
           v-loading="quizzesLoading"
-          :data="quizzes"
-          stripe
-          empty-text="暂无测验"
+          class="quiz-list-shell"
         >
-          <el-table-column
-            prop="title"
-            label="标题"
-            min-width="180"
-            show-overflow-tooltip
-          />
-          <el-table-column
-            prop="question_count"
-            label="题数"
-            width="80"
-            align="center"
-          />
-          <el-table-column label="状态" width="100" align="center">
-            <template #default="{ row }">
-              <el-tag
-                :type="statusTagType[row.status] || 'info'"
-                size="small"
-              >
-                {{ statusLabel[row.status] || row.status }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="得分" width="100" align="center">
-            <template #default="{ row }">
-              <span v-if="row.score !== null && row.score !== undefined">
-                {{ row.score }}
-              </span>
-              <span v-else>-</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="创建时间" width="180" align="center">
-            <template #default="{ row }">
-              {{ formatDateTime(row.created_at) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="180" align="center" fixed="right">
-            <template #default="{ row }">
-              <el-button size="small" type="primary" @click="startQuiz(row)">
-                {{ row.status === 'completed' ? '查看' : '开始' }}
-              </el-button>
-              <el-button
-                size="small"
-                type="danger"
-                :loading="deletingQuizId === row.id"
-                @click="handleDeleteQuiz(row)"
-              >
-                删除
-              </el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+          <el-table
+            class="quiz-table"
+            :data="quizzes"
+            stripe
+            empty-text="暂无测验"
+          >
+            <el-table-column
+              prop="title"
+              label="标题"
+              min-width="180"
+              show-overflow-tooltip
+            />
+            <el-table-column
+              prop="question_count"
+              label="题数"
+              width="80"
+              align="center"
+            />
+            <el-table-column label="状态" width="100" align="center">
+              <template #default="{ row }">
+                <el-tag :type="quizStatusTagType(row.status)" size="small">
+                  {{ formatQuizStatus(row.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="得分" width="100" align="center">
+              <template #default="{ row }">
+                <span v-if="row.score !== null && row.score !== undefined">
+                  {{ row.score }} / {{ row.question_count }}
+                </span>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="创建时间" width="180" align="center">
+              <template #default="{ row }">
+                {{ formatDateTime(row.created_at) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="210" align="center" fixed="right">
+              <template #default="{ row }">
+                <el-button
+                  size="small"
+                  type="primary"
+                  :disabled="!isQuizOpenable(row.status)"
+                  @click="openQuiz(row)"
+                >
+                  {{ quizActionLabel(row.status) }}
+                </el-button>
+                <el-button
+                  size="small"
+                  type="danger"
+                  :loading="deletingQuizId === row.id"
+                  @click="handleDeleteQuiz(row)"
+                >
+                  删除
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <div class="quiz-card-list" role="list" aria-label="测验列表">
+            <article
+              v-for="quiz in quizzes"
+              :key="quiz.id"
+              class="quiz-list-card"
+              role="listitem"
+            >
+              <div class="quiz-card-header">
+                <h3 class="quiz-card-title">{{ quiz.title }}</h3>
+                <el-tag :type="quizStatusTagType(quiz.status)" size="small">
+                  {{ formatQuizStatus(quiz.status) }}
+                </el-tag>
+              </div>
+              <dl class="quiz-card-meta">
+                <div>
+                  <dt>题目数量</dt>
+                  <dd>{{ quiz.question_count }} 题</dd>
+                </div>
+                <div>
+                  <dt>得分</dt>
+                  <dd>
+                    <template v-if="quiz.score !== null">
+                      {{ quiz.score }} / {{ quiz.question_count }}
+                    </template>
+                    <template v-else>尚未提交</template>
+                  </dd>
+                </div>
+                <div class="quiz-card-created">
+                  <dt>创建时间</dt>
+                  <dd>{{ formatDateTime(quiz.created_at) }}</dd>
+                </div>
+              </dl>
+              <div class="quiz-card-actions">
+                <el-button
+                  type="primary"
+                  :disabled="!isQuizOpenable(quiz.status)"
+                  @click="openQuiz(quiz)"
+                >
+                  {{ quizActionLabel(quiz.status) }}
+                </el-button>
+                <el-button
+                  type="danger"
+                  plain
+                  :loading="deletingQuizId === quiz.id"
+                  @click="handleDeleteQuiz(quiz)"
+                >
+                  删除
+                </el-button>
+              </div>
+            </article>
+          </div>
+        </div>
       </el-card>
 
       <el-card class="section-card" shadow="never">
@@ -743,7 +836,11 @@ onUnmounted(() => {
       </el-card>
     </template>
 
-    <el-dialog v-model="dialogVisible" title="生成测验" width="520px">
+    <el-dialog
+      v-model="dialogVisible"
+      title="生成测验"
+      width="min(520px, calc(100vw - 32px))"
+    >
       <el-form label-position="top" v-loading="knowledgePointsLoading">
         <el-form-item label="题目数量">
           <el-input-number
@@ -803,6 +900,10 @@ onUnmounted(() => {
   gap: 12px;
 }
 
+.course-select {
+  width: 240px;
+}
+
 .title {
   font-size: 20px;
   margin: 0;
@@ -817,6 +918,10 @@ onUnmounted(() => {
   font-size: 16px;
   font-weight: 600;
   color: #303133;
+}
+
+.quiz-card-list {
+  display: none;
 }
 
 .quiz-active {
@@ -1045,6 +1150,7 @@ onUnmounted(() => {
   font-size: 15px;
   font-weight: 600;
   color: #303133;
+  overflow-wrap: anywhere;
 }
 
 .weak-point-meta {
@@ -1058,5 +1164,174 @@ onUnmounted(() => {
 .keyboard-hint {
   text-align: center;
   margin: 8px 0;
+}
+
+@media (max-width: 768px) {
+  .page {
+    padding: 16px;
+  }
+
+  .toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .toolbar-actions {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .course-select,
+  .generate-button {
+    width: 100%;
+  }
+
+  .section-card :deep(.el-card__header),
+  .section-card :deep(.el-card__body),
+  .question-card :deep(.el-card__header),
+  .question-card :deep(.el-card__body) {
+    padding: 14px;
+  }
+
+  .quiz-table {
+    display: none;
+  }
+
+  .quiz-card-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .quiz-list-card {
+    padding: 14px;
+    border: 1px solid #e4e7ed;
+    border-radius: 8px;
+    background: #fff;
+  }
+
+  .quiz-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .quiz-card-header :deep(.el-tag) {
+    flex: 0 0 auto;
+  }
+
+  .quiz-card-title {
+    min-width: 0;
+    margin: 0;
+    color: #303133;
+    font-size: 15px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  .quiz-card-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin: 14px 0;
+  }
+
+  .quiz-card-meta > div {
+    min-width: 0;
+  }
+
+  .quiz-card-meta dt {
+    margin-bottom: 3px;
+    color: #909399;
+    font-size: 12px;
+  }
+
+  .quiz-card-meta dd {
+    margin: 0;
+    color: #303133;
+    font-size: 14px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  .quiz-card-created {
+    grid-column: 1 / -1;
+  }
+
+  .quiz-card-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .quiz-card-actions :deep(.el-button) {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .weak-point-item {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .weak-point-meta {
+    flex-direction: column;
+    gap: 4px;
+    line-height: 1.5;
+  }
+
+  .weak-point-item :deep(.el-tag) {
+    align-self: flex-start;
+  }
+
+  .quiz-active-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .quiz-active-title {
+    min-width: 0;
+    flex: 1 1 180px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  .question-header,
+  .progress-info {
+    flex-wrap: wrap;
+  }
+
+  .answer-option {
+    height: auto;
+    align-items: flex-start;
+    white-space: normal;
+  }
+
+  .answer-option :deep(.el-radio__label) {
+    padding-right: 4px;
+    line-height: 1.5;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .quiz-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .quiz-actions :deep(.el-button) {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .result-row {
+    overflow-wrap: anywhere;
+  }
 }
 </style>

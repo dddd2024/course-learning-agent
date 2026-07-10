@@ -4,16 +4,26 @@ from __future__ import annotations
 from datetime import date, datetime, time
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class PlanCreate(BaseModel):
     """Payload for POST /plans."""
 
     goal: str = Field(..., min_length=1)
-    courses: List[str] = Field(..., min_length=1)
+    # ``course_ids`` is the preferred, unambiguous contract.  ``courses`` is
+    # retained for older clients that still submit display names.
+    course_ids: List[int] = Field(default_factory=list)
+    courses: List[str] = Field(default_factory=list)
     deadline: date
     daily_minutes: int = Field(..., gt=0)
+
+    @model_validator(mode="after")
+    def require_courses(self) -> "PlanCreate":
+        """Require at least one course via the new or legacy field."""
+        if not self.course_ids and not self.courses:
+            raise ValueError("请至少选择一门课程")
+        return self
 
 
 class GoalResponse(BaseModel):
@@ -74,11 +84,38 @@ class TodoResponse(BaseModel):
 
 
 class PlanResponse(BaseModel):
-    """Result of POST /plans."""
+    """A complete persisted plan returned by create/read endpoints."""
 
     goal: GoalResponse
     tasks: List[TaskResponse]
     todos: List[TodoResponse]
+
+
+class PlanProgressResponse(BaseModel):
+    """Compact task/todo progress shown in the plan history list."""
+
+    tasks_total: int
+    tasks_completed: int
+    todos_total: int
+    todos_completed: int
+
+
+class PlanSummaryResponse(BaseModel):
+    """A persisted learning goal plus enough context to choose it."""
+
+    goal: GoalResponse
+    course_ids: List[int]
+    course_names: List[str]
+    progress: PlanProgressResponse
+    created_at: datetime
+    updated_at: datetime
+
+
+class PlanListResponse(BaseModel):
+    """All persisted learning goals owned by the current user."""
+
+    items: List[PlanSummaryResponse]
+    total: int
 
 
 class TodoUpdate(BaseModel):

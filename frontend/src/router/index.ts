@@ -141,4 +141,9 @@ router.beforeEach(async (to) => {
   }
 })
 
+router.afterEach((to) => {
+  const title = typeof to.meta.title === 'string' ? to.meta.title : '页面未找到'
+  document.title = `${title} · 课程学习助手`
+})
+
 export default router

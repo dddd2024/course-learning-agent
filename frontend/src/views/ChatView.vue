@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowDown,
   ArrowLeft,
   ChatDotRound,
+  Close,
   Delete,
   Edit,
+  Menu,
   MoreFilled,
   Plus,
   Promotion,
@@ -51,6 +53,15 @@ const conversations = ref<Conversation[]>([])
 const conversationsLoading = ref(false)
 const creating = ref(false)
 const activeConversationId = ref<number | null>(null)
+const conversationHistoryLoading = ref(false)
+const conversationLoadError = ref<string | null>(null)
+let conversationLoadRequestId = 0
+
+const isMobileViewport = ref(false)
+const mobileConversationOpen = ref(false)
+const mobileSidebarRef = ref<HTMLElement | null>(null)
+const mobileSidebarOpenerRef = ref<HTMLButtonElement | null>(null)
+let mobileMediaQuery: MediaQueryList | null = null
 
 // Sidebar conversation search: filters the list by title (case-insensitive).
 // Empty keyword shows all conversations.
@@ -63,12 +74,61 @@ const filteredConversations = computed(() => {
   )
 })
 
+function openConversationDrawer() {
+  mobileConversationOpen.value = true
+  void nextTick(() => mobileSidebarRef.value?.focus())
+}
+
+function closeConversationDrawer(restoreFocus = true) {
+  if (!mobileConversationOpen.value) return
+  mobileConversationOpen.value = false
+  if (restoreFocus) {
+    void nextTick(() => mobileSidebarOpenerRef.value?.focus())
+  }
+}
+
+function handleMobileSidebarKeydown(event: KeyboardEvent) {
+  if (!isMobileViewport.value || !mobileConversationOpen.value) return
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeConversationDrawer()
+    return
+  }
+  if (event.key !== 'Tab' || !mobileSidebarRef.value) return
+
+  const focusable = Array.from(
+    mobileSidebarRef.value.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((element) => !element.hasAttribute('inert'))
+  if (focusable.length === 0) return
+
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+function cancelChatForConversationChange() {
+  if (!abortController.value) return
+  chatRequestSequence += 1
+  abortController.value.abort()
+  abortController.value = null
+  sending.value = false
+}
+
 const messages = ref<ChatMessage[]>([])
 const inputText = ref('')
 const sending = ref(false)
 // AbortController for stopping an in-flight SSE stream. When non-null
 // a generation is running and the stop button is shown.
 const abortController = ref<AbortController | null>(null)
+let chatRequestSequence = 0
 
 const messageListRef = ref<HTMLElement | null>(null)
 // Scroll-to-bottom button visibility: shown when the user has scrolled
@@ -266,8 +326,11 @@ async function handleDeleteConversation(conv: Conversation) {
       if (conversations.value.length > 0) {
         await selectConversation(conversations.value[0])
       } else {
+        conversationLoadRequestId += 1
         activeConversationId.value = null
         messages.value = []
+        conversationHistoryLoading.value = false
+        conversationLoadError.value = null
         resetStreamState()
       }
     }
@@ -363,22 +426,63 @@ function historyToChatMessage(m: HistoryMessage): ChatMessage {
   }
 }
 
-async function selectConversation(conv: Conversation) {
-  if (activeConversationId.value === conv.id) return
-  activeConversationId.value = conv.id
-  messages.value = []
-  resetStreamState()
-  statusExpanded.value = false
-  // T04: load conversation history so switching/reloading shows prior Q&A.
+async function loadConversationHistory(conversationId: number) {
+  const requestId = ++conversationLoadRequestId
+  conversationHistoryLoading.value = true
+  conversationLoadError.value = null
   try {
-    const { data } = await listMessages(conv.id)
+    const { data } = await listMessages(conversationId)
+    if (
+      requestId !== conversationLoadRequestId ||
+      activeConversationId.value !== conversationId
+    ) {
+      return
+    }
     messages.value = data.items.map(historyToChatMessage)
     await nextTick()
     scrollToBottom()
   } catch (err) {
-    // 读历史失败时不清空已选状态，只提示；用户仍可发新消息。
-    ElMessage.error(parseApiError(err, '读取历史失败'))
+    if (
+      requestId !== conversationLoadRequestId ||
+      activeConversationId.value !== conversationId
+    ) {
+      return
+    }
+    conversationLoadError.value = parseApiError(err, '读取历史失败')
+  } finally {
+    if (
+      requestId === conversationLoadRequestId &&
+      activeConversationId.value === conversationId
+    ) {
+      conversationHistoryLoading.value = false
+    }
   }
+}
+
+async function selectConversation(conv: Conversation) {
+  closeConversationDrawer(false)
+  if (activeConversationId.value === conv.id) {
+    if (conversationLoadError.value) {
+      await loadConversationHistory(conv.id)
+    }
+    return
+  }
+
+  cancelChatForConversationChange()
+  activeConversationId.value = conv.id
+  messages.value = []
+  resetStreamState()
+  statusExpanded.value = false
+  await loadConversationHistory(conv.id)
+}
+
+async function retryConversationLoad() {
+  if (!activeConversationId.value || conversationHistoryLoading.value) return
+  if (sending.value) {
+    ElMessage.warning('请先停止当前回答，再重试加载历史')
+    return
+  }
+  await loadConversationHistory(activeConversationId.value)
 }
 
 async function handleSend() {
@@ -389,6 +493,10 @@ async function handleSend() {
   }
   if (!activeConversationId.value) {
     ElMessage.warning('请先选择或创建对话')
+    return
+  }
+  if (conversationHistoryLoading.value) {
+    ElMessage.info('正在加载对话历史，请稍候再发送')
     return
   }
   if (sending.value) return
@@ -408,29 +516,44 @@ async function handleSend() {
 function stopGeneration() {
   if (abortController.value) {
     abortController.value.abort()
-    abortController.value = null
-    sending.value = false
   }
 }
 
-// Core SSE chat flow: push a pending agent bubble and stream the answer.
-// Shared by handleSend (new question) and handleRegenerate (re-ask the
-// previous question). Assumes a conversation is already selected.
+// Core SSE chat flow. Each run captures its conversation and pending message,
+// so late events cannot overwrite another conversation after the user switches.
 async function runChat(question: string) {
   if (!activeConversationId.value) return
 
-  const pendingIndex =
-    messages.value.push({
-      role: 'agent',
-      content: '正在思考...',
-      pending: true,
-      courseId: courseId.value,
-      createdAt: new Date().toISOString(),
-    }) - 1
+  const conversationId = activeConversationId.value
+  const requestId = ++chatRequestSequence
+  const pendingMessage: ChatMessage = {
+    role: 'agent',
+    content: '正在思考...',
+    pending: true,
+    courseId: courseId.value,
+    createdAt: new Date().toISOString(),
+  }
+  messages.value.push(pendingMessage)
   sending.value = true
-  abortController.value = new AbortController()
+  const controller = new AbortController()
+  abortController.value = controller
 
-  // Phase 2 Task B: expand the status panel and reset step state.
+  const isCurrentRun = () =>
+    requestId === chatRequestSequence &&
+    activeConversationId.value === conversationId &&
+    messages.value.includes(pendingMessage)
+  const removePendingMessage = () => {
+    const index = messages.value.indexOf(pendingMessage)
+    if (index !== -1) messages.value.splice(index, 1)
+  }
+  const markStopped = () => {
+    if (!isCurrentRun()) return
+    pendingMessage.pending = false
+    if (!pendingMessage.content || pendingMessage.content === '正在思考...') {
+      pendingMessage.content = '（已停止生成）'
+    }
+  }
+
   resetStreamState()
   statusExpanded.value = true
   await nextTick()
@@ -438,15 +561,13 @@ async function runChat(question: string) {
 
   const payload = {
     course_id: courseId.value,
-    conversation_id: activeConversationId.value,
+    conversation_id: conversationId,
     question,
   }
 
   try {
-    // Prefer SSE streaming for live progress; fall back to the sync
-    // POST /chat endpoint ONLY if the stream connection failed before
-    // any event was received. Once events have arrived the user message
-    // is already persisted server-side, so a sync retry would duplicate it.
+    // Fall back to the synchronous endpoint only before the stream emits an
+    // event. Once an event arrives, retrying could persist the question twice.
     let result: ChatResult | null = null
     let receivedAnyEvent = false
     try {
@@ -454,66 +575,48 @@ async function runChat(question: string) {
         payload,
         (evt) => {
           receivedAnyEvent = true
-          handleStreamEvent(evt)
+          if (isCurrentRun()) handleStreamEvent(evt)
         },
-        abortController.value.signal,
+        controller.signal,
       )
     } catch (streamErr) {
       if (streamErr instanceof Error && streamErr.name === 'AbortError') {
-        // User stopped generation, keep partial content
-        const msg = messages.value[pendingIndex]
-        if (msg) {
-          msg.pending = false
-          if (!msg.content || msg.content === '正在思考...') {
-            msg.content = '（已停止生成）'
-          }
-        }
+        markStopped()
       } else if (!receivedAnyEvent) {
-        // No events received → safe to retry via sync endpoint.
         const { data } = await sendMessage(payload)
         result = data
       } else {
-        // Events already arrived → the user message is persisted; do
-        // NOT retry via /chat (would duplicate the message). Surface
-        // the error instead.
         throw streamErr
       }
     }
-    if (result) {
-      applyChatResult(pendingIndex, result)
-      // Collapse the panel on success unless an error was signalled.
-      if (!streamError.value) {
-        statusExpanded.value = false
-      }
-    } else if (streamError.value) {
-      // A step_error ended the stream with no final result.
-      messages.value.splice(pendingIndex, 1)
+    if (result && isCurrentRun()) {
+      applyChatResult(pendingMessage, result)
+      if (!streamError.value) statusExpanded.value = false
+    } else if (streamError.value && isCurrentRun()) {
+      removePendingMessage()
       ElMessage.error(streamError.value)
     }
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      // User stopped generation, keep partial content
-      const msg = messages.value[pendingIndex]
-      if (msg) {
-        msg.pending = false
-        if (!msg.content || msg.content === '正在思考...') {
-          msg.content = '（已停止生成）'
-        }
-      }
-    } else {
-      messages.value.splice(pendingIndex, 1)
+      markStopped()
+    } else if (isCurrentRun()) {
+      removePendingMessage()
       ElMessage.error(parseApiError(err, '发送问题失败'))
     }
   } finally {
-    abortController.value = null
-    sending.value = false
-    await nextTick()
-    scrollToBottom()
+    if (requestId === chatRequestSequence) {
+      abortController.value = null
+      sending.value = false
+      if (activeConversationId.value === conversationId) {
+        await nextTick()
+        scrollToBottom()
+      }
+    }
   }
 }
 
-// Re-generate an AI answer: locate the user question that preceded the
-// given agent message, drop the old answer, and re-run the SSE flow.
+// There is no backend endpoint that can replace an answer in place. Preserve
+// the original and explicitly confirm a visible new request instead.
 async function handleRegenerate(msg: ChatMessage) {
   if (sending.value) return
   if (!activeConversationId.value) {
@@ -537,17 +640,37 @@ async function handleRegenerate(msg: ChatMessage) {
     return
   }
 
-  // Remove the old AI answer before re-asking.
-  if (msgIndex !== -1) {
-    messages.value.splice(msgIndex, 1)
+  const conversationId = activeConversationId.value
+  try {
+    await ElMessageBox.confirm(
+      '当前版本不支持原地替换回答。继续后会保留现有回答，并将原问题作为一条新提问再次发送。',
+      '作为新问题再次提问',
+      {
+        type: 'info',
+        confirmButtonText: '保留回答并再次提问',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
   }
 
+  if (
+    activeConversationId.value !== conversationId ||
+    !messages.value.includes(msg)
+  ) {
+    ElMessage.info('对话已切换，未发送新问题')
+    return
+  }
+  messages.value.push({
+    role: 'user',
+    content: question,
+    createdAt: new Date().toISOString(),
+  })
   await runChat(question)
 }
 
-function applyChatResult(pendingIndex: number, result: ChatResult): void {
-  const msg = messages.value[pendingIndex]
-  if (!msg) return
+function applyChatResult(msg: ChatMessage, result: ChatResult): void {
   msg.content = result.answer || '(无回答内容)'
   msg.messageId = result.message_id
   msg.citations = result.citations ?? []
@@ -649,6 +772,10 @@ function goBack() {
 }
 
 onMounted(async () => {
+  mobileMediaQuery = window.matchMedia('(max-width: 768px)')
+  isMobileViewport.value = mobileMediaQuery.matches
+  mobileMediaQuery.addEventListener('change', handleMobileViewportChange)
+
   await fetchCourse()
   if (!course.value) return
   await fetchConversations()
@@ -656,11 +783,34 @@ onMounted(async () => {
     await selectConversation(conversations.value[0])
   }
 })
+
+function handleMobileViewportChange(event: MediaQueryListEvent) {
+  isMobileViewport.value = event.matches
+  if (!event.matches) mobileConversationOpen.value = false
+}
+
+onBeforeUnmount(() => {
+  conversationLoadRequestId += 1
+  chatRequestSequence += 1
+  abortController.value?.abort()
+  mobileMediaQuery?.removeEventListener('change', handleMobileViewportChange)
+})
 </script>
 
 <template>
   <div v-loading="courseLoading" class="chat-page">
     <div class="chat-header">
+      <button
+        ref="mobileSidebarOpenerRef"
+        type="button"
+        class="mobile-conversation-trigger"
+        aria-controls="conversation-sidebar"
+        :aria-expanded="mobileConversationOpen"
+        @click="openConversationDrawer"
+      >
+        <el-icon><Menu /></el-icon>
+        <span>对话</span>
+      </button>
       <el-button :icon="ArrowLeft" @click="goBack">返回课程详情</el-button>
       <div v-if="course" class="course-brief">
         <span class="course-name">{{ course.name }}</span>
@@ -669,18 +819,48 @@ onMounted(async () => {
     </div>
 
     <div class="chat-body">
-      <div class="chat-sidebar">
+      <transition name="sidebar-overlay">
+        <div
+          v-if="isMobileViewport && mobileConversationOpen"
+          class="chat-sidebar-overlay"
+          aria-hidden="true"
+          @click="closeConversationDrawer()"
+        />
+      </transition>
+      <div
+        id="conversation-sidebar"
+        ref="mobileSidebarRef"
+        class="chat-sidebar"
+        :class="{ 'chat-sidebar--open': mobileConversationOpen }"
+        :role="isMobileViewport ? 'dialog' : 'navigation'"
+        :aria-modal="isMobileViewport ? 'true' : undefined"
+        aria-label="对话列表"
+        :aria-hidden="isMobileViewport && !mobileConversationOpen"
+        :inert="isMobileViewport && !mobileConversationOpen"
+        tabindex="-1"
+        @keydown="handleMobileSidebarKeydown"
+      >
         <div class="sidebar-header">
           <span class="sidebar-title">对话列表</span>
-          <el-button
-            type="primary"
-            size="small"
-            :icon="Plus"
-            :loading="creating"
-            @click="handleCreateConversation"
-          >
-            新建
-          </el-button>
+          <div class="sidebar-header-actions">
+            <el-button
+              type="primary"
+              size="small"
+              :icon="Plus"
+              :loading="creating"
+              @click="handleCreateConversation"
+            >
+              新建
+            </el-button>
+            <button
+              type="button"
+              class="mobile-sidebar-close"
+              aria-label="关闭对话列表"
+              @click="closeConversationDrawer()"
+            >
+              <el-icon><Close /></el-icon>
+            </button>
+          </div>
         </div>
         <div class="sidebar-search">
           <el-input
@@ -690,30 +870,50 @@ onMounted(async () => {
             clearable
             size="small"
             class="conv-search"
+            aria-label="搜索对话"
           />
         </div>
-        <div v-loading="conversationsLoading" class="conversation-list">
+        <div
+          v-loading="conversationsLoading"
+          class="conversation-list"
+          role="list"
+          aria-label="可用对话"
+        >
           <div
             v-for="conv in filteredConversations"
             :key="conv.id"
             class="conversation-item"
             :class="{ active: conv.id === activeConversationId }"
-            @click="selectConversation(conv)"
+            role="listitem"
           >
-            <el-icon class="conv-icon"><ChatDotRound /></el-icon>
-            <div class="conv-info">
-              <div class="conv-title">{{ conv.title }}</div>
-              <div class="conv-time">
-                {{ new Date(conv.created_at).toLocaleString() }}
+            <button
+              type="button"
+              class="conversation-select"
+              :aria-current="conv.id === activeConversationId ? 'true' : undefined"
+              @click="selectConversation(conv)"
+            >
+              <el-icon class="conv-icon"><ChatDotRound /></el-icon>
+              <div class="conv-info">
+                <div class="conv-title">{{ conv.title }}</div>
+                <div class="conv-time">
+                  {{ new Date(conv.created_at).toLocaleString() }}
+                </div>
               </div>
-            </div>
+            </button>
             <span class="conv-actions" @click.stop>
               <el-dropdown
                 trigger="click"
                 placement="bottom-end"
                 @command="(cmd: string | number | object) => handleConversationCommand(cmd, conv)"
               >
-                <el-icon class="conv-actions-trigger"><MoreFilled /></el-icon>
+                <el-button
+                  text
+                  circle
+                  size="small"
+                  class="conv-actions-trigger"
+                  :icon="MoreFilled"
+                  :aria-label="`管理对话：${conv.title}`"
+                />
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item command="rename" :icon="Edit">
@@ -742,7 +942,38 @@ onMounted(async () => {
 
       <div class="chat-main">
         <div
-          v-if="activeConversationId && messages.length > 0"
+          v-if="activeConversationId && conversationHistoryLoading"
+          class="conversation-load-state"
+          aria-live="polite"
+          aria-label="正在加载对话历史"
+        >
+          <el-skeleton :rows="5" animated />
+        </div>
+
+        <div
+          v-else-if="activeConversationId && conversationLoadError"
+          class="conversation-load-state conversation-load-error"
+          role="alert"
+        >
+          <el-alert
+            title="对话历史加载失败"
+            :description="conversationLoadError"
+            type="error"
+            :closable="false"
+            show-icon
+          />
+          <el-button
+            type="primary"
+            :loading="conversationHistoryLoading"
+            :disabled="sending"
+            @click="retryConversationLoad"
+          >
+            重试加载
+          </el-button>
+        </div>
+
+        <div
+          v-else-if="activeConversationId && messages.length > 0"
           ref="messageListRef"
           class="message-list"
           @scroll="handleChatScroll"
@@ -767,13 +998,15 @@ onMounted(async () => {
         <!-- Floating scroll-to-bottom button: appears when the user has
              scrolled up away from the latest message. -->
         <transition name="fade">
-          <div
+          <button
             v-if="showScrollBottom"
+            type="button"
             class="scroll-bottom-btn"
+            aria-label="滚动到最新消息"
             @click="scrollToBottomSmooth"
           >
             <el-icon :size="20"><ArrowDown /></el-icon>
-          </div>
+          </button>
         </transition>
 
         <SseStatusPanel
@@ -793,14 +1026,16 @@ onMounted(async () => {
             :rows="2"
             placeholder="输入问题，回车发送（Shift+回车换行）"
             resize="none"
-            :disabled="sending"
+            aria-label="输入问题"
+            :disabled="sending || conversationHistoryLoading"
             @keydown.enter.exact.prevent="handleSend"
           />
           <el-button
             type="primary"
             :icon="Promotion"
             :loading="sending"
-            :disabled="!inputText.trim()"
+            :disabled="!inputText.trim() || conversationHistoryLoading"
+            aria-label="发送问题"
             @click="handleSend"
           >
             发送
@@ -809,6 +1044,7 @@ onMounted(async () => {
             v-if="sending"
             type="danger"
             :icon="VideoPause"
+            aria-label="停止生成回答"
             @click="stopGeneration"
           >
             停止
@@ -847,6 +1083,19 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 
+.mobile-conversation-trigger,
+.mobile-sidebar-close {
+  display: none;
+  border: 0;
+  background: transparent;
+  color: #303133;
+  cursor: pointer;
+}
+
+.chat-sidebar-overlay {
+  display: none;
+}
+
 .course-brief {
   display: flex;
   align-items: center;
@@ -876,6 +1125,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  background: #fff;
 }
 
 .sidebar-header {
@@ -890,6 +1140,12 @@ onMounted(async () => {
   font-size: 14px;
   font-weight: 600;
   color: #303133;
+}
+
+.sidebar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .sidebar-search {
@@ -910,11 +1166,25 @@ onMounted(async () => {
 .conversation-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 2px;
+  padding: 2px 4px 2px 0;
   border-radius: 6px;
-  cursor: pointer;
   transition: background 0.2s;
+}
+
+.conversation-select {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .conversation-item:hover {
@@ -972,9 +1242,8 @@ onMounted(async () => {
   cursor: pointer;
   color: #909399;
   font-size: 16px;
-  padding: 2px;
-  border-radius: 4px;
-  outline: none;
+  width: 30px;
+  height: 30px;
 }
 
 .conv-actions-trigger:hover {
@@ -1001,6 +1270,23 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.conversation-load-state {
+  flex: 1;
+  padding: 32px;
+  overflow-y: auto;
+}
+
+.conversation-load-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 16px;
+  max-width: 640px;
+  width: 100%;
+  margin: 0 auto;
 }
 
 .chat-input {
@@ -1031,6 +1317,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  border: 0;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   z-index: 10;
   transition: opacity 0.3s, transform 0.3s;
@@ -1039,6 +1326,15 @@ onMounted(async () => {
 .scroll-bottom-btn:hover {
   transform: scale(1.1);
   background: #66b1ff;
+}
+
+.mobile-conversation-trigger:focus-visible,
+.mobile-sidebar-close:focus-visible,
+.conversation-select:focus-visible,
+.scroll-bottom-btn:focus-visible,
+.conv-actions-trigger:focus-visible {
+  outline: 3px solid rgba(64, 158, 255, 0.45);
+  outline-offset: 2px;
 }
 
 .fade-enter-active,
@@ -1055,20 +1351,123 @@ onMounted(async () => {
    drawer that slides in from the left. The main chat area takes the
    full width. */
 @media (max-width: 768px) {
+  .chat-header {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .mobile-conversation-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-height: 32px;
+    padding: 5px 10px;
+    border: 1px solid #dcdfe6;
+    border-radius: 4px;
+    background: #fff;
+    font-size: 14px;
+  }
+
+  .course-brief {
+    order: 3;
+    flex-basis: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+
+  .course-name {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .chat-sidebar-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.45);
+  }
+
   .chat-sidebar {
     position: fixed;
     left: 0;
     top: 0;
+    width: min(86vw, 320px);
     height: 100vh;
     z-index: 1001;
     transform: translateX(-100%);
     transition: transform 0.3s;
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.16);
+    outline: none;
   }
+
   .chat-sidebar--open {
     transform: translateX(0);
   }
+
+  .mobile-sidebar-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    font-size: 18px;
+  }
+
+  .mobile-sidebar-close:hover {
+    background: #f5f7fa;
+  }
+
+  .conv-actions {
+    opacity: 1;
+  }
+
   .chat-main {
     width: 100%;
   }
+
+  .message-list {
+    padding: 12px;
+  }
+
+  .conversation-load-state {
+    padding: 20px 16px;
+  }
+
+  .chat-input {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+  }
+
+  .chat-input :deep(.el-textarea) {
+    flex: 1 0 100%;
+  }
+
+  .chat-input > .el-button {
+    margin-left: 0;
+  }
+
+  .chat-input > .el-button:first-of-type {
+    margin-left: auto;
+  }
+
+  .scroll-bottom-btn {
+    right: 16px;
+    bottom: 128px;
+  }
+}
+
+.sidebar-overlay-enter-active,
+.sidebar-overlay-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.sidebar-overlay-enter-from,
+.sidebar-overlay-leave-to {
+  opacity: 0;
 }
 </style>

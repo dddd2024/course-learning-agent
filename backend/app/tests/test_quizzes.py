@@ -8,6 +8,7 @@ Covers:
 - POST /api/v1/quizzes (generate quiz from knowledge points)
 - GET  /api/v1/quizzes (list, user-scoped)
 - GET  /api/v1/quizzes/{id} (detail, no answer leaked)
+- GET  /api/v1/quizzes/{id}/result (submitted result review)
 - POST /api/v1/quizzes/{id}/submit (grade + weak-point recording)
 - GET  /api/v1/courses/{course_id}/weak-points (list weak points)
 - Cross-user isolation (404)
@@ -276,6 +277,57 @@ def test_get_quiz_detail_unauthorized(client, tmp_path, monkeypatch) -> None:
     headers_b = auth_headers(client, username="bob")
     resp = client.get(f"/api/v1/quizzes/{quiz_id}", headers=headers_b)
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /quizzes/{id}/result
+# ---------------------------------------------------------------------------
+
+
+def test_get_quiz_result_after_submission(client, tmp_path, monkeypatch) -> None:
+    """Persisted results are reviewable only after submit and by their owner."""
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
+    )
+
+    headers = auth_headers(client, username="alice")
+    course_id = _setup_course_with_kps(client, headers)
+    create_resp = client.post(
+        "/api/v1/quizzes", json={"course_id": course_id}, headers=headers
+    )
+    quiz_id = create_resp.json()["id"]
+
+    draft_resp = client.get(
+        f"/api/v1/quizzes/{quiz_id}/result", headers=headers
+    )
+    assert draft_resp.status_code == 400
+    assert draft_resp.json()["message"] == "该测验尚未提交，暂无结果"
+
+    item_answers = _get_quiz_item_answers(quiz_id)
+    submit_resp = client.post(
+        f"/api/v1/quizzes/{quiz_id}/submit",
+        json={
+            "answers": [
+                {"item_id": item_id, "user_answer": answer}
+                for item_id, answer, _ in item_answers
+            ]
+        },
+        headers=headers,
+    )
+    assert submit_resp.status_code == 200, submit_resp.text
+
+    result_resp = client.get(
+        f"/api/v1/quizzes/{quiz_id}/result", headers=headers
+    )
+    assert result_resp.status_code == 200, result_resp.text
+    assert result_resp.json() == submit_resp.json()
+
+    other_user_headers = auth_headers(client, username="bob")
+    unauthorized_resp = client.get(
+        f"/api/v1/quizzes/{quiz_id}/result", headers=other_user_headers
+    )
+    assert unauthorized_resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------

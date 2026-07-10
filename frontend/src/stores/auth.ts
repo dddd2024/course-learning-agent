@@ -102,9 +102,17 @@ export const useAuthStore = defineStore('auth', () => {
       if (data.username) username.value = data.username
       authReady.value = true
       return true
-    } catch {
-      clearToken()
-      return false
+    } catch (error) {
+      const status = (error as { response?: { status?: number } })?.response?.status
+      if (status === 401) {
+        clearToken()
+        return false
+      }
+      // A timeout or temporary outage does not prove the session is invalid.
+      // Keep the token so the current page can show a recoverable network error
+      // instead of unexpectedly throwing the user back to the login screen.
+      authReady.value = true
+      return true
     }
   }
 

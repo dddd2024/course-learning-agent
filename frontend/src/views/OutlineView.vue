@@ -117,11 +117,19 @@ async function fetchKnowledgePoints() {
 
 async function handleGenerate() {
   if (!courseId.value) return
+  const replacingExisting = knowledgePoints.value.length > 0
+  const confirmationMessage = replacingExisting
+    ? `将删除并替换现有 ${knowledgePoints.value.length} 个知识点。原提纲无法恢复，是否继续？`
+    : '将基于课程资料自动生成知识点提纲，可能需要一些时间，是否继续？'
   try {
     await ElMessageBox.confirm(
-      '将基于课程资料自动生成知识点提纲，可能需要一些时间，是否继续？',
-      '生成知识点',
-      { type: 'info', confirmButtonText: '生成', cancelButtonText: '取消' },
+      confirmationMessage,
+      replacingExisting ? '重新生成知识点' : '生成知识点',
+      {
+        type: replacingExisting ? 'warning' : 'info',
+        confirmButtonText: replacingExisting ? '替换并生成' : '生成',
+        cancelButtonText: '取消',
+      },
     )
   } catch {
     return
@@ -265,7 +273,13 @@ onMounted(async () => {
             :loading="generating"
             @click="handleGenerate"
           >
-            {{ generating ? '生成中...' : '生成知识点' }}
+            {{
+              generating
+                ? '生成中...'
+                : knowledgePoints.length > 0
+                  ? '重新生成知识点'
+                  : '生成知识点'
+            }}
           </el-button>
         </div>
       </div>
@@ -298,7 +312,17 @@ onMounted(async () => {
         </div>
       </template>
       <div class="kp-list">
-        <div v-for="(kp, idx) in knowledgePoints" :key="idx" class="kp-card kp-card--clickable" @click="goToLearnWithKp(kp)">
+        <div
+          v-for="(kp, idx) in knowledgePoints"
+          :key="idx"
+          class="kp-card kp-card--clickable"
+          role="link"
+          tabindex="0"
+          :aria-label="`学习知识点：${kp.title}`"
+          @click="goToLearnWithKp(kp)"
+          @keydown.enter.self="goToLearnWithKp(kp)"
+          @keydown.space.self.prevent="goToLearnWithKp(kp)"
+        >
           <div class="kp-head">
             <div class="kp-num">{{ idx + 1 }}</div>
             <div class="kp-title kp-title--link">{{ kp.title }}</div>
@@ -330,7 +354,8 @@ onMounted(async () => {
                 link
                 type="primary"
                 class="kp-meta-value"
-                @click="goToLearn"
+                :aria-label="`开始复习任务：${kp.review_action || kp.title}`"
+                @click.stop="goToLearn"
               >
                 {{ kp.review_action || '—' }}
               </el-button>
@@ -348,7 +373,8 @@ onMounted(async () => {
                 link
                 type="primary"
                 size="small"
-                @click="openSourceListDialog(kp)"
+                :aria-label="`查看 ${kp.title} 的来源片段`"
+                @click.stop="openSourceListDialog(kp)"
               >
                 查看来源
               </el-button>
@@ -419,7 +445,7 @@ onMounted(async () => {
       :title="
         currentChunkId !== null ? `来源片段 #${currentChunkId}` : '来源片段'
       "
-      width="640px"
+      width="min(640px, calc(100vw - 32px))"
     >
       <div v-loading="chunkDialogLoading" class="chunk-dialog-body">
         <template v-if="currentChunk">
@@ -461,7 +487,7 @@ onMounted(async () => {
           ? `来源片段 — ${currentSourceKp.title}（共 ${currentSourceKp.source_chunk_ids?.length || 0} 个）`
           : '来源片段'
       "
-      width="720px"
+      width="min(720px, calc(100vw - 32px))"
     >
       <div v-loading="sourceListLoading" class="source-list-body">
         <template v-if="sourceListChunks.length > 0">
@@ -469,7 +495,12 @@ onMounted(async () => {
             v-for="item in sourceListChunks"
             :key="item.chunk.id"
             class="source-list-item"
+            role="button"
+            tabindex="0"
+            :aria-label="`查看来源片段 #${item.chunk.id}`"
             @click="openChunkDialog(item.chunk.id)"
+            @keydown.enter="openChunkDialog(item.chunk.id)"
+            @keydown.space.prevent="openChunkDialog(item.chunk.id)"
           >
             <div class="source-list-item-head">
               <span class="source-list-item-id">#{{ item.chunk.id }}</span>
@@ -596,6 +627,13 @@ onMounted(async () => {
 
 .kp-card--clickable {
   cursor: pointer;
+}
+
+.kp-card--clickable:focus-visible,
+.source-list-item:focus-visible {
+  outline: 3px solid rgba(64, 158, 255, 0.4);
+  outline-offset: 2px;
+  border-color: #409eff;
 }
 
 .kp-title--link {
@@ -871,5 +909,164 @@ onMounted(async () => {
   max-height: 320px;
   overflow-y: auto;
   word-break: break-word;
+}
+
+@media (max-width: 768px) {
+  .page {
+    padding: 12px;
+  }
+
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .course-brief {
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+
+  .course-name {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .section-card {
+    margin-bottom: 14px;
+  }
+
+  .action-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+
+  .action-info {
+    align-items: flex-start;
+  }
+
+  .action-desc {
+    line-height: 1.5;
+  }
+
+  .action-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+  }
+
+  .action-buttons > .el-button {
+    width: 100%;
+    min-width: 0;
+    margin-left: 0;
+    padding-inline: 8px;
+    white-space: nowrap;
+  }
+
+  .section-title-bar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .kp-list {
+    gap: 12px;
+  }
+
+  .kp-card {
+    padding: 14px;
+  }
+
+  .kp-head {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    align-items: start;
+    gap: 8px 10px;
+  }
+
+  .kp-title {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+    line-height: 1.45;
+  }
+
+  .kp-importance {
+    grid-column: 2;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .kp-meta-item {
+    overflow-wrap: anywhere;
+  }
+
+  .kp-meta-value.el-button {
+    height: auto;
+    max-width: 100%;
+    padding: 0;
+    white-space: normal;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .kp-foot {
+    align-items: flex-start;
+  }
+
+  .outline {
+    padding: 14px;
+  }
+
+  .outline-header {
+    align-items: flex-start;
+  }
+
+  .outline-title-text {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .outline-item-head {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    align-items: start;
+    gap: 5px 6px;
+  }
+
+  .outline-item-title-text {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .outline-item-head > .el-tag {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .outline-summary {
+    padding-left: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .outline-sub {
+    padding-left: 20px;
+  }
+
+  .outline-sub li,
+  .source-list-item-text,
+  .source-list-item-material {
+    overflow-wrap: anywhere;
+  }
+
+  .source-list-item-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
 }
 </style>

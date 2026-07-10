@@ -6,7 +6,7 @@
         <el-icon><ArrowLeft /></el-icon>
         返回课程
       </el-button>
-      <span class="learn-title">{{ courseName || '课程学习' }}</span>
+      <h2 class="learn-title">{{ courseName || '课程学习' }}</h2>
       <el-button
         type="primary"
         plain
@@ -16,12 +16,12 @@
         @click="generateStudyGuide"
       >
         <el-icon><MagicStick /></el-icon>
-        生成学习指南
+        生成内容速览
       </el-button>
       <el-select
         v-model="selectedMaterialId"
         placeholder="选择学习资料"
-        style="width: 240px"
+        class="material-select"
         @change="loadChunks"
       >
         <el-option
@@ -42,10 +42,40 @@
       class="read-progress"
     />
 
+    <div v-if="chunks.length > 0" class="mobile-pane-switch" role="tablist" aria-label="学习视图">
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="mobilePane === 'toc'"
+        :class="{ active: mobilePane === 'toc' }"
+        @click="mobilePane = 'toc'"
+      >
+        目录
+      </button>
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="mobilePane === 'content'"
+        :class="{ active: mobilePane === 'content' }"
+        @click="mobilePane = 'content'"
+      >
+        正文
+      </button>
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="mobilePane === 'assistant'"
+        :class="{ active: mobilePane === 'assistant' }"
+        @click="mobilePane = 'assistant'"
+      >
+        AI 助手
+      </button>
+    </div>
+
     <!-- Main content: TOC + document reader + AI assistant -->
     <div class="learn-body">
       <!-- Left: Table of Contents -->
-      <div v-if="chunks.length > 0" class="doc-toc">
+      <div v-if="chunks.length > 0" class="doc-toc" :class="{ 'mobile-hidden': mobilePane !== 'toc' }">
         <div class="toc-label">目录</div>
         <div class="toc-list">
           <div
@@ -53,7 +83,11 @@
             :key="chunk.id"
             class="toc-item"
             :class="{ active: activeChunkIndex === idx }"
+            role="button"
+            tabindex="0"
             @click="scrollToChunk(idx)"
+            @keydown.enter="scrollToChunk(idx)"
+            @keydown.space.prevent="scrollToChunk(idx)"
           >
             <span class="toc-num">{{ idx + 1 }}</span>
             <span class="toc-title">{{ getChunkLabel(chunk) }}</span>
@@ -62,8 +96,8 @@
       </div>
 
       <!-- Center: Document reader -->
-      <div class="doc-reader" @scroll="handleDocScroll">
-        <div v-if="docLoading" class="doc-loading">
+      <div class="doc-reader" :class="{ 'mobile-hidden': mobilePane !== 'content' }" @scroll="handleDocScroll">
+        <div v-if="docLoading" class="doc-loading" role="status" aria-live="polite">
           <el-icon class="is-loading"><Loading /></el-icon>
           加载资料中...
         </div>
@@ -82,7 +116,8 @@
           <div v-if="studyGuide || studyGuideLoading" class="study-guide-card">
             <div class="study-guide-head">
               <el-icon color="#409eff"><MagicStick /></el-icon>
-              <span>AI 学习指南</span>
+              <span>AI 内容速览</span>
+              <el-tag size="small" type="info" effect="plain">基于前 20 个片段</el-tag>
               <el-button
                 v-if="studyGuide"
                 text
@@ -103,6 +138,15 @@
             <div class="kp-focus-head">
               <el-icon color="#409eff"><Aim /></el-icon>
               <span class="kp-focus-title">当前学习知识点：{{ kpTitle }}</span>
+              <el-button
+                type="primary"
+                plain
+                size="small"
+                :loading="aiLoading"
+                @click="askAboutKnowledgePoint"
+              >
+                让 AI 讲解
+              </el-button>
               <el-button text size="small" @click="kpTitle = ''; kpSummary = ''; kpFilterActive = false; loadChunks()">关闭</el-button>
             </div>
             <div v-if="kpSummary" class="kp-focus-summary">{{ kpSummary }}</div>
@@ -139,8 +183,9 @@
                   class="doc-chunk-image-item"
                 >
                   <el-image
-                    :src="`${BACKEND_PROXY_TARGET}/uploads/${img.image_path}`"
-                    :preview-src-list="[`${BACKEND_PROXY_TARGET}/uploads/${img.image_path}`]"
+                    :src="`${UPLOAD_BASE_URL}/${img.image_path}`"
+                    :preview-src-list="[`${UPLOAD_BASE_URL}/${img.image_path}`]"
+                    :alt="`${materials.find((m) => m.id === selectedMaterialId)?.filename || '课程资料'}第 ${chunk.page_no || '?'} 页插图`"
                     fit="contain"
                     style="max-width: 100%; max-height: 400px; border-radius: 6px;"
                     loading="lazy"
@@ -160,7 +205,7 @@
       </div>
 
       <!-- Right: AI Assistant sidebar -->
-      <div class="ai-assistant">
+      <div class="ai-assistant" :class="{ 'mobile-hidden': mobilePane !== 'assistant' }">
         <div class="ai-assistant-head">
           <el-icon color="#409eff"><ChatDotRound /></el-icon>
           <span>AI 学习助手</span>
@@ -182,7 +227,7 @@
         </div>
 
         <!-- Chat messages -->
-        <div class="ai-messages" ref="messagesRef">
+        <div class="ai-messages" ref="messagesRef" aria-live="polite" aria-relevant="additions">
           <div v-if="aiMessages.length === 0" class="ai-hint">
             <el-icon color="#909399"><InfoFilled /></el-icon>
             <p>选中上方文档中的任意文字，即可向AI助手提问。</p>
@@ -266,7 +311,7 @@ import {
 import { listKnowledgePoints } from '../api/knowledge'
 import { parseApiError } from '../utils/error'
 import { renderMarkdown } from '../utils/markdown'
-import { BACKEND_PROXY_TARGET } from '../config/api'
+import { UPLOAD_BASE_URL } from '../config/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -279,6 +324,7 @@ const rawChunks = ref<Chunk[]>([])
 const chunks = ref<Chunk[]>([])
 const docLoading = ref(false)
 const filteredCount = ref(0)
+const mobilePane = ref<'toc' | 'content' | 'assistant'>('content')
 
 // AI assistant state
 const selectedText = ref('')
@@ -465,7 +511,7 @@ async function generateStudyGuide() {
       .slice(0, 20)
       .map((c, i) => `[片段${i + 1}] 第${c.page_no || '?'}页 ${c.title || ''}\n${c.text.substring(0, 200)}`)
       .join('\n\n')
-    const question = `请根据以下课程资料片段，生成一份结构化的学习指南，包含：
+    const question = `请根据以下选取的前 20 个课程资料片段，生成一份结构化内容速览。请明确说明这不是对整份资料的完整覆盖，并包含：
 1. 本章节核心概念（3-5个关键词）
 2. 重点知识点梳理（按逻辑顺序组织）
 3. 常见易错点或难点提示
@@ -566,15 +612,30 @@ onMounted(async () => {
       if (qKpTitle && typeof qKpTitle === 'string') {
         kpTitle.value = qKpTitle
         kpSummary.value = (qKpSummary as string) || ''
-        // Auto-ask AI to explain this knowledge point
+        // Prepare, but do not automatically send, a potentially billable AI
+        // request. The learner explicitly starts it from the focus banner.
         inputQuestion.value = `请详细讲解知识点「${kpTitle.value}」${kpSummary.value ? `，参考摘要：${kpSummary.value}` : ''}`
-        await askQuestion()
       }
     }
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取资料列表失败'))
   }
 })
+
+async function getAllMaterialChunks(materialId: number): Promise<Chunk[]> {
+  const pageSize = 100
+  const first = await getChunks(materialId, { page: 1, page_size: pageSize })
+  const items = [...first.data.items]
+  const total = first.data.total ?? items.length
+  let page = 2
+  while (items.length < total) {
+    const { data } = await getChunks(materialId, { page, page_size: pageSize })
+    if (data.items.length === 0) break
+    items.push(...data.items)
+    page += 1
+  }
+  return items
+}
 
 async function loadChunks() {
   if (!selectedMaterialId.value) return
@@ -591,15 +652,15 @@ async function loadChunks() {
       let bestMatchCount = 0
       for (const m of materials.value) {
         try {
-          const { data } = await getChunks(m.id, { page: 1, page_size: 100 })
-          const matchCount = data.items.filter((c: Chunk) =>
+          const materialChunks = await getAllMaterialChunks(m.id)
+          const matchCount = materialChunks.filter((c: Chunk) =>
             kpSourceChunkIds.value.has(c.id),
           ).length
           if (matchCount > bestMatchCount) {
             bestMatchCount = matchCount
             bestMaterialId = m.id
           }
-          allChunks.push(...data.items)
+          allChunks.push(...materialChunks)
         } catch {
           // skip materials that fail to load
         }
@@ -611,9 +672,9 @@ async function loadChunks() {
       )
       chunks.value = filtered
     } else {
-      const { data } = await getChunks(selectedMaterialId.value, { page: 1, page_size: 100 })
-      rawChunks.value = data.items
-      chunks.value = filterUsefulChunks(data.items)
+      const materialChunks = await getAllMaterialChunks(selectedMaterialId.value)
+      rawChunks.value = materialChunks
+      chunks.value = filterUsefulChunks(materialChunks)
     }
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取资料内容失败'))
@@ -632,6 +693,13 @@ function handleSelection() {
 function askAboutSelection() {
   if (!selectedText.value) return
   inputQuestion.value = `请解释这段内容：\n"${selectedText.value}"`
+  askQuestion()
+}
+
+function askAboutKnowledgePoint() {
+  if (!kpTitle.value) return
+  inputQuestion.value = `请详细讲解知识点「${kpTitle.value}」${kpSummary.value ? `，参考摘要：${kpSummary.value}` : ''}`
+  mobilePane.value = 'assistant'
   askQuestion()
 }
 
@@ -734,7 +802,8 @@ function goBack() {
 .learn-page {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: calc(100dvh - 136px);
+  min-height: 620px;
   overflow: hidden;
 }
 
@@ -751,6 +820,14 @@ function goBack() {
   font-size: 16px;
   font-weight: 600;
   flex: 1;
+}
+
+.material-select {
+  width: 240px;
+}
+
+.mobile-pane-switch {
+  display: none;
 }
 
 .read-progress {
@@ -803,6 +880,10 @@ function goBack() {
 
 .toc-item:hover {
   background: #f5f7fa;
+}
+
+.toc-item:focus-visible {
+  outline-offset: -3px;
 }
 
 .toc-item.active {
@@ -1317,22 +1398,145 @@ function goBack() {
   max-width: 100%;
 }
 
-/* Responsive: stack panels vertically on narrow screens */
-@media (max-width: 1024px) {
-  .learn-body {
-    flex-direction: column;
-  }
+@media (max-width: 1180px) {
   .doc-toc {
-    width: 100%;
-    max-height: 200px;
-    border-right: none;
-    border-bottom: 1px solid #ebeef5;
+    width: 176px;
   }
   .ai-assistant {
+    width: 320px;
+  }
+  .doc-reader {
+    padding: 20px;
+  }
+}
+
+/* Mobile uses an explicit three-pane switch so each task keeps a useful
+   viewport instead of stacking three independently scrolling panels. */
+@media (max-width: 768px) {
+  .learn-page {
+    height: calc(100dvh - 120px);
+    min-height: 560px;
+  }
+
+  .learn-header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .learn-header > :deep(.el-button) {
+    margin-left: 0;
+  }
+
+  .learn-title {
+    min-width: 0;
+    align-self: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .material-select {
     width: 100%;
-    max-height: 300px;
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .learn-header > :deep(.el-button:nth-of-type(2)) {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    width: 100%;
+  }
+
+  .mobile-pane-switch {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-base);
+    background: #fff;
+  }
+
+  .mobile-pane-switch button {
+    min-height: 40px;
+    border: 0;
+    border-radius: 8px;
+    background: #f2f4f7;
+    color: var(--text-regular);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .mobile-pane-switch button.active {
+    background: #e8efff;
+    color: var(--color-primary);
+    font-weight: 600;
+  }
+
+  .learn-body {
+    display: block;
+    min-height: 0;
+  }
+
+  .mobile-hidden {
+    display: none !important;
+  }
+
+  .doc-toc {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border-right: none;
+    border-bottom: 0;
+    overflow-y: auto;
+  }
+
+  .toc-item {
+    min-height: 44px;
+  }
+
+  .doc-reader {
+    width: 100%;
+    height: 100%;
+    padding: 14px 12px;
+    overflow-y: auto;
+  }
+
+  .doc-chunk {
+    padding: 14px;
+  }
+
+  .doc-chunk-head,
+  .study-guide-head,
+  .kp-focus-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .study-guide-head .el-button,
+  .kp-focus-head .el-button {
+    margin-left: 0;
+  }
+
+  .kp-focus-title {
+    flex-basis: calc(100% - 40px);
+  }
+
+  .ai-assistant {
+    width: 100%;
+    height: 100%;
+    max-height: none;
     border-left: none;
-    border-top: 1px solid #ebeef5;
+    border-top: 0;
+  }
+
+  .ai-messages {
+    min-height: 0;
+  }
+
+  .ai-input-area {
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
 }
 </style>
