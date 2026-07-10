@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { Odometer, Reading, Tickets, Calendar, EditPen, Share, Document } from '@element-plus/icons-vue'
+import AppBreadcrumbs from '../components/common/AppBreadcrumbs.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -81,6 +82,7 @@ function handleLogout() {
         </div>
       </el-header>
       <el-main class="main">
+        <AppBreadcrumbs />
         <router-view />
       </el-main>
     </el-container>

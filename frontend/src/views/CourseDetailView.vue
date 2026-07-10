@@ -2,8 +2,16 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Document, ChatDotRound, Collection } from '@element-plus/icons-vue'
+import {
+  ChatDotRound,
+  Collection,
+  Connection,
+  Document,
+  Reading,
+} from '@element-plus/icons-vue'
 import { getCourse, type Course } from '../api/course'
+import { listMaterials } from '../api/material'
+import { listKnowledgePoints } from '../api/knowledge'
 import { parseApiError } from '../utils/error'
 
 const route = useRoute()
@@ -11,6 +19,8 @@ const router = useRouter()
 
 const course = ref<Course | null>(null)
 const loading = ref(false)
+const materialsCount = ref<number | null>(null)
+const knowledgePointsCount = ref<number | null>(null)
 
 async function fetchCourse() {
   const id = Number(route.params.id)
@@ -47,8 +57,34 @@ function goToOutline() {
   router.push(`/courses/${route.params.id}/outline`)
 }
 
-onMounted(() => {
-  fetchCourse()
+function goToLearn() {
+  router.push(`/courses/${route.params.id}/learn`)
+}
+
+function goToKnowledgeGraph() {
+  router.push('/knowledge-graph')
+}
+
+async function fetchCounts() {
+  const id = Number(route.params.id)
+  if (!id) return
+  try {
+    const [{ data: materialsData }, { data: kpData }] = await Promise.all([
+      listMaterials(id),
+      listKnowledgePoints(id),
+    ])
+    materialsCount.value = materialsData.total
+    knowledgePointsCount.value = kpData.total
+  } catch {
+    // 计数仅为辅助展示，失败时静默忽略，不影响主流程
+  }
+}
+
+onMounted(async () => {
+  await fetchCourse()
+  if (course.value) {
+    fetchCounts()
+  }
 })
 </script>
 
@@ -75,6 +111,9 @@ onMounted(() => {
         <el-icon :size="32"><Document /></el-icon>
         <div class="entry-title">资料</div>
         <div class="entry-desc">课程文件与资料管理</div>
+        <div v-if="materialsCount !== null" class="entry-badge">
+          {{ materialsCount }}
+        </div>
       </el-card>
       <el-card class="entry-card" shadow="hover" @click="goToChat">
         <el-icon :size="32"><ChatDotRound /></el-icon>
@@ -85,6 +124,19 @@ onMounted(() => {
         <el-icon :size="32"><Collection /></el-icon>
         <div class="entry-title">知识点</div>
         <div class="entry-desc">知识点体系梳理</div>
+        <div v-if="knowledgePointsCount !== null" class="entry-badge">
+          {{ knowledgePointsCount }}
+        </div>
+      </el-card>
+      <el-card class="entry-card" shadow="hover" @click="goToLearn">
+        <el-icon :size="32"><Reading /></el-icon>
+        <div class="entry-title">文档学习</div>
+        <div class="entry-desc">沉浸式文档阅读学习</div>
+      </el-card>
+      <el-card class="entry-card" shadow="hover" @click="goToKnowledgeGraph">
+        <el-icon :size="32"><Connection /></el-icon>
+        <div class="entry-title">知识图谱</div>
+        <div class="entry-desc">课程知识图谱可视化</div>
       </el-card>
     </div>
   </div>
@@ -148,10 +200,28 @@ onMounted(() => {
   cursor: pointer;
   text-align: center;
   padding: 8px 0;
+  position: relative;
 }
 
 .entry-card :deep(.el-card__body) {
   padding: 24px 16px;
+}
+
+.entry-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 11px;
+  background: #409eff;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 22px;
+  text-align: center;
+  box-sizing: border-box;
 }
 
 .entry-title {

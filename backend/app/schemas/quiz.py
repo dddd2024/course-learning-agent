@@ -83,16 +83,38 @@ class QuizSubmit(BaseModel):
 
 
 class QuizResultItemOut(BaseModel):
-    """A graded quiz item returned after submit."""
+    """A graded quiz item returned after submit.
+
+    Unlike ``QuizItemOut`` (used before submit), this one DOES expose the
+    ``correct_answer`` so the client can render the right answer next to
+    the user's answer in the review screen.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    question_type: str
     question_text: str
+    options: List[str] = []
+    correct_answer: str = ""
     user_answer: Optional[str] = None
     is_correct: Optional[int] = None
     explanation: Optional[str] = None
     knowledge_point_id: Optional[int] = None
+
+    @field_validator("options", mode="before")
+    @classmethod
+    def _parse_options(cls, value):
+        """Parse the JSON string stored in the DB into a list."""
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                return parsed if isinstance(parsed, list) else []
+            except (json.JSONDecodeError, TypeError):
+                return []
+        if value is None:
+            return []
+        return list(value)
 
 
 class QuizResultOut(BaseModel):

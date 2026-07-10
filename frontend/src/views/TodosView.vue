@@ -11,6 +11,7 @@ import {
 } from '../api/plan'
 import { MAX_PAGE_SIZE } from '../constants/pagination'
 import { parseApiError } from '../utils/error'
+import EmptyState from '../components/common/EmptyState.vue'
 
 const router = useRouter()
 
@@ -248,9 +249,10 @@ onMounted(() => {
         </div>
       </template>
       <div v-loading="todayLoading">
-        <el-empty
+        <EmptyState
           v-if="!todayLoading && todayTodos.length === 0"
-          description="今日暂无待办"
+          title="暂无待办事项"
+          description="创建学习计划后将自动生成待办"
         />
         <div class="today-grid">
           <div

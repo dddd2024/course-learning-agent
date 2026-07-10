@@ -88,6 +88,10 @@ function toDateString(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
+function disablePastDate(date: Date): boolean {
+  return date.getTime() < Date.now() - 24 * 60 * 60 * 1000
+}
+
 function formatTime(time: string | null): string {
   if (!time) return ''
   // 兼容 "HH:MM:SS" / "HH:MM"
@@ -238,6 +242,7 @@ onMounted(() => {
                 placeholder="选择截止日期"
                 format="YYYY-MM-DD"
                 value-format="YYYY-MM-DD"
+                :disabled-date="disablePastDate"
                 style="width: 100%"
               />
             </el-form-item>

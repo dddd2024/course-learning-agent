@@ -4,14 +4,18 @@
 // are forwarded to the parent via events.
 import {
   ChatDotRound,
+  CopyDocument,
   Document,
   Loading,
+  Refresh,
   User,
 } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import type { Citation } from '../../api/chat'
 import type { ChatMessage } from './types'
 import CitationCapsules from './CitationCapsules.vue'
 import FollowUpSuggestions from './FollowUpSuggestions.vue'
+import { renderMarkdown } from '../../utils/markdown'
 
 defineProps<{
   messages: ChatMessage[]
@@ -21,7 +25,19 @@ const emit = defineEmits<{
   (e: 'open-citation', citation: Citation, message: ChatMessage): void
   (e: 'open-retrieval', message: ChatMessage): void
   (e: 'follow-up', question: string): void
+  (e: 'regenerate', message: ChatMessage): void
 }>()
+
+// Copy an AI message's raw markdown content to the clipboard.
+// Uses the async Clipboard API and surfaces the result via ElMessage.
+async function copyMessage(content: string) {
+  try {
+    await navigator.clipboard.writeText(content)
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    ElMessage.error('复制失败，请手动选择文本复制')
+  }
+}
 </script>
 
 <template>
@@ -44,6 +60,9 @@ const emit = defineEmits<{
           <template v-if="msg.pending">
             <el-icon class="is-loading"><Loading /></el-icon>
             <span class="pending-text">{{ msg.content }}</span>
+          </template>
+          <template v-else-if="msg.role === 'agent'">
+            <div class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
           </template>
           <template v-else>{{ msg.content }}</template>
         </div>
@@ -94,6 +113,19 @@ const emit = defineEmits<{
             :questions="msg.followUpQuestions"
             @select="emit('follow-up', $event)"
           />
+        </div>
+
+        <!-- Per-message actions: copy the raw answer and regenerate it. -->
+        <div
+          v-if="msg.role === 'agent' && !msg.pending"
+          class="message-actions"
+        >
+          <el-button text size="small" @click="copyMessage(msg.content)">
+            <el-icon><CopyDocument /></el-icon> 复制
+          </el-button>
+          <el-button text size="small" @click="emit('regenerate', msg)">
+            <el-icon><Refresh /></el-icon> 重新生成
+          </el-button>
         </div>
       </div>
     </div>
@@ -207,5 +239,148 @@ const emit = defineEmits<{
   margin-top: 6px;
   padding: 4px 10px;
   font-size: 12px;
+}
+
+/* Per-message action buttons (copy / regenerate) */
+.message-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.message-actions .el-button {
+  padding: 2px 6px;
+  color: #909399;
+}
+
+.message-actions .el-button:hover {
+  color: #409eff;
+}
+
+.message-actions .el-icon {
+  margin-right: 2px;
+}
+
+/* Markdown rendered AI answers. v-html content is not scoped, so we
+   target descendants with :deep(). */
+.markdown-body {
+  white-space: normal;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.markdown-body :deep(p) {
+  margin: 0.5em 0;
+}
+
+.markdown-body :deep(p:first-child) {
+  margin-top: 0;
+}
+
+.markdown-body :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.markdown-body :deep(h1),
+.markdown-body :deep(h2),
+.markdown-body :deep(h3),
+.markdown-body :deep(h4),
+.markdown-body :deep(h5),
+.markdown-body :deep(h6) {
+  margin: 0.8em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.markdown-body :deep(h1) {
+  font-size: 1.4em;
+}
+
+.markdown-body :deep(h2) {
+  font-size: 1.25em;
+}
+
+.markdown-body :deep(h3) {
+  font-size: 1.1em;
+}
+
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.markdown-body :deep(li) {
+  margin: 0.2em 0;
+}
+
+.markdown-body :deep(code) {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  font-size: 0.9em;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+.markdown-body :deep(pre) {
+  margin: 0.6em 0;
+  padding: 12px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.markdown-body :deep(pre code) {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: 0.9em;
+}
+
+.markdown-body :deep(blockquote) {
+  margin: 0.5em 0;
+  padding: 0.2em 0.9em;
+  border-left: 3px solid #dcdfe6;
+  color: #606266;
+  background: #fafafa;
+}
+
+.markdown-body :deep(a) {
+  color: #409eff;
+  text-decoration: none;
+}
+
+.markdown-body :deep(a:hover) {
+  text-decoration: underline;
+}
+
+.markdown-body :deep(table) {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  width: 100%;
+  font-size: 0.95em;
+}
+
+.markdown-body :deep(th),
+.markdown-body :deep(td) {
+  border: 1px solid #dcdfe6;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.markdown-body :deep(th) {
+  background: #f5f7fa;
+  font-weight: 600;
+}
+
+.markdown-body :deep(hr) {
+  border: none;
+  border-top: 1px solid #dcdfe6;
+  margin: 1em 0;
+}
+
+.markdown-body :deep(img) {
+  max-width: 100%;
 }
 </style>

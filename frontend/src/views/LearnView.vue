@@ -83,10 +83,18 @@
             <div class="study-guide-head">
               <el-icon color="#409eff"><MagicStick /></el-icon>
               <span>AI 学习指南</span>
+              <el-button
+                v-if="studyGuide"
+                text
+                size="small"
+                @click="copyMessage(studyGuide)"
+              >
+                <el-icon><CopyDocument /></el-icon> 复制
+              </el-button>
               <el-button text size="small" @click="studyGuide = ''">收起</el-button>
             </div>
             <div v-loading="studyGuideLoading" class="study-guide-body">
-              <div v-if="studyGuide" v-html="renderAnswer(studyGuide)"></div>
+              <div v-if="studyGuide" class="markdown-content" v-html="renderAnswer(studyGuide)"></div>
             </div>
           </div>
 
@@ -131,8 +139,8 @@
                   class="doc-chunk-image-item"
                 >
                   <el-image
-                    :src="`http://127.0.0.1:8000/uploads/${img.image_path}`"
-                    :preview-src-list="[`http://127.0.0.1:8000/uploads/${img.image_path}`]"
+                    :src="`${BACKEND_PROXY_TARGET}/uploads/${img.image_path}`"
+                    :preview-src-list="[`${BACKEND_PROXY_TARGET}/uploads/${img.image_path}`]"
                     fit="contain"
                     style="max-width: 100%; max-height: 400px; border-radius: 6px;"
                     loading="lazy"
@@ -189,7 +197,7 @@
               {{ msg.content }}
             </div>
             <div v-else class="ai-msg-bubble assistant">
-              <div v-html="renderAnswer(msg.content)"></div>
+              <div class="markdown-content" v-html="renderAnswer(msg.content)"></div>
               <div v-if="msg.citations && msg.citations.length" class="ai-citations">
                 <span class="ai-cite-label">引用：</span>
                 <span
@@ -199,6 +207,11 @@
                 >
                   {{ c.material_name }} · 第{{ c.page_no }}页
                 </span>
+              </div>
+              <div class="ai-msg-actions">
+                <el-button text size="small" @click="copyMessage(msg.content)">
+                  <el-icon><CopyDocument /></el-icon> 复制
+                </el-button>
               </div>
             </div>
           </div>
@@ -231,7 +244,7 @@
 import { nextTick, onMounted, ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, ChatDotRound, InfoFilled, Loading, MagicStick, Aim } from '@element-plus/icons-vue'
+import { ArrowLeft, ChatDotRound, CopyDocument, InfoFilled, Loading, MagicStick, Aim } from '@element-plus/icons-vue'
 import { listMaterials, getChunks, type Material, type Chunk } from '../api/material'
 import { listCourses, type Course } from '../api/course'
 import {
@@ -240,7 +253,10 @@ import {
   type ChatResult,
   type Citation,
 } from '../api/chat'
+import { listKnowledgePoints } from '../api/knowledge'
 import { parseApiError } from '../utils/error'
+import { renderMarkdown } from '../utils/markdown'
+import { BACKEND_PROXY_TARGET } from '../config/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -281,20 +297,21 @@ const activeChunkIndex = ref(0)
 const readProgress = ref(0)
 
 // --- Chunk filtering ---
+// NOTE: patterns below are intentionally GENERIC (chapter headers, page
+// numbers, dates, teacher info, section headers). Course-specific noise
+// (author tags like [Forouzan]/[Tanenbaum], school names, etc.) must NOT
+// live here — add such handling per-course if ever needed again.
 const USELESS_PATTERNS = [
+  // Chapter headers (e.g. "第一章", "第3章")
   /^第[一二三四五六七八九十\d]+章\s*$/,
-  /^网络空间安全学院/,
-  /^计算机(?:网络|操作系统|数据结构|数据库)\s*$/,
+  // Year-only lines on cover/header pages
   /^\d{4}年\d*月?\s*$/,
+  // Teacher info
   /^[主讲教师|教师][:：]/,
+  // Knowledge map headers
   /^第\d+章知识导图$/,
   // Date + semester info on cover pages
   /^\d{4}年(?:春|秋|夏|冬)\s*$/,
-  // Combined cover lines: "网络空间安全学院 2026年5月 计算机网络"
-  /^网络空间安全学院\s+\d{4}年/,
-  // Page-only references and bibliographic info
-  /^\[Forouzan\]/,
-  /^Forouzan\s/,
   // "本章学习" / "本章小结" / "学习目标" section headers without content
   /^(?:本章学习|本章小结|学习目标|教学目标)\s*$/,
   // Pure page numbers
@@ -305,21 +322,14 @@ const USELESS_PATTERNS = [
 const NOISE_LINE_PATTERNS = [
   /^\d{4}年(?:春|秋|夏|冬)/,           // "2026年春"
   /^\d{4}年\d+月/,                       // "2026年5月"
-  /^网络空间安全学院/,
-  /^Forouzan/i,
-  /\[Forouzan\]/i,
-  /\[Tanenbaum\]/i,
   /^第\d+页/,
   /^[主讲教师|教师][:：]/,
 ]
 
 // Inline noise patterns: removed from within lines (not just whole lines)
-// e.g. "42026年春" → "4", "5第36页[Tanenbaum]" → "5"
+// e.g. "42026年春" → "4"
 const INLINE_NOISE_PATTERNS = [
   /\d{4}年(?:\d+月)?(?:春|秋|夏|冬)?/g,   // dates: "2026年春", "2026年5月"
-  /\[Forouzan\]/gi,
-  /\[Tanenbaum\]/gi,
-  /\[谢\]/g,
 ]
 
 function isUsefulChunk(chunk: Chunk): boolean {
@@ -384,21 +394,18 @@ function getChunkLabel(chunk: Chunk): string {
 }
 
 // --- Term highlighting ---
-const KEY_TERMS = [
-  '数据链路层', '物理层', '网络层', '传输层', '应用层',
-  'TCP', 'UDP', 'IP地址', 'IP', 'MAC地址', '路由器', '交换机', '网桥',
-  '数据帧', '帧', '分组', '比特', '带宽', '吞吐量', '时延',
-  'PPP', 'HDLC', 'CSMA/CD', 'VLAN', 'ARP',
-  'OSI', '封装', '解封装', '复用', '分用',
-  '局域网', '广域网', '以太网', '信道', '信号',
-]
+// Dynamic: populated from the current course's knowledge points. Empty by
+// default → no highlighting until knowledge points are loaded. This avoids
+// hardcoding course-specific terms (e.g. networking-only vocabulary).
+const keyTerms = ref<string[]>([])
 
 function highlightTerms(text: string): string {
   const escapeHtml = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   let result = escapeHtml(text)
+  if (keyTerms.value.length === 0) return result
   // Sort by length descending to avoid partial matches
-  const sortedTerms = [...KEY_TERMS].sort((a, b) => b.length - a.length)
+  const sortedTerms = [...keyTerms.value].sort((a, b) => b.length - a.length)
   for (const term of sortedTerms) {
     const escaped = escapeHtml(term)
     const regex = new RegExp(
@@ -408,6 +415,22 @@ function highlightTerms(text: string): string {
     result = result.replace(regex, `<span class="term-highlight">${escaped}</span>`)
   }
   return result
+}
+
+// Fetch knowledge points for the current course and derive highlight terms
+// from their titles. Called after chunks are loaded. If the request fails or
+// the course has no knowledge points, keyTerms stays empty (no highlighting).
+async function loadKeyTerms() {
+  try {
+    const { data } = await listKnowledgePoints(courseId.value)
+    const kps = data.items || []
+    keyTerms.value = kps
+      .map((kp) => kp.title)
+      .filter((t: string) => t.length >= 2 && t.length <= 20)
+  } catch {
+    // Leave keyTerms empty on failure — highlighting is best-effort.
+    keyTerms.value = []
+  }
 }
 
 // --- Study guide generation ---
@@ -510,6 +533,8 @@ onMounted(async () => {
         : null
       selectedMaterialId.value = match ? match.id : materials.value[0].id
       await loadChunks()
+      // Load knowledge-point terms for highlighting (course-level, non-blocking).
+      loadKeyTerms()
 
       const queryChunkId = route.query.chunk_id
       if (queryChunkId) {
@@ -643,7 +668,17 @@ function scrollToBottom() {
 }
 
 function renderAnswer(text: string): string {
-  return text.replace(/\n/g, '<br>')
+  return renderMarkdown(text)
+}
+
+// Copy an AI answer's raw content to the clipboard.
+async function copyMessage(content: string) {
+  try {
+    await navigator.clipboard.writeText(content)
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    ElMessage.error('复制失败，请手动选择文本复制')
+  }
 }
 
 function goBack() {
@@ -1080,5 +1115,149 @@ function goBack() {
 
 .ai-input-area .el-button {
   flex-shrink: 0;
+}
+
+/* Copy button row below AI assistant answers */
+.ai-msg-actions {
+  margin-top: 6px;
+  display: flex;
+  gap: 4px;
+}
+
+.ai-msg-actions .el-button {
+  padding: 2px 6px;
+  color: #909399;
+}
+
+.ai-msg-actions .el-button:hover {
+  color: #409eff;
+}
+
+.ai-msg-actions .el-icon {
+  margin-right: 2px;
+}
+
+/* Markdown rendered AI content. v-html content is not scoped, so we
+   target descendants with :deep(). Shared by the study guide card and
+   the AI assistant message bubbles. */
+.markdown-content {
+  white-space: normal;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.markdown-content :deep(p) {
+  margin: 0.5em 0;
+}
+
+.markdown-content :deep(p:first-child) {
+  margin-top: 0;
+}
+
+.markdown-content :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.markdown-content :deep(h1),
+.markdown-content :deep(h2),
+.markdown-content :deep(h3),
+.markdown-content :deep(h4),
+.markdown-content :deep(h5),
+.markdown-content :deep(h6) {
+  margin: 0.8em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.markdown-content :deep(h1) {
+  font-size: 1.4em;
+}
+
+.markdown-content :deep(h2) {
+  font-size: 1.25em;
+}
+
+.markdown-content :deep(h3) {
+  font-size: 1.1em;
+}
+
+.markdown-content :deep(ul),
+.markdown-content :deep(ol) {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.markdown-content :deep(li) {
+  margin: 0.2em 0;
+}
+
+.markdown-content :deep(code) {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  font-size: 0.9em;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+.markdown-content :deep(pre) {
+  margin: 0.6em 0;
+  padding: 12px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.markdown-content :deep(pre code) {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: 0.9em;
+}
+
+.markdown-content :deep(blockquote) {
+  margin: 0.5em 0;
+  padding: 0.2em 0.9em;
+  border-left: 3px solid #dcdfe6;
+  color: #606266;
+  background: #fafafa;
+}
+
+.markdown-content :deep(a) {
+  color: #409eff;
+  text-decoration: none;
+}
+
+.markdown-content :deep(a:hover) {
+  text-decoration: underline;
+}
+
+.markdown-content :deep(table) {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  width: 100%;
+  font-size: 0.95em;
+}
+
+.markdown-content :deep(th),
+.markdown-content :deep(td) {
+  border: 1px solid #dcdfe6;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.markdown-content :deep(th) {
+  background: #f5f7fa;
+  font-weight: 600;
+}
+
+.markdown-content :deep(hr) {
+  border: none;
+  border-top: 1px solid #dcdfe6;
+  margin: 1em 0;
+}
+
+.markdown-content :deep(img) {
+  max-width: 100%;
 }
 </style>

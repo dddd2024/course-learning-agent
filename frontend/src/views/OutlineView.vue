@@ -23,6 +23,7 @@ import {
   type Material,
 } from '../api/material'
 import { parseApiError } from '../utils/error'
+import EmptyState from '../components/common/EmptyState.vue'
 
 interface ChunkWithSource {
   chunk: Chunk
@@ -202,7 +203,7 @@ function goBack() {
   router.push(`/courses/${courseId.value}`)
 }
 
-function goToChat() {
+function goToLearn() {
   router.push(`/courses/${courseId.value}/learn`)
 }
 
@@ -275,16 +276,13 @@ onMounted(async () => {
       class="section-card"
       shadow="never"
     >
-      <el-empty description="暂无知识点，点击「生成知识点」开始梳理">
-        <el-button
-          type="primary"
-          :icon="MagicStick"
-          :loading="generating"
-          @click="handleGenerate"
-        >
-          生成知识点
-        </el-button>
-      </el-empty>
+      <EmptyState
+        :icon="MagicStick"
+        title="还没有知识点"
+        description="点击上方按钮生成知识点大纲"
+        action-text="生成知识点"
+        @action="handleGenerate"
+      />
     </el-card>
 
     <el-card
@@ -332,7 +330,7 @@ onMounted(async () => {
                 link
                 type="primary"
                 class="kp-meta-value"
-                @click="goToChat"
+                @click="goToLearn"
               >
                 {{ kp.review_action || '—' }}
               </el-button>

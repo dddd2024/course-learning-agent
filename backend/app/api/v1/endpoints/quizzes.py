@@ -256,6 +256,24 @@ def get_quiz(
     return _quiz_to_response(quiz)
 
 
+@router.delete("/{quiz_id}", status_code=204)
+def delete_quiz(
+    quiz_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete a quiz (and its items) owned by the current user.
+
+    QuizItem rows are also removed via the ``all, delete-orphan`` cascade
+    on ``Quiz.items``, but we delete them explicitly first for clarity
+    and to keep the operation robust against any cascade quirk.
+    """
+    quiz = _get_owned_quiz(db, quiz_id, current_user.id)
+    db.query(QuizItem).filter(QuizItem.quiz_id == quiz_id).delete()
+    db.delete(quiz)
+    db.commit()
+
+
 @router.post("/{quiz_id}/submit", response_model=QuizResultOut)
 def submit_quiz(
     quiz_id: int,
@@ -316,7 +334,10 @@ def submit_quiz(
         result_items.append(
             QuizResultItemOut(
                 id=item.id,
+                question_type=item.question_type,
                 question_text=item.question_text,
+                options=item.options,
+                correct_answer=item.answer or "",
                 user_answer=item.user_answer,
                 is_correct=item.is_correct,
                 explanation=item.explanation,

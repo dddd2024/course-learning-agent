@@ -40,6 +40,10 @@ function toDateString(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
+function disablePastDate(date: Date): boolean {
+  return date.getTime() < Date.now() - 24 * 60 * 60 * 1000
+}
+
 function defaultDeadline(): string {
   const d = new Date()
   d.setDate(d.getDate() + 7)
@@ -338,6 +342,7 @@ onMounted(() => {
                 placeholder="选择截止日期"
                 format="YYYY-MM-DD"
                 value-format="YYYY-MM-DD"
+                :disabled-date="disablePastDate"
                 style="width: 100%"
                 size="small"
               />

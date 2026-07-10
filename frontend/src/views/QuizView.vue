@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { listCourses, type Course } from '../api/course'
 import { MAX_PAGE_SIZE } from '../constants/pagination'
 import { listKnowledgePoints, type KnowledgePoint } from '../api/knowledge'
 import {
   createQuiz,
+  deleteQuiz,
   getQuizzes,
   getQuiz,
   submitQuiz,
@@ -16,6 +18,7 @@ import {
   type WeakPoint,
 } from '../api/quiz'
 import { parseApiError } from '../utils/error'
+import EmptyState from '../components/common/EmptyState.vue'
 
 const courses = ref<Course[]>([])
 const coursesLoading = ref(false)
@@ -41,6 +44,42 @@ const activeQuizLoading = ref(false)
 const answers = ref<Record<number, string>>({})
 const submitting = ref(false)
 const quizResult = ref<QuizResult | null>(null)
+const deletingQuizId = ref<number | null>(null)
+
+// Index of the question currently displayed while answering (one
+// question at a time). Reset to 0 when a quiz starts.
+const currentIndex = ref(0)
+
+const currentQuestion = computed(() => {
+  if (!activeQuiz.value) return null
+  return activeQuiz.value.items[currentIndex.value] ?? null
+})
+
+/**
+ * A quiz is considered "in progress" (and thus worth confirming before
+ * leaving) only while the user is still answering — i.e. the quiz is
+ * open AND no result has been produced yet.
+ */
+const quizInProgress = computed(
+  () => activeQuiz.value !== null && quizResult.value === null,
+)
+
+function isAnswered(itemId: number): boolean {
+  const ans = answers.value[itemId]
+  return ans !== undefined && ans !== ''
+}
+
+const answeredCount = computed(() => {
+  if (!activeQuiz.value) return 0
+  return activeQuiz.value.items.filter((it) => isAnswered(it.id)).length
+})
+
+const progressPercentage = computed(() => {
+  if (!activeQuiz.value || activeQuiz.value.items.length === 0) return 0
+  return Math.round(
+    (answeredCount.value / activeQuiz.value.items.length) * 100,
+  )
+})
 
 const resultMap = computed<Record<number, QuizResultItem>>(() => {
   const map: Record<number, QuizResultItem> = {}
@@ -202,6 +241,7 @@ async function startQuiz(quiz: Quiz) {
     }
     answers.value = ans
     quizResult.value = null
+    currentIndex.value = 0
   } catch (err) {
     ElMessage.error(parseApiError(err, '加载测验详情失败'))
   } finally {
@@ -209,10 +249,39 @@ async function startQuiz(quiz: Quiz) {
   }
 }
 
-function exitQuiz() {
+function resetQuizState() {
   activeQuiz.value = null
   quizResult.value = null
   answers.value = {}
+  currentIndex.value = 0
+}
+
+const EXIT_CONFIRM_MESSAGE =
+  '测验尚未完成，确定要退出吗？退出后答题进度将丢失。'
+
+/**
+ * Ask the user to confirm leaving an in-progress quiz. Resolves to
+ * ``true`` when it is safe to leave (either the quiz is not in progress
+ * or the user confirmed), ``false`` when the user cancelled.
+ */
+async function confirmLeave(): Promise<boolean> {
+  if (!quizInProgress.value) return true
+  try {
+    await ElMessageBox.confirm(EXIT_CONFIRM_MESSAGE, '提示', {
+      confirmButtonText: '确定退出',
+      cancelButtonText: '继续答题',
+      type: 'warning',
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function confirmExitQuiz() {
+  const ok = await confirmLeave()
+  if (!ok) return
+  resetQuizState()
 }
 
 async function handleSubmit() {
@@ -243,8 +312,78 @@ async function handleSubmit() {
   }
 }
 
+async function handleDeleteQuiz(quiz: Quiz) {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除测验「${quiz.title}」吗？删除后不可恢复。`,
+      '删除测验',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+  deletingQuizId.value = quiz.id
+  try {
+    await deleteQuiz(quiz.id)
+    ElMessage.success('测验已删除')
+    // If the user is deleting the quiz currently open for review, close
+    // it so we never render stale state.
+    if (activeQuiz.value?.id === quiz.id) {
+      resetQuizState()
+    }
+    fetchQuizzes()
+    fetchWeakPoints()
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '删除测验失败'))
+  } finally {
+    deletingQuizId.value = null
+  }
+}
+
+function goToQuestion(idx: number) {
+  if (!activeQuiz.value) return
+  if (idx < 0 || idx >= activeQuiz.value.items.length) return
+  currentIndex.value = idx
+}
+
+function goPrev() {
+  goToQuestion(currentIndex.value - 1)
+}
+
+function goNext() {
+  goToQuestion(currentIndex.value + 1)
+}
+
+// Guard route-level navigation (clicking another menu item, back button,
+// etc.) while a quiz is in progress. The guard is async-aware and
+// cancels the navigation when the user declines the prompt.
+onBeforeRouteLeave(async () => {
+  const ok = await confirmLeave()
+  if (!ok) return false
+  resetQuizState()
+  return true
+})
+
+// Guard browser refresh / close. beforeunload cannot show a custom
+// dialog, so we set returnValue to trigger the browser's native prompt.
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (!quizInProgress.value) return
+  event.preventDefault()
+  event.returnValue = EXIT_CONFIRM_MESSAGE
+  return EXIT_CONFIRM_MESSAGE
+}
+
 onMounted(() => {
   fetchCourses()
+  window.addEventListener('beforeunload', handleBeforeUnload)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('beforeunload', handleBeforeUnload)
 })
 </script>
 
@@ -279,94 +418,176 @@ onMounted(() => {
 
     <div v-if="activeQuiz" v-loading="activeQuizLoading" class="quiz-active">
       <div class="quiz-active-header">
-        <el-button @click="exitQuiz">返回列表</el-button>
+        <el-button @click="confirmExitQuiz">返回列表</el-button>
         <div class="quiz-active-title">{{ activeQuiz.title }}</div>
       </div>
 
-      <el-alert
-        v-if="quizResult"
-        :title="`得分：${quizResult.score} / ${quizResult.total}`"
-        :type="quizResult.score === quizResult.total ? 'success' : 'warning'"
-        :closable="false"
-        show-icon
-        class="result-alert"
-      />
+      <!-- Result phase: score + all questions with correct answers -->
+      <template v-if="quizResult">
+        <el-alert
+          :title="`得分：${quizResult.score} / ${quizResult.total}`"
+          :type="quizResult.score === quizResult.total ? 'success' : 'warning'"
+          :closable="false"
+          show-icon
+          class="result-alert"
+        />
 
-      <el-card
-        v-for="(item, idx) in activeQuiz.items"
-        :key="item.id"
-        class="question-card"
-        shadow="never"
-      >
-        <template #header>
-          <div class="question-header">
-            <span class="question-index">第 {{ idx + 1 }} 题</span>
-            <el-tag size="small" type="info">
-              {{ questionTypeLabel(item.question_type) }}
-            </el-tag>
-            <el-tag
-              v-if="quizResult && resultMap[item.id]"
-              :type="resultMap[item.id].is_correct ? 'success' : 'danger'"
-              size="small"
+        <el-card
+          v-for="(item, idx) in activeQuiz.items"
+          :key="item.id"
+          class="question-card"
+          shadow="never"
+        >
+          <template #header>
+            <div class="question-header">
+              <span class="question-index">第 {{ idx + 1 }} 题</span>
+              <el-tag size="small" type="info">
+                {{ questionTypeLabel(item.question_type) }}
+              </el-tag>
+              <el-tag
+                v-if="resultMap[item.id]"
+                :type="resultMap[item.id].is_correct ? 'success' : 'danger'"
+                size="small"
+              >
+                {{ resultMap[item.id].is_correct ? '正确' : '错误' }}
+              </el-tag>
+            </div>
+          </template>
+          <div class="question-text">{{ item.question_text }}</div>
+
+          <div class="question-result">
+            <div
+              class="result-row"
+              :class="
+                resultMap[item.id]?.is_correct
+                  ? 'result-user-correct'
+                  : 'result-user-wrong'
+              "
             >
-              {{ resultMap[item.id].is_correct ? '正确' : '错误' }}
-            </el-tag>
+              <span class="result-label">你的答案：</span>
+              <span class="result-value">
+                {{ resultMap[item.id]?.user_answer || '（未作答）' }}
+              </span>
+            </div>
+            <div class="result-row result-correct-answer">
+              <span class="result-label">正确答案：</span>
+              <span class="result-value result-correct-value">
+                {{ resultMap[item.id]?.correct_answer || '无' }}
+              </span>
+            </div>
+            <div class="result-row">
+              <span class="result-label">解析：</span>
+              <span class="result-value">
+                {{ resultMap[item.id]?.explanation || '无' }}
+              </span>
+            </div>
           </div>
-        </template>
-        <div class="question-text">{{ item.question_text }}</div>
+        </el-card>
+      </template>
 
-        <div v-if="!quizResult" class="question-answer">
-          <el-radio-group
-            v-if="item.question_type === 'choice'"
-            v-model="answers[item.id]"
-            class="answer-radio-group"
-          >
-            <el-radio
-              v-for="(opt, i) in item.options"
-              :key="i"
-              :value="opt"
-              class="answer-option"
-            >
-              {{ opt }}
-            </el-radio>
-          </el-radio-group>
-          <el-radio-group
-            v-else-if="item.question_type === 'true_false'"
-            v-model="answers[item.id]"
-          >
-            <el-radio value="true">是</el-radio>
-            <el-radio value="false">否</el-radio>
-          </el-radio-group>
-          <el-input
-            v-else
-            v-model="answers[item.id]"
-            type="textarea"
-            :rows="3"
-            placeholder="请输入答案"
+      <!-- Answering phase: progress indicator + one question at a time -->
+      <template v-else-if="activeQuiz.items.length > 0">
+        <div class="quiz-progress">
+          <div class="progress-info">
+            <span class="progress-text">
+              第 {{ currentIndex + 1 }} / {{ activeQuiz.items.length }} 题
+            </span>
+            <span class="progress-answered">
+              已答 {{ answeredCount }} / {{ activeQuiz.items.length }}
+            </span>
+          </div>
+          <el-progress
+            :percentage="progressPercentage"
+            :stroke-width="8"
+            :show-text="false"
           />
+          <div class="question-nav">
+            <button
+              v-for="(item, idx) in activeQuiz.items"
+              :key="item.id"
+              type="button"
+              class="qnav-btn"
+              :class="{
+                'qnav-answered': isAnswered(item.id),
+                'qnav-current': idx === currentIndex,
+              }"
+              :title="`第 ${idx + 1} 题`"
+              @click="goToQuestion(idx)"
+            >
+              {{ idx + 1 }}
+            </button>
+          </div>
         </div>
 
-        <div v-else class="question-result">
-          <div class="result-row">
-            <span class="result-label">你的答案：</span>
-            <span class="result-value">
-              {{ resultMap[item.id]?.user_answer || '（未作答）' }}
-            </span>
-          </div>
-          <div class="result-row">
-            <span class="result-label">解析：</span>
-            <span class="result-value">
-              {{ resultMap[item.id]?.explanation || '无' }}
-            </span>
-          </div>
-        </div>
-      </el-card>
+        <el-card
+          v-if="currentQuestion"
+          class="question-card"
+          shadow="never"
+        >
+          <template #header>
+            <div class="question-header">
+              <span class="question-index">
+                第 {{ currentIndex + 1 }} 题
+              </span>
+              <el-tag size="small" type="info">
+                {{ questionTypeLabel(currentQuestion.question_type) }}
+              </el-tag>
+            </div>
+          </template>
+          <div class="question-text">{{ currentQuestion.question_text }}</div>
 
-      <div v-if="!quizResult && activeQuiz.items.length > 0" class="quiz-actions">
-        <el-button type="primary" :loading="submitting" @click="handleSubmit">
-          提交测验
-        </el-button>
-      </div>
+          <div class="question-answer">
+            <el-radio-group
+              v-if="currentQuestion.question_type === 'choice'"
+              v-model="answers[currentQuestion.id]"
+              class="answer-radio-group"
+            >
+              <el-radio
+                v-for="(opt, i) in currentQuestion.options"
+                :key="i"
+                :value="opt"
+                class="answer-option"
+              >
+                {{ opt }}
+              </el-radio>
+            </el-radio-group>
+            <el-radio-group
+              v-else-if="currentQuestion.question_type === 'true_false'"
+              v-model="answers[currentQuestion.id]"
+            >
+              <el-radio value="true">是</el-radio>
+              <el-radio value="false">否</el-radio>
+            </el-radio-group>
+            <el-input
+              v-else
+              v-model="answers[currentQuestion.id]"
+              type="textarea"
+              :rows="3"
+              placeholder="请输入答案"
+            />
+          </div>
+        </el-card>
+
+        <div class="quiz-actions">
+          <el-button :disabled="currentIndex === 0" @click="goPrev">
+            上一题
+          </el-button>
+          <el-button
+            v-if="currentIndex < activeQuiz.items.length - 1"
+            type="primary"
+            @click="goNext"
+          >
+            下一题
+          </el-button>
+          <el-button
+            type="primary"
+            :loading="submitting"
+            @click="handleSubmit"
+          >
+            提交测验
+          </el-button>
+        </div>
+      </template>
     </div>
 
     <template v-else>
@@ -374,7 +595,13 @@ onMounted(() => {
         <template #header>
           <div class="section-title">测验列表</div>
         </template>
+        <EmptyState
+          v-if="!quizzesLoading && quizzes.length === 0"
+          title="还没有测验"
+          description="生成测验来检验学习效果"
+        />
         <el-table
+          v-else
           v-loading="quizzesLoading"
           :data="quizzes"
           stripe
@@ -415,10 +642,18 @@ onMounted(() => {
               {{ formatDateTime(row.created_at) }}
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="120" align="center" fixed="right">
+          <el-table-column label="操作" width="180" align="center" fixed="right">
             <template #default="{ row }">
               <el-button size="small" type="primary" @click="startQuiz(row)">
                 {{ row.status === 'completed' ? '查看' : '开始' }}
+              </el-button>
+              <el-button
+                size="small"
+                type="danger"
+                :loading="deletingQuizId === row.id"
+                @click="handleDeleteQuiz(row)"
+              >
+                删除
               </el-button>
             </template>
           </el-table-column>
@@ -614,10 +849,122 @@ onMounted(() => {
   color: #303133;
 }
 
+/* Correct / wrong answer coloring in the result review. */
+.result-user-correct .result-value {
+  color: #67c23a;
+  font-weight: 600;
+}
+
+.result-user-wrong .result-value {
+  color: #f56c6c;
+  font-weight: 600;
+  text-decoration: line-through;
+}
+
+.result-correct-answer {
+  background: #f0f9eb;
+  border: 1px solid #e1f3d8;
+  border-radius: 4px;
+  padding: 6px 10px;
+}
+
+.result-correct-answer .result-label {
+  color: #67c23a;
+}
+
+.result-correct-value {
+  color: #67c23a;
+  font-weight: 600;
+}
+
 .quiz-actions {
   display: flex;
   justify-content: center;
+  align-items: center;
+  gap: 12px;
   padding: 12px 0;
+}
+
+/* Answer progress indicator (progress bar + question number buttons). */
+.quiz-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: #f5f7fa;
+  border-radius: 6px;
+}
+
+.progress-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  color: #303133;
+}
+
+.progress-text {
+  font-weight: 600;
+}
+
+.progress-answered {
+  color: #909399;
+  font-size: 13px;
+}
+
+.question-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.qnav-btn {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid #dcdfe6;
+  border-radius: 6px;
+  background: #fff;
+  color: #606266;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.qnav-btn:hover {
+  border-color: #409eff;
+  color: #409eff;
+}
+
+/* Answered questions get a green dot / green tint. */
+.qnav-answered {
+  border-color: #67c23a;
+  color: #67c23a;
+  background: #f0f9eb;
+}
+
+.qnav-answered::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #67c23a;
+  margin-right: 6px;
+}
+
+/* The currently displayed question is highlighted. */
+.qnav-current {
+  border-color: #409eff;
+  color: #fff;
+  background: #409eff;
+}
+
+.qnav-current::before {
+  background: #fff;
 }
 
 .weak-points {

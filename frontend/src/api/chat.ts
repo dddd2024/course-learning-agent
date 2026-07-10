@@ -111,6 +111,22 @@ export function createConversation(
   return request.post('/conversations', payload)
 }
 
+// Rename a conversation via PATCH /conversations/{id}.
+export function renameConversation(
+  conversationId: number,
+  title: string,
+): AxiosPromise<Conversation> {
+  return request.patch(`/conversations/${conversationId}`, { title })
+}
+
+// Delete a conversation (and its messages/citations) via DELETE
+// /conversations/{id}. Returns 204 No Content.
+export function deleteConversation(
+  conversationId: number,
+): AxiosPromise<void> {
+  return request.delete(`/conversations/${conversationId}`)
+}
+
 export function sendMessage(payload: ChatPayload): AxiosPromise<ChatResult> {
   return request.post('/chat', payload)
 }

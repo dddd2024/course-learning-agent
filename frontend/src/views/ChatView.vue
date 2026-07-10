@@ -1,19 +1,24 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowLeft,
   ChatDotRound,
+  Delete,
+  Edit,
+  MoreFilled,
   Plus,
   Promotion,
 } from '@element-plus/icons-vue'
 import { getCourse, type Course } from '../api/course'
 import {
   createConversation,
+  deleteConversation,
   getCitations,
   listConversations,
   listMessages,
+  renameConversation,
   sendMessage,
   sendMessageStream,
   type ChatResult,
@@ -29,6 +34,7 @@ import type { ChatMessage, StreamStep } from '../components/chat/types'
 import MessageList from '../components/chat/MessageList.vue'
 import SseStatusPanel from '../components/chat/SseStatusPanel.vue'
 import EvidenceDrawer from '../components/chat/EvidenceDrawer.vue'
+import EmptyState from '../components/common/EmptyState.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -180,6 +186,91 @@ async function handleCreateConversation() {
   }
 }
 
+// Rename a conversation via ElMessageBox.prompt → renameConversation.
+// The conversation list is refreshed in place (replace the edited item)
+// so the sidebar stays sorted and the active selection is preserved.
+async function handleRenameConversation(conv: Conversation) {
+  let value: string
+  try {
+    const res = await ElMessageBox.prompt('请输入新的对话名称', '重命名对话', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputValue: conv.title ?? '',
+      inputValidator: (v: string) => {
+        const t = (v ?? '').trim()
+        if (!t) return '名称不能为空'
+        if (t.length > 255) return '名称不能超过 255 个字符'
+        return true
+      },
+    })
+    value = res.value
+  } catch (action) {
+    // User cancelled or closed the prompt — ignore silently.
+    if (action === 'cancel' || action === 'close') return
+    throw action
+  }
+  const title = value.trim()
+  if (!title || title === conv.title) return
+  try {
+    const { data } = await renameConversation(conv.id, title)
+    const idx = conversations.value.findIndex((c) => c.id === conv.id)
+    if (idx !== -1) conversations.value[idx] = data
+    ElMessage.success('已重命名')
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '重命名失败'))
+  }
+}
+
+// Delete a conversation after confirmation. If the deleted conversation
+// was the active one, select the first remaining conversation or fall
+// back to the empty state when none are left.
+async function handleDeleteConversation(conv: Conversation) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除对话「${conv.title}」吗？删除后无法恢复。`,
+      '删除对话',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return // user cancelled
+  }
+  try {
+    await deleteConversation(conv.id)
+    const idx = conversations.value.findIndex((c) => c.id === conv.id)
+    if (idx !== -1) conversations.value.splice(idx, 1)
+    if (activeConversationId.value === conv.id) {
+      if (conversations.value.length > 0) {
+        await selectConversation(conversations.value[0])
+      } else {
+        activeConversationId.value = null
+        messages.value = []
+        resetStreamState()
+      }
+    }
+    ElMessage.success('已删除')
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '删除失败'))
+  }
+}
+
+// Dispatch el-dropdown commands for a conversation item. The command
+// type mirrors el-dropdown's emitted value (string | number | object).
+function handleConversationCommand(
+  command: string | number | object,
+  conv: Conversation,
+) {
+  const cmd = String(command)
+  if (cmd === 'rename') {
+    void handleRenameConversation(conv)
+  } else if (cmd === 'delete') {
+    void handleDeleteConversation(conv)
+  }
+}
+
 // T04: convert a history message from the backend into the ChatMessage
 // shape used by the message list. Assistant messages parse answer_json
 // (the full structured LLM result) to restore citations, follow-ups,
@@ -283,6 +374,15 @@ async function handleSend() {
 
   messages.value.push({ role: 'user', content: question })
   inputText.value = ''
+  await runChat(question)
+}
+
+// Core SSE chat flow: push a pending agent bubble and stream the answer.
+// Shared by handleSend (new question) and handleRegenerate (re-ask the
+// previous question). Assumes a conversation is already selected.
+async function runChat(question: string) {
+  if (!activeConversationId.value) return
+
   const pendingIndex =
     messages.value.push({
       role: 'agent',
@@ -347,6 +447,39 @@ async function handleSend() {
     await nextTick()
     scrollToBottom()
   }
+}
+
+// Re-generate an AI answer: locate the user question that preceded the
+// given agent message, drop the old answer, and re-run the SSE flow.
+async function handleRegenerate(msg: ChatMessage) {
+  if (sending.value) return
+  if (!activeConversationId.value) {
+    ElMessage.warning('请先选择或创建对话')
+    return
+  }
+
+  const msgIndex = messages.value.indexOf(msg)
+  let question = ''
+  if (msgIndex !== -1) {
+    // Walk backwards to the most recent user message before this answer.
+    for (let i = msgIndex - 1; i >= 0; i--) {
+      if (messages.value[i].role === 'user') {
+        question = messages.value[i].content
+        break
+      }
+    }
+  }
+  if (!question) {
+    ElMessage.warning('未找到对应的提问内容')
+    return
+  }
+
+  // Remove the old AI answer before re-asking.
+  if (msgIndex !== -1) {
+    messages.value.splice(msgIndex, 1)
+  }
+
+  await runChat(question)
 }
 
 function applyChatResult(pendingIndex: number, result: ChatResult): void {
@@ -477,18 +610,37 @@ onMounted(async () => {
                 {{ new Date(conv.created_at).toLocaleString() }}
               </div>
             </div>
+            <span class="conv-actions" @click.stop>
+              <el-dropdown
+                trigger="click"
+                placement="bottom-end"
+                @command="(cmd: string | number | object) => handleConversationCommand(cmd, conv)"
+              >
+                <el-icon class="conv-actions-trigger"><MoreFilled /></el-icon>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="rename" :icon="Edit">
+                      重命名
+                    </el-dropdown-item>
+                    <el-dropdown-item command="delete" :icon="Delete" divided>
+                      删除
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </span>
           </div>
-          <el-empty
+          <EmptyState
             v-if="!conversationsLoading && conversations.length === 0"
-            description="暂无对话"
-            :image-size="60"
+            title="还没有对话"
+            description="开始提问创建新对话"
           />
         </div>
       </div>
 
       <div class="chat-main">
         <div
-          v-if="activeConversationId"
+          v-if="activeConversationId && messages.length > 0"
           ref="messageListRef"
           class="message-list"
         >
@@ -497,19 +649,16 @@ onMounted(async () => {
             @open-citation="openCitationDrawer"
             @open-retrieval="openRetrievalDrawer"
             @follow-up="handleFollowUp"
+            @regenerate="handleRegenerate"
           />
         </div>
 
         <div v-else class="chat-empty">
-          <el-empty description="请创建对话">
-            <el-button
-              type="primary"
-              :loading="creating"
-              @click="handleCreateConversation"
-            >
-              创建对话
-            </el-button>
-          </el-empty>
+          <EmptyState
+            title="开始新的对话"
+            :action-text="activeConversationId ? undefined : '创建对话'"
+            @action="handleCreateConversation"
+          />
         </div>
 
         <SseStatusPanel
@@ -671,6 +820,34 @@ onMounted(async () => {
   font-size: 12px;
   color: #909399;
   margin-top: 2px;
+}
+
+/* Per-conversation rename/delete menu. Hidden by default and revealed
+   on item hover (or when the item is active) to keep the list calm. */
+.conv-actions {
+  flex-shrink: 0;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.conversation-item:hover .conv-actions,
+.conversation-item.active .conv-actions {
+  opacity: 1;
+}
+
+.conv-actions-trigger {
+  cursor: pointer;
+  color: #909399;
+  font-size: 16px;
+  padding: 2px;
+  border-radius: 4px;
+  outline: none;
+}
+
+.conv-actions-trigger:hover {
+  color: #409eff;
+  background: #ecf5ff;
 }
 
 .chat-main {

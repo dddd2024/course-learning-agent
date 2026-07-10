@@ -16,6 +16,7 @@ import {
   type CoursePayload,
 } from '../api/course'
 import { parseApiError } from '../utils/error'
+import EmptyState from '../components/common/EmptyState.vue'
 
 const router = useRouter()
 
@@ -200,7 +201,13 @@ onMounted(() => {
     </div>
 
     <div v-loading="loading" class="course-grid">
-      <el-empty v-if="!loading && courses.length === 0" description="暂无课程" />
+      <EmptyState
+        v-if="!loading && courses.length === 0"
+        title="还没有课程"
+        description="创建你的第一门课程开始学习吧"
+        action-text="新建课程"
+        @action="openCreate"
+      />
       <el-card
         v-for="course in courses"
         :key="course.id"

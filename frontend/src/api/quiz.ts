@@ -41,6 +41,7 @@ export interface QuizResultItem {
   question_text: string
   question_type: QuestionType
   options: string[]
+  correct_answer: string
   user_answer: string
   is_correct: boolean
   explanation: string
@@ -92,6 +93,10 @@ export function getQuizzes(courseId?: number): AxiosPromise<QuizListResult> {
 
 export function getQuiz(id: number): AxiosPromise<Quiz> {
   return request.get(`/quizzes/${id}`)
+}
+
+export function deleteQuiz(id: number): AxiosPromise<void> {
+  return request.delete(`/quizzes/${id}`)
 }
 
 export function submitQuiz(

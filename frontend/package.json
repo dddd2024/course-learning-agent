@@ -10,8 +10,11 @@
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
+    "@types/dompurify": "^3.0.5",
     "axios": "^1.18.1",
+    "dompurify": "^3.4.11",
     "element-plus": "^2.14.2",
+    "marked": "^18.0.6",
     "pinia": "^3.0.4",
     "vis-data": "^8.0.4",
     "vis-network": "^10.1.0",

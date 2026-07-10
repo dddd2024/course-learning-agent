@@ -14,6 +14,12 @@ class ConversationCreate(BaseModel):
     title: Optional[str] = Field(default=None, max_length=255)
 
 
+class ConversationUpdate(BaseModel):
+    """Payload for PATCH /conversations/{id} — currently only renames."""
+
+    title: str = Field(..., min_length=1, max_length=255)
+
+
 class ConversationResponse(BaseModel):
     """Conversation fields returned by the API."""
 
