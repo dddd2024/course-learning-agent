@@ -70,12 +70,25 @@ def call_llm_with_meta(
     Real-path failures (timeouts, HTTP errors, invalid JSON) are logged
     and swallowed so callers always receive a structurally-valid dict.
     """
+    # Task 9: allow certain agent types (e.g. concept_compare) to use a
+    # longer timeout than the global default. The override is only used
+    # when the caller did not supply their own ``timeout_seconds`` in
+    # ``user_config``.
+    timeout_override: int | None = None
+    if agent_type == "concept_compare":
+        timeout_override = getattr(
+            settings, "LLM_CONCEPT_COMPARE_TIMEOUT_SECONDS", 120
+        )
+
     # 1. Prefer the per-user config when supplied.
     if user_config is not None:
         try:
-            result = _real_response(prompt, agent_type, schema, user_config)
+            result = _real_response(
+                prompt, agent_type, schema, user_config, timeout_override
+            )
             return result, {
                 "provider": "real",
+                "model_name": user_config.get("model", ""),
                 "fallback_used": False,
                 "fallback_reason": None,
             }
@@ -85,6 +98,7 @@ def call_llm_with_meta(
             )
             return _mock_response(agent_type, prompt), {
                 "provider": "mock",
+                "model_name": "mock",
                 "fallback_used": True,
                 "fallback_reason": str(exc) or exc.__class__.__name__,
             }
@@ -93,9 +107,12 @@ def call_llm_with_meta(
     provider = (settings.LLM_PROVIDER or "mock").lower()
     if provider == "real":
         try:
-            result = _real_response(prompt, agent_type, schema, None)
+            result = _real_response(
+                prompt, agent_type, schema, None, timeout_override
+            )
             return result, {
                 "provider": "real",
+                "model_name": settings.LLM_MODEL,
                 "fallback_used": False,
                 "fallback_reason": None,
             }
@@ -105,6 +122,7 @@ def call_llm_with_meta(
             )
             return _mock_response(agent_type, prompt), {
                 "provider": "mock",
+                "model_name": "mock",
                 "fallback_used": True,
                 "fallback_reason": str(exc) or exc.__class__.__name__,
             }
@@ -112,6 +130,7 @@ def call_llm_with_meta(
     # 3. Mock provider (default, or unknown provider) keeps the demo alive.
     return _mock_response(agent_type, prompt), {
         "provider": "mock",
+        "model_name": "mock",
         "fallback_used": False,
         "fallback_reason": None,
     }
@@ -150,13 +169,34 @@ def _mock_course_qa(prompt: str = "") -> dict[str, Any]:
     chunks = chunk_pattern.findall(prompt)
 
     if chunks:
-        # Use the first chunk's text as the basis for the answer.
-        first_cid, first_text = chunks[0]
-        first_text = first_text.strip()
-        # Build an answer from the first chunk content.
-        answer = first_text[:200]
-        if len(first_text) > 200:
+        # Select the chunk with the most content (longest text), not just
+        # the first one — the first chunk may be a short title chunk.
+        sorted_chunks = sorted(chunks, key=lambda c: len(c[1].strip()), reverse=True)
+        best_cid, best_text = sorted_chunks[0]
+        best_text = best_text.strip()
+
+        # Build answer from the best chunk, prioritising lines that contain
+        # keywords from the question.
+        question_lower = question.lower() if question else ""
+        q_keywords = [c for c in question_lower if '\u4e00' <= c <= '\u9fff']
+        lines = [l.strip() for l in best_text.split("\n") if l.strip() and len(l.strip()) >= 5]
+
+        if q_keywords and lines:
+            matching = [l for l in lines if any(kw in l.lower() for kw in q_keywords)]
+            if matching:
+                answer = matching[0][:200]
+                if len(matching) > 1:
+                    answer += " " + matching[1][:150]
+            else:
+                answer = best_text[:200]
+        else:
+            answer = best_text[:200]
+
+        if len(best_text) > 200 and len(answer) <= 200:
             answer += "…"
+
+        first_cid = best_cid
+        first_text = best_text
 
         key_points: list[str] = []
         for cid, text in chunks[:3]:
@@ -342,12 +382,16 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
         cleaned = re.sub(r"[ \t]+", " ", cleaned)
         return cleaned.strip()
 
-    # Extract chunk text from the prompt.
+    # Extract chunk text and chunk_id from the prompt.
+    # Capture chunk_id as group(1) and text as group(2) so we can use
+    # the real DB chunk_id in source_chunk_ids instead of position indices.
     chunk_pattern = re.compile(
-        r"\[片段\d+\]\s*chunk_id=\d+[^\n]*\n(.+?)(?=\n\n|\Z)",
+        r"\[片段\d+\]\s*chunk_id=(\d+)[^\n]*\n(.+?)(?=\n\n|\Z)",
         re.DOTALL,
     )
-    chunks = chunk_pattern.findall(prompt)
+    chunk_matches = chunk_pattern.findall(prompt)
+    chunks = [text for _cid, text in chunk_matches]
+    chunk_ids = [int(cid) for cid, _text in chunk_matches]
 
     # Extract titles from the prompt header lines (format: "，标题：xxx")
     title_pattern = re.compile(r"标题：(.+?)(?:，|\n)")
@@ -424,13 +468,24 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
 
         seen_titles.add(title)
 
-        summary = _clean_summary(chunk_text.strip()[:150])
+        # Generate a better summary: use first 2-3 meaningful lines instead
+        # of just truncating to 150 chars.
+        _lines = [l.strip() for l in chunk_text.strip().split("\n") if l.strip()]
+        _meaningful = [
+            l for l in _lines
+            if l != title and len(l) >= 5
+            and not re.match(r"^[\d\s\.\-:]+$", l)
+        ][:3]
+        if _meaningful:
+            summary = "。".join(_meaningful)[:200]
+        else:
+            summary = _clean_summary(chunk_text.strip()[:200])
 
         knowledge_points.append({
             "title": title,
             "summary": summary,
             "importance": 5 if i == 0 else 4,
-            "source_chunk_ids": [i + 1],
+            "source_chunk_ids": [chunk_ids[i]] if i < len(chunk_ids) else [],
             "exam_style": "简答题/选择题",
             "review_action": f"重读片段{i + 1}的相关内容。",
         })
@@ -450,17 +505,19 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
             knowledge_points = [
                 {
                     "title": t1,
-                    "summary": lines[0][:100],
+                    "summary": _clean_summary(text[:200]),
                     "importance": 5,
-                    "source_chunk_ids": [1],
+                    "source_chunk_ids": [chunk_ids[0]] if chunk_ids else [],
                     "exam_style": "简答题/选择题",
                     "review_action": "重读片段1的相关内容。",
                 },
                 {
                     "title": t2,
-                    "summary": lines[1][:100],
+                    "summary": _clean_summary(
+                        "\n".join(lines[1:])[:200] if len(lines) > 1 else text[:200]
+                    ),
                     "importance": 4,
-                    "source_chunk_ids": [1],
+                    "source_chunk_ids": [chunk_ids[0]] if chunk_ids else [],
                     "exam_style": "简答题/选择题",
                     "review_action": "重读片段1的相关内容。",
                 },
@@ -782,6 +839,7 @@ def _real_response(
     agent_type: str,
     schema: dict | None,
     user_config: dict | None,
+    timeout_override: int | None = None,
 ) -> dict[str, Any]:
     """Call an OpenAI-compatible ``/chat/completions`` API via httpx.
 
@@ -805,6 +863,12 @@ def _real_response(
         ``api_key``, ``temperature``, ``max_tokens``,
         ``timeout_seconds``). When ``None``, falls back to the system
         ``settings`` values.
+    timeout_override:
+        Optional agent-specific timeout (seconds). Used only when
+        ``user_config`` is ``None`` or does not contain its own
+        ``timeout_seconds``. Callers like ``concept_compare`` pass a
+        longer value here so first-call latency doesn't trip the global
+        60s default (Task 9).
 
     Returns
     -------
@@ -823,14 +887,18 @@ def _real_response(
         api_key = user_config["api_key"]
         temperature = user_config.get("temperature", settings.LLM_TEMPERATURE)
         max_tokens = user_config.get("max_tokens", settings.LLM_MAX_TOKENS)
-        timeout = user_config.get("timeout_seconds", settings.LLM_TIMEOUT_SECONDS)
+        # Task 9: use the agent-specific timeout override only when the
+        # user_config does not specify its own ``timeout_seconds``.
+        timeout = user_config.get(
+            "timeout_seconds", timeout_override or settings.LLM_TIMEOUT_SECONDS
+        )
     else:
         base_url = settings.LLM_BASE_URL
         model = settings.LLM_MODEL
         api_key = settings.LLM_API_KEY
         temperature = settings.LLM_TEMPERATURE
         max_tokens = settings.LLM_MAX_TOKENS
-        timeout = settings.LLM_TIMEOUT_SECONDS
+        timeout = timeout_override or settings.LLM_TIMEOUT_SECONDS
 
     url = f"{base_url.rstrip('/')}/chat/completions"
     headers = {

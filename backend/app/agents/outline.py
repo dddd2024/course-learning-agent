@@ -368,7 +368,7 @@ def _fetch_chunks(db: Session, course_id: int) -> list[dict]:
     coverage without overwhelming the title extraction.
     """
     MIN_TEXT_LEN = 30
-    MAX_PER_MATERIAL = 15
+    MAX_PER_MATERIAL = 25
 
     rows = (
         db.query(MaterialChunk)

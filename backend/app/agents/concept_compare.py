@@ -17,6 +17,7 @@ from typing import Any
 from app.agents.audit import AgentAudit
 from app.agents.llm import call_llm_with_meta
 from app.agents.prompt_loader import load_prompt
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,14 @@ def generate_compare(
     """
     import json
 
+    # Determine provider/model_name before LLM call (best guess).
+    if user_config:
+        _provider = "user"
+        _model = user_config.get("model", "")
+    else:
+        _provider = "real" if settings.LLM_PROVIDER == "real" else "mock"
+        _model = settings.LLM_MODEL
+
     run = AgentAudit.create_run(
         db,
         user_id,
@@ -48,8 +57,8 @@ def generate_compare(
             "b": concept_b.get("title"),
         },
         prompt_version=_PROMPT_VERSION,
-        model_name="mock",
-        provider="mock",
+        model_name=_model,
+        provider=_provider,
     )
 
     try:
@@ -66,6 +75,13 @@ def generate_compare(
 
         result, meta = call_llm_with_meta(
             prompt, agent_type="concept_compare", user_config=user_config
+        )
+
+        # Update audit run with actual provider/model_name from meta
+        AgentAudit.update_run_meta(
+            db, run.id,
+            model_name=meta.get("model_name"),
+            provider=meta.get("provider"),
         )
 
         if _is_valid_compare_report(result):
@@ -101,10 +117,26 @@ def generate_compare(
 
 
 def _is_valid_compare_report(result: Any) -> bool:
-    """Return True if ``result`` looks like a compare report dict."""
+    """Return True if ``result`` looks like a compare report dict.
+
+    Also fills in any missing required sections with empty arrays so the
+    frontend never crashes on a missing key (Task 9 Issue D).
+    """
     if not isinstance(result, dict):
         return False
-    return "concept_a" in result or "similarities" in result
+    if "concept_a" not in result and "similarities" not in result:
+        return False
+    # Ensure all required sections exist (can be empty arrays but must exist)
+    # so the frontend's optional-chaining access (e.g. report_json.similarities)
+    # never hits a missing key.
+    required_sections = (
+        "similarities", "differences",
+        "transfer_learning", "confusions", "exam_questions",
+    )
+    for section in required_sections:
+        if section not in result:
+            result[section] = []  # fill missing sections with empty arrays
+    return True
 
 
 def _extract_citation_ids(report: dict) -> list[int]:

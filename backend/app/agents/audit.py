@@ -139,5 +139,29 @@ class AgentAudit:
         db.flush()
         return run
 
+    @staticmethod
+    def update_run_meta(
+        db: Session,
+        run_id: int | None,
+        model_name: str | None = None,
+        provider: str | None = None,
+    ) -> None:
+        """Update an existing AgentRun's model_name/provider after the LLM
+        call completes, so the audit record reflects the actual provider
+        used (which may differ from the pre-call guess due to fallback).
+        """
+        if run_id is None:
+            return
+        try:
+            run = db.query(AgentRun).filter_by(id=run_id).first()
+            if run is not None:
+                if model_name is not None:
+                    run.model_name = model_name
+                if provider is not None:
+                    run.provider = provider
+                db.flush()
+        except Exception:
+            pass  # audit must not break the main flow
+
 
 __all__ = ["AgentAudit"]

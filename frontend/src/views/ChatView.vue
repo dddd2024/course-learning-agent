@@ -35,6 +35,7 @@ import {
 } from '../api/chat'
 import { getChunk, type ChunkDetail } from '../api/material'
 import { parseApiError } from '../utils/error'
+import { formatLocalDateTime } from '@/utils/datetime'
 import type { ChatMessage, StreamStep } from '../components/chat/types'
 import MessageList from '../components/chat/MessageList.vue'
 import SseStatusPanel from '../components/chat/SseStatusPanel.vue'
@@ -595,6 +596,14 @@ async function runChat(question: string) {
     } else if (streamError.value && isCurrentRun()) {
       removePendingMessage()
       ElMessage.error(streamError.value)
+    } else if (isCurrentRun()) {
+      // SSE stream ended without a final event and without an error.
+      // This happens when the connection is interrupted (proxy timeout,
+      // network drop) after step events but before the final event.
+      pendingMessage.pending = false
+      pendingMessage.content = '回答生成中断，请重新提问或重试。'
+      pendingMessage.error = true
+      ElMessage.warning('回答未完整返回，请重试')
     }
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
@@ -896,7 +905,7 @@ onBeforeUnmount(() => {
               <div class="conv-info">
                 <div class="conv-title">{{ conv.title }}</div>
                 <div class="conv-time">
-                  {{ new Date(conv.created_at).toLocaleString() }}
+                  {{ formatLocalDateTime(conv.created_at) }}
                 </div>
               </div>
             </button>

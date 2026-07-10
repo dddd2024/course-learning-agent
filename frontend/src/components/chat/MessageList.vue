@@ -16,6 +16,7 @@ import type { ChatMessage } from './types'
 import CitationCapsules from './CitationCapsules.vue'
 import FollowUpSuggestions from './FollowUpSuggestions.vue'
 import { renderMarkdown } from '../../utils/markdown'
+import { formatLocalDateTime } from '@/utils/datetime'
 
 defineProps<{
   messages: ChatMessage[]
@@ -39,21 +40,13 @@ async function copyMessage(content: string) {
   }
 }
 
-// Format an ISO timestamp as "MM-DD HH:mm" for display under a bubble.
-// Returns an empty string for missing/invalid values so nothing renders.
+// Format an ISO timestamp for display under a bubble. Delegates to the
+// centralized formatLocalDateTime helper so UTC-aware timestamps from the
+// backend are converted to local time consistently. Returns an empty
+// string for missing/invalid values so the v-if guard hides the element.
 function formatTime(dt: string | null | undefined): string {
   if (!dt) return ''
-  try {
-    const d = new Date(dt)
-    if (Number.isNaN(d.getTime())) return ''
-    return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-      d.getDate(),
-    ).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(
-      d.getMinutes(),
-    ).padStart(2, '0')}`
-  } catch {
-    return ''
-  }
+  return formatLocalDateTime(dt)
 }
 </script>
 

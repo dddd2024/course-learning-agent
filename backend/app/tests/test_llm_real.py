@@ -146,7 +146,7 @@ def test_call_llm_with_user_config() -> None:
         result = call_llm("prompt", "course_qa", user_config=USER_CONFIG)
 
     mock_real.assert_called_once_with(
-        "prompt", "course_qa", None, USER_CONFIG
+        "prompt", "course_qa", None, USER_CONFIG, None
     )
     assert result == {"answer": "from real"}
 

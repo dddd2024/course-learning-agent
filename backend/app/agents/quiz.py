@@ -29,8 +29,9 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.agents.audit import AgentAudit
-from app.agents.llm import call_llm
+from app.agents.llm import call_llm_with_meta
 from app.agents.prompt_loader import load_prompt
+from app.core.config import settings
 from app.models.knowledge_point import KnowledgePoint
 
 logger = logging.getLogger(__name__)
@@ -194,6 +195,13 @@ def generate_quiz(
 
     run_started_at = time.monotonic()
     run_id: int | None = None
+    # Determine provider/model_name before LLM call (best guess).
+    if user_config:
+        _provider = "user"
+        _model = user_config.get("model", "")
+    else:
+        _provider = "real" if settings.LLM_PROVIDER == "real" else "mock"
+        _model = settings.LLM_MODEL
     try:
         run = AgentAudit.create_run(
             db,
@@ -206,7 +214,8 @@ def generate_quiz(
                 "question_count": question_count,
             },
             prompt_version=_PROMPT_VERSION,
-            model_name="mock",
+            model_name=_model,
+            provider=_provider,
         )
         run_id = run.id
     except Exception as exc:  # pragma: no cover - audit must not break flow
@@ -214,10 +223,16 @@ def generate_quiz(
 
     generate_started = time.monotonic()
     try:
-        output = call_llm(
+        output, meta = call_llm_with_meta(
             prompt,
             agent_type="quiz_generate",
             user_config=user_config,
+        )
+        # Update audit run with actual provider/model_name from meta
+        AgentAudit.update_run_meta(
+            db, run_id,
+            model_name=meta.get("model_name"),
+            provider=meta.get("provider"),
         )
         _validate_schema(output)
     except Exception:

@@ -48,31 +48,55 @@ def _is_heading(line: str) -> bool:
 
 
 def _split_by_headings(text: str) -> List[Tuple[Optional[str], str]]:
-    """Split ``text`` into ``(title, content)`` sections by heading lines.
+    """Split text into (title, content) sections by heading lines.
 
-    A heading line becomes the ``title`` of the section that follows it
-    (the heading text itself is also kept at the top of the section's
-    content so the chunk retains the heading).
+    A heading line becomes the title of the section that follows it.
+    Title-only sections (heading immediately followed by another heading)
+    are merged into the next section to avoid empty/title-only chunks.
     """
     lines = text.splitlines(keepends=True)
-    sections: List[Tuple[Optional[str], str]] = []
+    raw_sections: List[Tuple[Optional[str], str]] = []
     current_title: Optional[str] = None
     current_lines: List[str] = []
 
     for line in lines:
         if _is_heading(line):
             if current_lines:
-                sections.append((current_title, "".join(current_lines)))
+                raw_sections.append((current_title, "".join(current_lines)))
             current_title = line.strip()
             current_lines = [line]
         else:
             current_lines.append(line)
     if current_lines:
-        sections.append((current_title, "".join(current_lines)))
+        raw_sections.append((current_title, "".join(current_lines)))
 
-    if not sections:
-        sections = [(None, text)]
-    return sections
+    if not raw_sections:
+        return [(None, text)]
+
+    # Merge title-only sections into the next section.
+    # A section is "title-only" when its content (minus the heading line
+    # itself) is empty or whitespace — meaning the heading was immediately
+    # followed by another heading.
+    merged: List[Tuple[Optional[str], str]] = []
+    pending_title: Optional[str] = None
+    for title, content in raw_sections:
+        body = content.strip()
+        # Check if content is just the heading line itself
+        if title and body == title:
+            # Title-only section — defer to next section
+            pending_title = title
+            continue
+        if pending_title is not None:
+            # Prepend the deferred title to this section's content
+            content = pending_title + "\n" + content
+            title = pending_title
+            pending_title = None
+        merged.append((title, content))
+    # If a title-only section was last, append it (shouldn't normally happen)
+    if pending_title is not None:
+        merged.append((pending_title, pending_title))
+
+    return merged if merged else [(None, text)]
 
 
 def chunk_text(
