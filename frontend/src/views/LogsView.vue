@@ -44,6 +44,9 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
+// Collapsed by default — diagnostics are for advanced troubleshooting
+const activeDiagPanel = ref<string[]>([])
+
 const logs = ref<ErrorLog[]>([])
 const listLoading = ref(false)
 
@@ -718,268 +721,278 @@ onMounted(async () => {
       最近检查时间：{{ healthCheckedAt }} · 请求地址：{{ API_BASE_URL }}
     </el-alert>
 
-    <!-- One-click-launch fix D1: launch-chain diagnostics panel -->
-    <el-card class="diag-card" shadow="never">
-      <template #header>
-        <div class="diag-header">
-          <span class="diag-title">启动链路诊断</span>
-          <el-button
-            size="small"
-            :loading="diagRunning"
-            @click="runDiagnostics"
-          >
-            重新诊断
-          </el-button>
-        </div>
-      </template>
-      <div class="diag-row">
-        <span class="diag-label">当前 API 地址：</span>
-        <code>{{ API_BASE_URL }}</code>
-      </div>
-      <div v-for="r in hostResults" :key="r.host" class="diag-row">
-        <span class="diag-label">{{ r.host }}：</span>
-        <el-tag
-          :type="r.ok ? 'success' : 'danger'"
-          size="small"
-          style="margin-right: 8px"
-        >
-          {{ r.ok ? '可达' : '不可达' }}
-        </el-tag>
-        <span v-if="r.ok && r.health" class="diag-detail">
-          {{ r.health.app }} v{{ r.health.version }}
-        </span>
-        <span v-else class="diag-detail">{{ r.error }}</span>
-      </div>
-      <div v-if="diagCheckedAt" class="diag-row diag-time">
-        最近诊断时间：{{ diagCheckedAt }}
-      </div>
-      <el-alert
-        v-if="diagVerdict"
-        type="info"
-        :closable="false"
-        show-icon
-        class="diag-verdict"
-      >
-        {{ diagVerdict }}
-      </el-alert>
-    </el-card>
-
-    <!-- Logs-endpoint fix Task A: /logs business-endpoint status panel -->
-    <el-card class="logs-status-card" shadow="never">
-      <template #header>
-        <div class="diag-header">
-          <span class="diag-title">/logs 业务接口状态</span>
-          <el-button
-            size="small"
-            :loading="logsDiagRunning"
-            @click="probeLogsEndpoint"
-          >
-            探测 /logs 接口
-          </el-button>
-        </div>
-      </template>
-      <div class="diag-row">
-        <span class="diag-label">接口状态：</span>
-        <el-tag :type="logsStatusTagType" size="small">
-          {{ logsStatusLabel }}
-        </el-tag>
-      </div>
-      <div v-if="lastLogsError" class="logs-err-detail">
-        <div v-if="lastLogsError.statusCode" class="diag-row">
-          <span class="diag-label">HTTP 状态码：</span>
-          <code>{{ lastLogsError.statusCode }}</code>
-        </div>
-        <div v-if="lastLogsError.requestUrl" class="diag-row">
-          <span class="diag-label">请求 URL：</span>
-          <code class="break-all">{{ lastLogsError.requestUrl }}</code>
-        </div>
-        <div v-if="lastLogsError.serverMessage" class="diag-row">
-          <span class="diag-label">后端 message：</span>
-          <span class="diag-detail">{{ lastLogsError.serverMessage }}</span>
-        </div>
-        <div v-if="lastLogsError.serverDetail" class="diag-row">
-          <span class="diag-label">后端 detail：</span>
-          <span class="diag-detail">{{ lastLogsError.serverDetail }}</span>
-        </div>
-      </div>
-      <el-alert
-        v-if="logsEndpointStatus === 'auth_failed'"
-        type="warning"
-        :closable="false"
-        show-icon
-        class="diag-verdict"
-      >
-        登录已失效，已清理本地 token 并跳转登录页。本地待上报日志已保留，登录后可补发。
-      </el-alert>
-      <el-alert
-        v-else-if="logsEndpointStatus === 'server_error'"
-        type="error"
-        :closable="false"
-        show-icon
-        class="diag-verdict"
-      >
-        /logs 接口返回 5xx。请查看后端日志 <code>{{ BACKEND_LOG_PATH }}</code> 或重启后端。
-      </el-alert>
-      <el-alert
-        v-else-if="logsEndpointStatus === 'browser_no_response'"
-        type="warning"
-        :closable="false"
-        show-icon
-        class="diag-verdict"
-      >
-        后端 /health 可达，但浏览器未收到 /logs 响应。可能是 CORS 预检失败、浏览器网络拦截或代理配置问题。请点击下方"探测 /logs 接口"运行三层诊断，查看 axios 错误码与 message。
-      </el-alert>
-    </el-card>
-
-    <!-- Closure fix Task B: three-layer /logs diagnostics panel -->
-    <el-card v-if="logsDiagResult" class="logs-diag-card" shadow="never">
-      <template #header>
-        <div class="diag-header">
-          <span class="diag-title">/logs 三层诊断（检查时间：{{ logsDiagResult.checkedAt }}）</span>
-        </div>
-      </template>
-      <!-- ERR_NETWORK fix: explain the same-origin proxy mode so the user
-           understands WHY a browser request to /api/v1/logs is same-origin. -->
-      <div class="diag-proxy-hint">
-        <el-tag type="info" size="small" effect="plain">
-          {{ IS_SAME_ORIGIN ? '同源代理模式' : '跨源直连模式' }}
-        </el-tag>
-        <span v-if="IS_SAME_ORIGIN" class="diag-detail">
-          浏览器请求同源 <code>{{ API_BASE_URL }}/logs</code>，由 Vite 代理到
-          <code>{{ BACKEND_PROXY_TARGET }}</code>。Authorization 头不触发跨源预检。
-        </span>
-        <span v-else class="diag-detail">
-          浏览器直接请求 <code>{{ API_BASE_URL }}/logs</code>（跨源）。如遇 ERR_NETWORK 请检查后端 CORS 配置。
-        </span>
-      </div>
-      <div class="diag-layer">
-        <span class="diag-label">① /health 裸请求（无认证）：</span>
-        <el-tag
-          :type="logsDiagResult.health.reachable ? 'success' : 'danger'"
-          size="small"
-        >
-          {{ logsDiagResult.health.reachable ? '可达' : '不可达' }}
-        </el-tag>
-        <span v-if="logsDiagResult.health.statusCode" class="diag-detail">
-          HTTP {{ logsDiagResult.health.statusCode }}
-        </span>
-        <span v-if="logsDiagResult.health.axiosCode" class="diag-detail">
-          axios: {{ logsDiagResult.health.axiosCode }} — {{ logsDiagResult.health.axiosMessage }}
-        </span>
-      </div>
-      <div class="diag-layer">
-        <span class="diag-label">② /logs 无 token（预期 401 = 路由可达）：</span>
-        <el-tag
-          :type="logsDiagResult.logsNoToken.reachable ? 'success' : 'danger'"
-          size="small"
-        >
-          {{ logsDiagResult.logsNoToken.reachable ? '可达' : '不可达' }}
-        </el-tag>
-        <span v-if="logsDiagResult.logsNoToken.statusCode" class="diag-detail">
-          HTTP {{ logsDiagResult.logsNoToken.statusCode }}
-          <span v-if="logsDiagResult.logsNoToken.statusCode === 401">
-            （接口存在，需登录 ✓）
-          </span>
-        </span>
-        <span v-if="logsDiagResult.logsNoToken.serverMessage" class="diag-detail">
-          {{ logsDiagResult.logsNoToken.serverMessage }}
-        </span>
-        <span v-if="logsDiagResult.logsNoToken.axiosCode" class="diag-detail">
-          axios: {{ logsDiagResult.logsNoToken.axiosCode }} — {{ logsDiagResult.logsNoToken.axiosMessage }}
-        </span>
-      </div>
-      <div class="diag-layer">
-        <span class="diag-label">③ /logs 带当前 token：</span>
-        <el-tag
-          v-if="logsDiagResult.logsWithToken.statusCode !== null"
-          :type="
-            logsDiagResult.logsWithToken.statusCode === 200
-              ? 'success'
-              : logsDiagResult.logsWithToken.statusCode === 401 || logsDiagResult.logsWithToken.statusCode === 403
-                ? 'danger'
-                : 'warning'
-          "
-          size="small"
-        >
-          HTTP {{ logsDiagResult.logsWithToken.statusCode }}
-        </el-tag>
-        <el-tag v-else type="warning" size="small">浏览器无响应</el-tag>
-        <span v-if="logsDiagResult.logsWithToken.serverMessage" class="diag-detail">
-          {{ logsDiagResult.logsWithToken.serverMessage }}
-        </span>
-        <span v-if="logsDiagResult.logsWithToken.axiosCode" class="diag-detail">
-          axios: {{ logsDiagResult.logsWithToken.axiosCode }} — {{ logsDiagResult.logsWithToken.axiosMessage }}
-        </span>
-        <span v-if="!auth.token" class="diag-detail">
-          （当前无 token，已跳过此层）
-        </span>
-      </div>
-    </el-card>
-
-    <!-- Redo Task B: local pending reports panel -->
-    <el-card
-      v-if="pendingLocalReports.length > 0"
-      class="pending-card"
-      shadow="never"
-    >
-      <template #header>
-        <div class="pending-header">
-          <span class="pending-title">
-            本地待上报日志（{{ pendingLocalReports.length }} 条，去重后 {{ pendingDeduped.length }} 条）
-          </span>
-          <div class="pending-actions">
-            <el-button
-              size="small"
-              @click="handlePurgeLogsSelfErrors"
-            >
-              清理 /logs 自身历史错误
-            </el-button>
-            <el-button
-              type="primary"
-              size="small"
-              :loading="flushing"
-              @click="handleReconnectAndFlush"
-            >
-              重新连接并补发
-            </el-button>
+    <!-- Advanced diagnostics (collapsed by default for user-friendliness) -->
+    <el-collapse v-model="activeDiagPanel" class="diag-collapse">
+      <el-collapse-item title="高级诊断" name="diagnostics">
+        <template #title>
+          <div class="collapse-title-wrap">
+            <span class="collapse-title-text">高级诊断</span>
+            <span class="collapse-title-desc">用于排查连接问题</span>
           </div>
-        </div>
-      </template>
-      <el-table :data="pendingDeduped" size="small" stripe>
-        <el-table-column label="分类" width="90">
-          <template #default="{ row }">
-            <el-tag size="small" :type="row.category === 'network' ? 'warning' : 'danger'">
-              {{ row.category }}
+        </template>
+
+        <!-- One-click-launch fix D1: launch-chain diagnostics panel -->
+        <el-card class="diag-card" shadow="never">
+          <template #header>
+            <div class="diag-header">
+              <span class="diag-title">启动链路诊断</span>
+              <el-button
+                size="small"
+                :loading="diagRunning"
+                @click="runDiagnostics"
+              >
+                重新诊断
+              </el-button>
+            </div>
+          </template>
+          <div class="diag-row">
+            <span class="diag-label">当前 API 地址：</span>
+            <code>{{ API_BASE_URL }}</code>
+          </div>
+          <div v-for="r in hostResults" :key="r.host" class="diag-row">
+            <span class="diag-label">{{ r.host }}：</span>
+            <el-tag
+              :type="r.ok ? 'success' : 'danger'"
+              size="small"
+              style="margin-right: 8px"
+            >
+              {{ r.ok ? '可达' : '不可达' }}
             </el-tag>
+            <span v-if="r.ok && r.health" class="diag-detail">
+              {{ r.health.app }} v{{ r.health.version }}
+            </span>
+            <span v-else class="diag-detail">{{ r.error }}</span>
+          </div>
+          <div v-if="diagCheckedAt" class="diag-row diag-time">
+            最近诊断时间：{{ diagCheckedAt }}
+          </div>
+          <el-alert
+            v-if="diagVerdict"
+            type="info"
+            :closable="false"
+            show-icon
+            class="diag-verdict"
+          >
+            {{ diagVerdict }}
+          </el-alert>
+        </el-card>
+
+        <!-- Logs-endpoint fix Task A: /logs business-endpoint status panel -->
+        <el-card class="logs-status-card" shadow="never">
+          <template #header>
+            <div class="diag-header">
+              <span class="diag-title">/logs 业务接口状态</span>
+              <el-button
+                size="small"
+                :loading="logsDiagRunning"
+                @click="probeLogsEndpoint"
+              >
+                探测 /logs 接口
+              </el-button>
+            </div>
           </template>
-        </el-table-column>
-        <el-table-column prop="title" label="标题" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="message" label="消息" min-width="220" show-overflow-tooltip />
-        <el-table-column label="请求路径" width="180" show-overflow-tooltip>
-          <template #default="{ row }">
-            {{ row.request_path || '-' }}
+          <div class="diag-row">
+            <span class="diag-label">接口状态：</span>
+            <el-tag :type="logsStatusTagType" size="small">
+              {{ logsStatusLabel }}
+            </el-tag>
+          </div>
+          <div v-if="lastLogsError" class="logs-err-detail">
+            <div v-if="lastLogsError.statusCode" class="diag-row">
+              <span class="diag-label">HTTP 状态码：</span>
+              <code>{{ lastLogsError.statusCode }}</code>
+            </div>
+            <div v-if="lastLogsError.requestUrl" class="diag-row">
+              <span class="diag-label">请求 URL：</span>
+              <code class="break-all">{{ lastLogsError.requestUrl }}</code>
+            </div>
+            <div v-if="lastLogsError.serverMessage" class="diag-row">
+              <span class="diag-label">后端 message：</span>
+              <span class="diag-detail">{{ lastLogsError.serverMessage }}</span>
+            </div>
+            <div v-if="lastLogsError.serverDetail" class="diag-row">
+              <span class="diag-label">后端 detail：</span>
+              <span class="diag-detail">{{ lastLogsError.serverDetail }}</span>
+            </div>
+          </div>
+          <el-alert
+            v-if="logsEndpointStatus === 'auth_failed'"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="diag-verdict"
+          >
+            登录已失效，已清理本地 token 并跳转登录页。本地待上报日志已保留，登录后可补发。
+          </el-alert>
+          <el-alert
+            v-else-if="logsEndpointStatus === 'server_error'"
+            type="error"
+            :closable="false"
+            show-icon
+            class="diag-verdict"
+          >
+            /logs 接口返回 5xx。请查看后端日志 <code>{{ BACKEND_LOG_PATH }}</code> 或重启后端。
+          </el-alert>
+          <el-alert
+            v-else-if="logsEndpointStatus === 'browser_no_response'"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="diag-verdict"
+          >
+            后端 /health 可达，但浏览器未收到 /logs 响应。可能是 CORS 预检失败、浏览器网络拦截或代理配置问题。请点击下方"探测 /logs 接口"运行三层诊断，查看 axios 错误码与 message。
+          </el-alert>
+        </el-card>
+
+        <!-- Closure fix Task B: three-layer /logs diagnostics panel -->
+        <el-card v-if="logsDiagResult" class="logs-diag-card" shadow="never">
+          <template #header>
+            <div class="diag-header">
+              <span class="diag-title">/logs 三层诊断（检查时间：{{ logsDiagResult.checkedAt }}）</span>
+            </div>
           </template>
-        </el-table-column>
-      </el-table>
-      <div class="pending-hint">
-        这些错误在后端不可达时产生，已暂存在本地（sessionStorage）。点击"重新连接并补发"将它们写入服务端日志中心。
-      </div>
-      <!-- Logs-endpoint fix Task B2: structured flush result so the user
-           sees the exact reason instead of a vague "部分未能补发". -->
-      <el-alert
-        v-if="lastFlushResult"
-        :type="lastFlushResult.retained === 0 ? 'success' : 'warning'"
-        :closable="false"
-        show-icon
-        class="diag-verdict"
+          <!-- ERR_NETWORK fix: explain the same-origin proxy mode so the user
+               understands WHY a browser request to /api/v1/logs is same-origin. -->
+          <div class="diag-proxy-hint">
+            <el-tag type="info" size="small" effect="plain">
+              {{ IS_SAME_ORIGIN ? '同源代理模式' : '跨源直连模式' }}
+            </el-tag>
+            <span v-if="IS_SAME_ORIGIN" class="diag-detail">
+              浏览器请求同源 <code>{{ API_BASE_URL }}/logs</code>，由 Vite 代理到
+              <code>{{ BACKEND_PROXY_TARGET }}</code>。Authorization 头不触发跨源预检。
+            </span>
+            <span v-else class="diag-detail">
+              浏览器直接请求 <code>{{ API_BASE_URL }}/logs</code>（跨源）。如遇 ERR_NETWORK 请检查后端 CORS 配置。
+            </span>
+          </div>
+          <div class="diag-layer">
+            <span class="diag-label">① /health 裸请求（无认证）：</span>
+            <el-tag
+              :type="logsDiagResult.health.reachable ? 'success' : 'danger'"
+              size="small"
+            >
+              {{ logsDiagResult.health.reachable ? '可达' : '不可达' }}
+            </el-tag>
+            <span v-if="logsDiagResult.health.statusCode" class="diag-detail">
+              HTTP {{ logsDiagResult.health.statusCode }}
+            </span>
+            <span v-if="logsDiagResult.health.axiosCode" class="diag-detail">
+              axios: {{ logsDiagResult.health.axiosCode }} — {{ logsDiagResult.health.axiosMessage }}
+            </span>
+          </div>
+          <div class="diag-layer">
+            <span class="diag-label">② /logs 无 token（预期 401 = 路由可达）：</span>
+            <el-tag
+              :type="logsDiagResult.logsNoToken.reachable ? 'success' : 'danger'"
+              size="small"
+            >
+              {{ logsDiagResult.logsNoToken.reachable ? '可达' : '不可达' }}
+            </el-tag>
+            <span v-if="logsDiagResult.logsNoToken.statusCode" class="diag-detail">
+              HTTP {{ logsDiagResult.logsNoToken.statusCode }}
+              <span v-if="logsDiagResult.logsNoToken.statusCode === 401">
+                （接口存在，需登录 ✓）
+              </span>
+            </span>
+            <span v-if="logsDiagResult.logsNoToken.serverMessage" class="diag-detail">
+              {{ logsDiagResult.logsNoToken.serverMessage }}
+            </span>
+            <span v-if="logsDiagResult.logsNoToken.axiosCode" class="diag-detail">
+              axios: {{ logsDiagResult.logsNoToken.axiosCode }} — {{ logsDiagResult.logsNoToken.axiosMessage }}
+            </span>
+          </div>
+          <div class="diag-layer">
+            <span class="diag-label">③ /logs 带当前 token：</span>
+            <el-tag
+              v-if="logsDiagResult.logsWithToken.statusCode !== null"
+              :type="
+                logsDiagResult.logsWithToken.statusCode === 200
+                  ? 'success'
+                  : logsDiagResult.logsWithToken.statusCode === 401 || logsDiagResult.logsWithToken.statusCode === 403
+                    ? 'danger'
+                    : 'warning'
+              "
+              size="small"
+            >
+              HTTP {{ logsDiagResult.logsWithToken.statusCode }}
+            </el-tag>
+            <el-tag v-else type="warning" size="small">浏览器无响应</el-tag>
+            <span v-if="logsDiagResult.logsWithToken.serverMessage" class="diag-detail">
+              {{ logsDiagResult.logsWithToken.serverMessage }}
+            </span>
+            <span v-if="logsDiagResult.logsWithToken.axiosCode" class="diag-detail">
+              axios: {{ logsDiagResult.logsWithToken.axiosCode }} — {{ logsDiagResult.logsWithToken.axiosMessage }}
+            </span>
+            <span v-if="!auth.token" class="diag-detail">
+              （当前无 token，已跳过此层）
+            </span>
+          </div>
+        </el-card>
+      </el-collapse-item>
+
+      <!-- Local pending reports (also collapsed by default) -->
+      <el-collapse-item
+        v-if="pendingLocalReports.length > 0"
+        title="本地待上报日志"
+        name="pending"
       >
-        上次补发：共 {{ lastFlushResult.total }} 条 · 成功 {{ lastFlushResult.sent }} 条 ·
-        保留 {{ lastFlushResult.retained }} 条 · 丢弃 {{ lastFlushResult.dropped }} 条
-        <span v-if="lastFlushResult.reasons.length">
-          （原因：{{ lastFlushResult.reasons.join(' / ') }}）
-        </span>
-      </el-alert>
-    </el-card>
+        <el-card class="pending-card" shadow="never">
+          <div class="pending-header">
+            <span class="pending-title">
+              本地待上报日志（{{ pendingLocalReports.length }} 条，去重后 {{ pendingDeduped.length }} 条）
+            </span>
+            <div class="pending-actions">
+              <el-button
+                size="small"
+                @click="handlePurgeLogsSelfErrors"
+              >
+                清理 /logs 自身历史错误
+              </el-button>
+              <el-button
+                type="primary"
+                size="small"
+                :loading="flushing"
+                @click="handleReconnectAndFlush"
+              >
+                重新连接并补发
+              </el-button>
+            </div>
+          </div>
+          <el-table :data="pendingDeduped" size="small" stripe>
+            <el-table-column label="分类" width="90">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.category === 'network' ? 'warning' : 'danger'">
+                  {{ row.category }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="title" label="标题" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="message" label="消息" min-width="220" show-overflow-tooltip />
+            <el-table-column label="请求路径" width="180" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ row.request_path || '-' }}
+              </template>
+            </el-table-column>
+          </el-table>
+          <div class="pending-hint">
+            这些错误在后端不可达时产生，已暂存在本地（sessionStorage）。点击"重新连接并补发"将它们写入服务端日志中心。
+          </div>
+          <el-alert
+            v-if="lastFlushResult"
+            :type="lastFlushResult.retained === 0 ? 'success' : 'warning'"
+            :closable="false"
+            show-icon
+            class="diag-verdict"
+          >
+            上次补发：共 {{ lastFlushResult.total }} 条 · 成功 {{ lastFlushResult.sent }} 条 ·
+            保留 {{ lastFlushResult.retained }} 条 · 丢弃 {{ lastFlushResult.dropped }} 条
+            <span v-if="lastFlushResult.reasons.length">
+              （原因：{{ lastFlushResult.reasons.join(' / ') }}）
+            </span>
+          </el-alert>
+        </el-card>
+      </el-collapse-item>
+    </el-collapse>
 
     <el-card class="section-card" shadow="never">
       <el-table
@@ -1182,6 +1195,40 @@ onMounted(async () => {
 
 .status-banner {
   margin-bottom: 16px;
+}
+
+/* Advanced diagnostics collapse */
+.diag-collapse {
+  margin-bottom: 16px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.diag-collapse :deep(.el-collapse-item__header) {
+  padding: 0 16px;
+  height: 48px;
+  font-size: 14px;
+}
+
+.collapse-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.collapse-title-text {
+  font-weight: 600;
+  color: #303133;
+}
+
+.collapse-title-desc {
+  font-size: 12px;
+  color: #909399;
+}
+
+.diag-collapse :deep(.el-collapse-item__content) {
+  padding: 0 16px 16px;
 }
 
 /* One-click-launch fix D1: diagnostics panel */

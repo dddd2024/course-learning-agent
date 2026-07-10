@@ -8,6 +8,8 @@ import {
   Connection,
   Document,
   Reading,
+  Calendar,
+  EditPen,
 } from '@element-plus/icons-vue'
 import { getCourse, type Course } from '../api/course'
 import { listMaterials } from '../api/material'
@@ -65,6 +67,14 @@ function goToKnowledgeGraph() {
   router.push('/knowledge-graph')
 }
 
+function goToPlans() {
+  router.push('/plans')
+}
+
+function goToQuizzes() {
+  router.push('/quizzes')
+}
+
 async function fetchCounts() {
   const id = Number(route.params.id)
   if (!id) return
@@ -97,12 +107,27 @@ onMounted(async () => {
     <el-card v-if="course" class="info-card">
       <div class="color-bar" :style="{ backgroundColor: course.color || '#409eff' }" />
       <div class="info-body">
-        <h2 class="info-name">{{ course.name }}</h2>
-        <div class="info-meta">
-          <span v-if="course.teacher">教师：{{ course.teacher }}</span>
-          <span v-if="course.semester">学期：{{ course.semester }}</span>
+        <div class="info-header">
+          <div>
+            <h2 class="info-name">{{ course.name }}</h2>
+            <div class="info-meta">
+              <span v-if="course.teacher">教师：{{ course.teacher }}</span>
+              <span v-if="course.semester">学期：{{ course.semester }}</span>
+            </div>
+            <div v-if="course.description" class="info-desc">{{ course.description }}</div>
+          </div>
+          <div class="info-stats">
+            <div class="info-stat">
+              <span class="info-stat-value">{{ materialsCount ?? '-' }}</span>
+              <span class="info-stat-label">资料</span>
+            </div>
+            <div class="info-stat-divider" />
+            <div class="info-stat">
+              <span class="info-stat-value">{{ knowledgePointsCount ?? '-' }}</span>
+              <span class="info-stat-label">知识点</span>
+            </div>
+          </div>
         </div>
-        <div v-if="course.description" class="info-desc">{{ course.description }}</div>
       </div>
     </el-card>
 
@@ -132,6 +157,16 @@ onMounted(async () => {
         <el-icon :size="32"><Reading /></el-icon>
         <div class="entry-title">文档学习</div>
         <div class="entry-desc">沉浸式文档阅读学习</div>
+      </el-card>
+      <el-card class="entry-card" shadow="hover" @click="goToPlans">
+        <el-icon :size="32"><Calendar /></el-icon>
+        <div class="entry-title">学习计划</div>
+        <div class="entry-desc">制定课程学习计划</div>
+      </el-card>
+      <el-card class="entry-card" shadow="hover" @click="goToQuizzes">
+        <el-icon :size="32"><EditPen /></el-icon>
+        <div class="entry-title">测验</div>
+        <div class="entry-desc">知识点测验与自测</div>
       </el-card>
       <el-card class="entry-card" shadow="hover" @click="goToKnowledgeGraph">
         <el-icon :size="32"><Connection /></el-icon>
@@ -169,6 +204,14 @@ onMounted(async () => {
   padding: 20px;
 }
 
+.info-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
 .info-name {
   font-size: 22px;
   margin: 0 0 12px;
@@ -188,6 +231,41 @@ onMounted(async () => {
   font-size: 14px;
   color: #909399;
   line-height: 1.6;
+}
+
+.info-stats {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  background: #f5f7fa;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.info-stat {
+  text-align: center;
+}
+
+.info-stat-value {
+  display: block;
+  font-size: 24px;
+  font-weight: 700;
+  color: #409eff;
+  line-height: 1.2;
+}
+
+.info-stat-label {
+  display: block;
+  font-size: 12px;
+  color: #909399;
+  margin-top: 2px;
+}
+
+.info-stat-divider {
+  width: 1px;
+  height: 32px;
+  background: #e6e6e6;
 }
 
 .entries {

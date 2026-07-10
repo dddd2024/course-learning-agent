@@ -474,14 +474,15 @@ onBeforeUnmount(() => {
       <!-- Center: interactive graph canvas -->
       <el-col :span="14" class="kg-center">
         <div class="graph-card" v-loading="loading">
-          <div v-if="!nodes.length && !loading" class="empty-tip">
-            暂无图谱数据，点击「重建图谱」生成
-          </div>
           <div
-            v-show="nodes.length > 0 || loading"
             ref="graphContainer"
             class="graph-canvas"
           ></div>
+          <div v-if="!nodes.length && !loading" class="empty-tip-overlay">
+            <el-empty description="暂无图谱数据">
+              <el-button type="primary" @click="handleRebuild">重建图谱</el-button>
+            </el-empty>
+          </div>
           <div v-if="nodes.length > 0" class="graph-stats">
             {{ nodes.length }} 节点 · {{ edges.length }} 关系
           </div>
@@ -866,10 +867,18 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-.empty-tip {
-  text-align: center;
-  color: #909399;
-  padding: 60px 0;
+.empty-tip-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 6px;
+  z-index: 1;
 }
 
 .detail-row {

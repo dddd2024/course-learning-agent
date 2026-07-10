@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
-import { Odometer, Reading, Tickets, Calendar, EditPen, Share, Document, Fold, Expand } from '@element-plus/icons-vue'
+import { Odometer, Reading, Tickets, Calendar, EditPen, Share, Document, Fold, Expand, User } from '@element-plus/icons-vue'
 import AppBreadcrumbs from '../components/common/AppBreadcrumbs.vue'
 
 const router = useRouter()
@@ -17,24 +17,7 @@ const activeMenu = computed(() => {
   return route.path
 })
 
-const pageTitle = computed(() => {
-  const path = route.path
-  if (path === '/dashboard') return '仪表盘'
-  if (path === '/courses') return '课程'
-  if (path.startsWith('/courses/') && !path.includes('/materials') && !path.includes('/chat') && !path.includes('/learn') && !path.includes('/outline')) return '课程详情'
-  if (path.includes('/materials')) return '课程资料'
-  if (path.includes('/chat')) return '课程问答'
-  if (path.includes('/learn')) return '文档学习'
-  if (path.includes('/outline')) return '知识点大纲'
-  if (path === '/todos') return '待办事项'
-  if (path.startsWith('/plans')) return '学习计划'
-  if (path === '/quizzes') return '测验'
-  if (path === '/knowledge-graph') return '知识图谱'
-  if (path === '/profile') return '个人中心'
-  if (path === '/logs') return '日志中心'
-  if (path === '/agent-runs') return 'Agent 审计'
-  return '课程学习助手'
-})
+const pageTitle = computed(() => (route.meta.title as string) || '课程学习助手')
 
 function handleMenuSelect(index: string) {
   router.push(index)
@@ -75,7 +58,10 @@ onUnmounted(() => {
 <template>
   <el-container class="layout-container">
     <el-aside :width="isCollapse ? '64px' : '220px'" class="aside" :class="{ 'aside--collapsed': isCollapse }">
-      <div class="logo">{{ isCollapse ? '课' : '课程学习助手' }}</div>
+      <div class="logo">
+        <span class="logo-icon">📚</span>
+        <span v-if="!isCollapse" class="logo-text">课程学习助手</span>
+      </div>
       <el-menu
         :default-active="activeMenu"
         :collapse="isCollapse"
@@ -85,6 +71,7 @@ onUnmounted(() => {
         active-text-color="#409eff"
         @select="handleMenuSelect"
       >
+        <li class="menu-section-label" v-if="!isCollapse">学习</li>
         <el-menu-item index="/dashboard">
           <el-icon><Odometer /></el-icon>
           <span>仪表盘</span>
@@ -105,17 +92,18 @@ onUnmounted(() => {
           <el-icon><EditPen /></el-icon>
           <span>测验</span>
         </el-menu-item>
-        <!-- Task D: the standalone "Agent 审计" menu entry is removed;
-             the /agent-runs route + AgentRunsView are preserved as an
-             internal detail-link surface from the log center. -->
-        <el-menu-item index="/logs">
-          <el-icon><Document /></el-icon>
-          <span>日志中心</span>
-        </el-menu-item>
+
+        <li class="menu-section-label" v-if="!isCollapse">工具</li>
         <el-menu-item index="/knowledge-graph">
           <el-icon><Share /></el-icon>
           <span>知识图谱</span>
         </el-menu-item>
+        <el-menu-item index="/logs">
+          <el-icon><Document /></el-icon>
+          <span>日志中心</span>
+        </el-menu-item>
+
+        <li class="menu-section-label" v-if="!isCollapse">设置</li>
         <el-menu-item index="/profile">
           <el-icon><User /></el-icon>
           <span>个人中心</span>
@@ -151,19 +139,30 @@ onUnmounted(() => {
 
 .aside {
   background-color: #001529;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .logo {
   height: 60px;
-  line-height: 60px;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   color: #fff;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
   background-color: #002140;
   overflow: hidden;
   white-space: nowrap;
+}
+
+.logo-icon {
+  font-size: 22px;
+}
+
+.logo-text {
+  font-size: 15px;
 }
 
 .menu {
@@ -172,6 +171,17 @@ onUnmounted(() => {
 
 .menu:not(.el-menu--collapse) {
   width: 220px;
+}
+
+.menu-section-label {
+  padding: 16px 20px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #5b6b7e;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  list-style: none;
+  user-select: none;
 }
 
 .header {
@@ -193,6 +203,7 @@ onUnmounted(() => {
   cursor: pointer;
   color: #606266;
   margin-right: 12px;
+  transition: color 0.2s;
 }
 
 .collapse-btn:hover {

@@ -340,13 +340,35 @@ onMounted(() => {
           <span class="info-label">当前启用模型：</span>
           <span v-if="activeSummary" class="info-value">{{ activeSummary }}</span>
           <span v-else class="info-value info-empty">未配置</span>
+          <el-tag
+            v-if="!activeConfig && !activeLoading"
+            type="warning"
+            size="small"
+            effect="plain"
+            class="inline-tag"
+          >
+            建议尽快配置
+          </el-tag>
         </div>
         <div class="info-row">
           <span class="info-label">当前模式：</span>
           <el-tag v-if="activeConfig" type="success" size="small">
-            用户配置模式
+            用户配置模式（Real）
           </el-tag>
           <el-tag v-else type="info" size="small">Mock / 系统模式</el-tag>
+          <el-tooltip placement="right" effect="light">
+            <template #content>
+              <div class="mode-tip">
+                <p>
+                  <b>Mock 模式：</b>使用预设的模拟回复，无需 API Key，适合体验功能流程。
+                </p>
+                <p>
+                  <b>Real 模式：</b>连接真实 LLM API（如 OpenAI、DeepSeek），获得智能问答和内容生成。
+                </p>
+              </div>
+            </template>
+            <el-icon class="tip-icon"><QuestionFilled /></el-icon>
+          </el-tooltip>
         </div>
       </div>
     </el-card>
@@ -401,6 +423,24 @@ onMounted(() => {
           <el-button type="primary" @click="openCreateDialog">新增配置</el-button>
         </div>
       </template>
+      <el-alert
+        v-if="!activeConfig && !activeLoading"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="config-alert"
+      >
+        <template #title>
+          <div class="alert-row">
+            <span class="alert-text">
+              当前使用 Mock 模式（预设回复），配置 LLM API 后可获得真实的智能问答、知识提取和测验生成功能。
+            </span>
+            <el-button type="primary" size="small" @click="openCreateDialog">
+              立即配置
+            </el-button>
+          </div>
+        </template>
+      </el-alert>
       <el-table
         v-loading="listLoading"
         :data="configs"
@@ -521,13 +561,18 @@ onMounted(() => {
               :value="opt.value"
             />
           </el-select>
+          <div class="form-help">
+            选择 LLM 服务商，会自动填充对应的 Base URL；选择「自定义」可手动填写。
+          </div>
         </el-form-item>
         <el-form-item label="配置名称" prop="name">
           <el-input
             v-model="form.name"
             placeholder="例如：SenseNova DeepSeek V4 Flash"
           />
-          <div class="form-help">仅用于区分配置，不是模型 ID。</div>
+          <div class="form-help">
+            仅用于在本列表中区分多个配置，不是发送给模型的模型 ID。
+          </div>
         </el-form-item>
         <el-form-item label="Base URL" prop="base_url">
           <el-input
@@ -535,7 +580,7 @@ onMounted(() => {
             placeholder="例如：https://token.sensenova.cn/v1"
           />
           <div class="form-help">
-            不要填写 /chat/completions，系统会自动拼接。
+            兼容 OpenAI 协议的接口地址。不要填写 /chat/completions，系统会自动拼接。
           </div>
         </el-form-item>
         <el-form-item label="模型" prop="model">
@@ -544,7 +589,7 @@ onMounted(() => {
             placeholder="例如：deepseek-v4-flash"
           />
           <div class="form-help">
-            填写供应商控制台显示的精确 Model ID。
+            填写供应商控制台显示的精确 Model ID，错误或拼写的模型名会导致调用失败。
           </div>
         </el-form-item>
         <el-form-item label="API Key" prop="api_key">
@@ -557,7 +602,7 @@ onMounted(() => {
             "
           />
           <div class="form-help">
-            仅保存加密后的密文；编辑时留空表示不修改。
+            仅保存加密后的密文；编辑时留空表示沿用原密钥。可在供应商控制台的 API Keys 页面创建。
           </div>
         </el-form-item>
         <el-form-item label="Temperature">
@@ -568,6 +613,9 @@ onMounted(() => {
             :step="0.1"
             style="width: 100%"
           />
+          <div class="form-help">
+            采样温度，0 更确定稳定，越高越随机有创造性。问答建议 0.2，写作可适当调高。
+          </div>
         </el-form-item>
         <el-form-item label="Max Tokens">
           <el-input-number
@@ -576,6 +624,9 @@ onMounted(() => {
             :step="100"
             style="width: 100%"
           />
+          <div class="form-help">
+            单次回复的最大 Token 数，超长内容生成（如测验、摘要）建议设置到 2000 以上。
+          </div>
         </el-form-item>
         <el-form-item label="Timeout (秒)">
           <el-input-number
@@ -584,6 +635,9 @@ onMounted(() => {
             :step="10"
             style="width: 100%"
           />
+          <div class="form-help">
+            单次请求超时时间，模型响应较慢或内容较长时适当调大。
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -667,5 +721,48 @@ onMounted(() => {
   font-size: 12px;
   line-height: 1.5;
   color: #909399;
+}
+
+.inline-tag {
+  margin-left: 8px;
+}
+
+.tip-icon {
+  margin-left: 6px;
+  font-size: 14px;
+  color: #909399;
+  cursor: help;
+  vertical-align: middle;
+}
+
+.mode-tip {
+  max-width: 320px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.mode-tip p {
+  margin: 0 0 6px;
+}
+
+.mode-tip p:last-child {
+  margin-bottom: 0;
+}
+
+.config-alert {
+  margin-bottom: 16px;
+}
+
+.alert-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+}
+
+.alert-text {
+  flex: 1;
+  line-height: 1.5;
 }
 </style>

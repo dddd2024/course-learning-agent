@@ -19,6 +19,7 @@ import { getDashboardSummary, type DashboardSummary } from '../api/dashboard'
 import { listCourses, type Course } from '../api/course'
 import { listTodos, updateTodo, type Todo } from '../api/plan'
 import { getAgentRuns, type AgentRun } from '../api/audit'
+import { getActiveConfig } from '../api/llmConfig'
 import { parseApiError } from '../utils/error'
 import { MAX_PAGE_SIZE } from '../constants/pagination'
 
@@ -30,6 +31,8 @@ const summary = ref<DashboardSummary | null>(null)
 const todayTodos = ref<Todo[]>([])
 const recentCourses = ref<Course[]>([])
 const recentRuns = ref<AgentRun[]>([])
+// null = unknown / still checking, true = a real LLM is configured, false = Mock mode
+const llmConfigured = ref<boolean | null>(null)
 
 const greeting = computed(() => {
   const h = new Date().getHours()
@@ -60,7 +63,7 @@ const stats = computed(() => {
     { key: 'knowledge', label: '知识点数', value: s?.knowledge_point_count ?? 0, icon: Collection, color: '#E6A23C', route: '/knowledge-graph' },
     { key: 'todo', label: '今日待办', value: s?.todo_today_count ?? 0, icon: Calendar, color: '#F56C6C', route: '/todos' },
     { key: 'completed', label: '已完成待办', value: s?.todo_completed_count ?? 0, icon: CircleCheck, color: '#909399', route: '/todos' },
-    { key: 'agent', label: 'Agent 运行', value: s?.agent_run_count ?? 0, icon: Monitor, color: '#9C27B0', route: '/agent-runs' },
+    { key: 'agent', label: 'AI 助手记录', value: s?.agent_run_count ?? 0, icon: Monitor, color: '#9C27B0', route: '/agent-runs' },
   ]
 })
 
@@ -152,13 +155,46 @@ async function handleCompleteTodo(todo: Todo) {
 
 function handleRefresh() {
   fetchAll()
+  checkLlmConfig()
 }
 
-onMounted(fetchAll)
+async function checkLlmConfig() {
+  try {
+    const { data } = await getActiveConfig()
+    llmConfigured.value = data.config !== null
+  } catch {
+    // If the request itself fails we cannot reliably tell whether the user is in
+    // Mock mode, so avoid showing a potentially misleading banner.
+    llmConfigured.value = null
+  }
+}
+
+onMounted(() => {
+  fetchAll()
+  checkLlmConfig()
+})
 </script>
 
 <template>
   <div class="dashboard" v-loading="loading">
+    <!-- Mock 模式提示 -->
+    <el-alert
+      v-if="llmConfigured === false"
+      class="mock-banner"
+      type="warning"
+      show-icon
+      :closable="false"
+    >
+      <template #title>
+        当前处于 Mock 模式 — 尚未配置真实的大语言模型，AI 助手功能将返回模拟数据。
+      </template>
+      <template #default>
+        <el-link type="primary" :underline="false" @click="go('/profile')">
+          前往个人中心配置 LLM →
+        </el-link>
+      </template>
+    </el-alert>
+
     <!-- 欢迎区 -->
     <el-card class="welcome-card" shadow="never">
       <div class="welcome">
@@ -196,10 +232,42 @@ onMounted(fetchAll)
     <el-card class="section-card" shadow="never">
       <div class="section-title">快捷入口</div>
       <div class="quick-actions">
-        <el-button :icon="Tickets" @click="goQuickUpload">上传资料</el-button>
-        <el-button :icon="ChatDotRound" @click="goQuickChat">课程问答</el-button>
-        <el-button :icon="Calendar" @click="go('/plans')">生成计划</el-button>
-        <el-button :icon="EditPen" @click="go('/quizzes')">生成测验</el-button>
+        <div class="action-card" @click="goQuickUpload">
+          <div class="action-icon-wrap" style="background: rgba(64, 158, 255, 0.12); color: #409EFF;">
+            <el-icon><Tickets /></el-icon>
+          </div>
+          <div class="action-text">
+            <span class="action-label">上传资料</span>
+            <span class="action-desc">添加课程学习材料</span>
+          </div>
+        </div>
+        <div class="action-card" @click="goQuickChat">
+          <div class="action-icon-wrap" style="background: rgba(103, 194, 58, 0.12); color: #67C23A;">
+            <el-icon><ChatDotRound /></el-icon>
+          </div>
+          <div class="action-text">
+            <span class="action-label">课程问答</span>
+            <span class="action-desc">与 AI 助手对话</span>
+          </div>
+        </div>
+        <div class="action-card" @click="go('/plans')">
+          <div class="action-icon-wrap" style="background: rgba(230, 162, 60, 0.12); color: #E6A23C;">
+            <el-icon><Calendar /></el-icon>
+          </div>
+          <div class="action-text">
+            <span class="action-label">生成计划</span>
+            <span class="action-desc">创建学习计划</span>
+          </div>
+        </div>
+        <div class="action-card" @click="go('/quizzes')">
+          <div class="action-icon-wrap" style="background: rgba(245, 108, 108, 0.12); color: #F56C6C;">
+            <el-icon><EditPen /></el-icon>
+          </div>
+          <div class="action-text">
+            <span class="action-label">生成测验</span>
+            <span class="action-desc">检验学习成果</span>
+          </div>
+        </div>
       </div>
     </el-card>
 
@@ -213,9 +281,15 @@ onMounted(fetchAll)
           </div>
           <el-empty
             v-if="todayTodos.length === 0"
-            description="今日暂无待办"
             :image-size="80"
-          />
+          >
+            <template #description>
+              <span>今日暂无待办，</span>
+              <el-link type="primary" :underline="false" @click="go('/plans')">
+                去计划页面创建学习计划吧
+              </el-link>
+            </template>
+          </el-empty>
           <ul v-else class="todo-list">
             <li v-for="t in todayTodos" :key="t.id" class="todo-item">
               <span class="todo-title">{{ t.title }}</span>
@@ -247,9 +321,15 @@ onMounted(fetchAll)
           </div>
           <el-empty
             v-if="recentCourses.length === 0"
-            description="暂无课程"
             :image-size="80"
-          />
+          >
+            <template #description>
+              <span>暂无课程，</span>
+              <el-link type="primary" :underline="false" @click="go('/courses')">
+                去添加你的第一门课程吧
+              </el-link>
+            </template>
+          </el-empty>
           <ul v-else class="course-list">
             <li v-for="c in recentCourses" :key="c.id" class="course-item">
               <div class="course-info">
@@ -283,17 +363,23 @@ onMounted(fetchAll)
       </el-col>
     </el-row>
 
-    <!-- 最近 Agent 运行 -->
+    <!-- 最近 AI 助手活动 -->
     <el-card class="section-card" shadow="never">
       <div class="section-head">
-        <span class="section-title">最近 Agent 运行</span>
+        <span class="section-title">最近 AI 助手活动</span>
         <el-button link type="primary" @click="go('/agent-runs')">更多</el-button>
       </div>
       <el-empty
         v-if="recentRuns.length === 0"
-        description="暂无运行记录"
         :image-size="80"
-      />
+      >
+        <template #description>
+          <span>暂无 AI 助手活动记录，</span>
+          <el-link type="primary" :underline="false" @click="goQuickChat">
+            去与课程 AI 助手对话试试吧
+          </el-link>
+        </template>
+      </el-empty>
       <el-table v-else :data="recentRuns" stripe size="small">
         <el-table-column prop="run_type" label="类型" width="120" />
         <el-table-column label="状态" width="100" align="center">
@@ -416,9 +502,68 @@ onMounted(fetchAll)
 }
 
 .quick-actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 12px;
+}
+
+.mock-banner {
+  margin-bottom: 0;
+}
+
+.mock-banner :deep(.el-alert__description) {
+  margin-top: 6px;
+}
+
+.action-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.action-card:hover {
+  border-color: #c6e2ff;
+  background: #f5f9ff;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.12);
+}
+
+.action-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.action-icon-wrap .el-icon {
+  font-size: 22px;
+}
+
+.action-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.action-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.action-desc {
+  font-size: 12px;
+  color: #909399;
 }
 
 .todo-list,
