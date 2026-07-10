@@ -346,14 +346,23 @@ def run_chat_pipeline(
         }
         return
 
-    # 3. Generate
+    # 3. Generate. Include a bounded, role-labelled history only to resolve
+    # references such as “它” or “前者”; retrieval evidence remains primary.
     yield {"event": "step_started", "step": "generate", "message": "正在调用模型"}
     course = db.query(Course).filter(Course.id == course_id).first()
     course_name = course.name if course else ""
     generate_started = time.monotonic()
     try:
+        recent = db.query(Message).filter(
+            Message.conversation_id == conversation.id
+        ).order_by(Message.id.desc()).limit(6).all()
+        context = "\n".join(
+            f"{'学生' if m.role == 'user' else '助手'}：{(m.content or '')[:600]}"
+            for m in reversed(recent) if m.content
+        )
         result = answer_question(
-            db, course_id, question, ranked, course_name, user_config=user_config
+            db, course_id, question, ranked, course_name,
+            user_config=user_config, conversation_context=context,
         )
     except Exception as exc:
         generate_duration = int((time.monotonic() - generate_started) * 1000)
@@ -419,6 +428,11 @@ def run_chat_pipeline(
         seen_chunk_ids.add(chunk_id)
         page_no = chunk.get("page_no")
         quote_text = cite.get("quote_text", "")
+        # A citation quote must be verifiable against the retrieved source;
+        # do not persist model-invented quotes merely because the chunk id is
+        # valid.
+        if not quote_text or quote_text not in (chunk.get("text") or ""):
+            continue
         confidence = cite.get("confidence", 0.0)
         material_name = chunk.get("filename", "")
         if page_no is not None:

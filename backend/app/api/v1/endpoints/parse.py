@@ -234,25 +234,34 @@ def list_chunks(
     from app.schemas.material import ImageResponse
 
     page_nos = list(set(c.page_no for c in items if c.page_no))
-    images_by_page: dict[int, list] = defaultdict(list)
+    images_by_chunk: dict[int, list] = defaultdict(list)
+    page_fallback_images: dict[int, list] = defaultdict(list)
     if page_nos:
         imgs = db.query(MaterialImage).filter(
             MaterialImage.material_id == material_id,
             MaterialImage.page_no.in_(page_nos),
         ).all()
         for img in imgs:
-            images_by_page[img.page_no].append(img)
+            if img.chunk_id:
+                images_by_chunk[img.chunk_id].append(img)
+            else:
+                page_fallback_images[img.page_no].append(img)
 
     chunk_responses = []
     for c in items:
         chunk_dict = ChunkResponse.model_validate(c).model_dump()
-        if c.page_no and c.page_no in images_by_page:
+        attached = images_by_chunk.get(c.id, [])
+        # Legacy page-only images are attached once, to the first visible
+        # chunk on that page; never repeated across every chunk on a page.
+        if not attached and c.page_no and c.page_no in page_fallback_images and next((x for x in items if x.page_no == c.page_no), None) == c:
+            attached = page_fallback_images[c.page_no]
+        if attached:
             chunk_dict["images"] = [
                 ImageResponse(
                     id=img.id, page_no=img.page_no, width=img.width,
                     height=img.height, format=img.format,
                     file_url=f"/api/v1/materials/images/{img.id}/file",
-                ) for img in images_by_page[c.page_no]
+                ) for img in attached
             ]
         chunk_responses.append(ChunkResponse(**chunk_dict))
 

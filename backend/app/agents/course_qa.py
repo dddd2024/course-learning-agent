@@ -167,6 +167,7 @@ def answer_question(
     retrieved_chunks: list[dict],
     course_name: str,
     user_config: dict | None = None,
+    conversation_context: str = "",
 ) -> dict[str, Any]:
     """Generate a structured, citation-grounded answer for ``question``.
 
@@ -193,6 +194,8 @@ def answer_question(
         course_name=course_name,
         retrieved_chunks=_format_chunks(retrieved_chunks),
     )
+    if conversation_context:
+        prompt += "\n\n近期对话（仅用于消解指代；事实仍必须由资料支撑）：\n" + conversation_context
     # Phase 2 Task D: prepend guard so uploaded material content is
     # never treated as a system instruction by the model.
     prompt = f"{PROMPT_GUARD}\n\n{prompt}"

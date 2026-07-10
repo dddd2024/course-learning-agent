@@ -852,7 +852,7 @@ def _heuristic_quality_score(text: str) -> tuple[float, str]:
     noise_patterns = [
         r"\d{4}年(?:春|秋|夏|冬)",
         r"第\d+页",
-        r"[主讲教师|教师][:：]",
+        r"^(?:主讲教师|教师)[:：]",
     ]
     noise_count = sum(len(_re.findall(p, text)) for p in noise_patterns)
     if noise_count > 2 and noise_count / max(len(lines), 1) > 0.3:

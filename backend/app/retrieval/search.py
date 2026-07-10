@@ -268,8 +268,8 @@ def keyword_search(
 
     results.sort(key=lambda item: item["score"], reverse=True)
 
-    # Deduplicate: same (filename, page_no) keeps the highest-scoring
-    # chunk; page_no is None and cross-page near-duplicates are merged
+    # Deduplicate only truly repeated source text; different chunks on the
+    # same page are separate evidence and must remain retrievable.
     # by text similarity (see _deduplicate_results).
     results = _deduplicate_results(results)
 
@@ -302,13 +302,8 @@ def _deduplicate_results(results: list[dict]) -> list[dict]:
 
     Three dedup strategies are applied in order:
 
-    1. **Same (filename, page_no)** — at most one chunk per page is kept.
-       Because ``results`` is pre-sorted by score descending, the first
-       chunk on a page that survives the text checks wins. The page slot
-       is claimed only on survival so a page is not emptied just because
-       its top chunk was a cross-page duplicate (e.g. a repeated header).
-       Uses filename instead of material_id so that the same PDF uploaded
-       as different material records is still deduplicated.
+    1. **Exact duplicate content** — only identical chunks from the same
+       material version are collapsed.
     2. **page_no is None (docx/txt/md)** — there is no page to key on,
        so dedup by text similarity: if the first 100 characters of two
        chunks overlap by >= 60%, treat them as duplicates and keep the
@@ -319,12 +314,9 @@ def _deduplicate_results(results: list[dict]) -> list[dict]:
        using an 80% text overlap threshold so only the highest-scoring
        copy is kept.
 
-    Strategies 2 and 3 are scoped to the same ``filename``: the same
-    document uploaded under different material records is still
-    deduplicated, while genuinely different source files remain distinct
-    so filename weighting stays observable.
+    Similarity checks are scoped by ``material_id`` rather than filenames;
+    two users can upload unrelated documents with the same filename.
     """
-    seen_keys: set[tuple] = set()
     # (filename, text_prefix, score, chunk_id) for every chunk currently
     # held in ``deduped``; used for the text-similarity strategies (2 & 3).
     seen_texts: list[tuple[str, str, float, int]] = []
@@ -332,19 +324,10 @@ def _deduplicate_results(results: list[dict]) -> list[dict]:
 
     for r in results:
         page_no = r.get("page_no")
-        filename = r.get("filename", "")
+        material_id = r.get("material_id")
         text = r.get("text", "")
         score = r.get("score", 0)
         chunk_id = r.get("chunk_id")
-
-        # Strategy 1: Same (filename, page_no) — at most one kept chunk
-        # per page. The page slot is claimed only when a chunk actually
-        # survives the text-similarity checks below, so a page is not
-        # left empty just because its top chunk was a cross-page
-        # duplicate (e.g. a repeated header that also matches on page 2).
-        key = (filename, page_no) if page_no is not None else None
-        if key is not None and key in seen_keys:
-            continue
 
         # Strategy 2 & 3: text-similarity dedup, scoped to the same file
         # (filename). This mirrors the original filename-based keying so
@@ -360,7 +343,7 @@ def _deduplicate_results(results: list[dict]) -> list[dict]:
         for i, (ex_filename, ex_prefix, ex_score, ex_id) in enumerate(
             seen_texts
         ):
-            if ex_filename != filename:
+            if ex_filename != material_id:
                 continue
             if not text_prefix or not ex_prefix:
                 continue
@@ -371,7 +354,7 @@ def _deduplicate_results(results: list[dict]) -> list[dict]:
                     # higher-scoring chunk (defensive: results is
                     # pre-sorted desc, so this branch rarely triggers).
                     action = "replace"
-                    seen_texts[i] = (filename, text_prefix, score, chunk_id)
+                    seen_texts[i] = (material_id, text_prefix, score, chunk_id)
                     deduped = [
                         d for d in deduped
                         if d.get("chunk_id") != ex_id
@@ -384,10 +367,8 @@ def _deduplicate_results(results: list[dict]) -> list[dict]:
             continue
 
         # r is retained — either as a new entry or as a replacement.
-        if key is not None:
-            seen_keys.add(key)
         if action == "keep":
-            seen_texts.append((filename, text_prefix, score, chunk_id))
+            seen_texts.append((material_id, text_prefix, score, chunk_id))
         deduped.append(r)
 
     return deduped
