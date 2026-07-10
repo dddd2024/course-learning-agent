@@ -63,6 +63,9 @@ const statusLabel: Record<TodoStatus, string> = {
 
 const courseColors = new Map<string, string>()
 function getCourseColor(courseName: string): string {
+  const course = courses.value.find((c) => c.name === courseName)
+  if (course?.color) return course.color
+  // Fallback to hash-based color if course not found or no color
   if (courseColors.has(courseName)) return courseColors.get(courseName)!
   const colors = ['#409eff', '#67c23a', '#e6a23c', '#f56c6c', '#909399', '#9b59b6', '#1abc9c']
   const idx = courseColors.size % colors.length
@@ -77,6 +80,8 @@ const recordForm = reactive({
   actual_minutes: 0,
 })
 
+const batchLoading = ref(false)
+
 function toDateString(d: Date): string {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -86,6 +91,16 @@ function toDateString(d: Date): string {
 
 function todayString(): string {
   return toDateString(new Date())
+}
+
+function isOverdue(todo: Todo): boolean {
+  if (todo.status !== 'pending') return false
+  if (!todo.scheduled_date) return false
+  return todo.scheduled_date < todayString()
+}
+
+function tableRowClassName({ row }: { row: Todo }): string {
+  return isOverdue(row) ? 'overdue-row' : ''
 }
 
 function formatTime(time: string | null): string {
@@ -180,6 +195,35 @@ async function handleComplete(todo: Todo) {
   }
 }
 
+async function handleBatchComplete() {
+  const pendingTodos = todayTodos.value.filter((t) => t.status === 'pending')
+  if (pendingTodos.length === 0) {
+    ElMessage.info('没有待完成的待办')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定将 ${pendingTodos.length} 个待办全部标记为完成吗？`,
+      '批量完成',
+      { type: 'warning', confirmButtonText: '全部完成', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  batchLoading.value = true
+  try {
+    const results = await Promise.all(
+      pendingTodos.map((t) => updateTodo(t.id, { status: 'completed' })),
+    )
+    results.forEach(({ data }) => applyTodoUpdate(data))
+    ElMessage.success(`已完成 ${results.length} 个待办`)
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '批量完成失败'))
+  } finally {
+    batchLoading.value = false
+  }
+}
+
 function goToCourse(todo: Todo) {
   if (todo.course_id) {
     router.push(`/courses/${todo.course_id}/learn`)
@@ -245,7 +289,18 @@ onMounted(() => {
       <template #header>
         <div class="section-title-bar">
           <span class="section-title">今日待办</span>
-          <el-button text size="small" @click="fetchTodayTodos">刷新</el-button>
+          <div>
+            <el-button
+              v-if="todayTodos.some((t) => t.status === 'pending')"
+              text
+              size="small"
+              :loading="batchLoading"
+              @click="handleBatchComplete"
+            >
+              全部完成
+            </el-button>
+            <el-button text size="small" @click="fetchTodayTodos">刷新</el-button>
+          </div>
         </div>
       </template>
       <div v-loading="todayLoading">
@@ -269,6 +324,14 @@ onMounted(() => {
                 {{ todo.course_name }}
               </el-tag>
               <el-tag
+                v-if="isOverdue(todo)"
+                type="danger"
+                size="small"
+              >
+                已逾期
+              </el-tag>
+              <el-tag
+                v-else
                 :type="statusTagType[todo.status]"
                 size="small"
               >
@@ -371,6 +434,7 @@ onMounted(() => {
         v-loading="allLoading"
         :data="allTodos"
         stripe
+        :row-class-name="tableRowClassName"
         empty-text="暂无待办"
       >
         <el-table-column label="标题" min-width="180" show-overflow-tooltip>
@@ -399,9 +463,10 @@ onMounted(() => {
             {{ row.actual_minutes !== null ? row.actual_minutes : '-' }}
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="100" align="center">
+        <el-table-column label="状态" width="120" align="center">
           <template #default="{ row }">
-            <el-tag :type="statusTagType[row.status as TodoStatus]" size="small">
+            <el-tag v-if="isOverdue(row)" type="danger" size="small">已逾期</el-tag>
+            <el-tag v-else :type="statusTagType[row.status as TodoStatus]" size="small">
               {{ statusLabel[row.status as TodoStatus] }}
             </el-tag>
           </template>
@@ -598,5 +663,13 @@ onMounted(() => {
 .record-meta {
   font-size: 13px;
   color: #909399;
+}
+
+:deep(.overdue-row) {
+  background-color: #fef0f0 !important;
+}
+
+:deep(.overdue-row td) {
+  border-left: 3px solid #f56c6c;
 }
 </style>

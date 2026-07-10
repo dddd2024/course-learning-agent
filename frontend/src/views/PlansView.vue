@@ -121,6 +121,18 @@ const statusLabel: Record<string, string> = {
   postponed: '已延期',
 }
 
+const dayTodosDialogVisible = ref(false)
+const dayTodosFor = ref<Todo[]>([])
+
+function getTodosForDay(day: string): Todo[] {
+  return todosByDate.value[day] ?? []
+}
+
+function showDayTodos(day: string) {
+  dayTodosFor.value = getTodosForDay(day)
+  dayTodosDialogVisible.value = true
+}
+
 async function fetchCourses() {
   coursesLoading.value = true
   try {
@@ -339,12 +351,13 @@ onMounted(() => {
                 >
                   {{ t.title }}
                 </div>
-                <div
+                <span
                   v-if="todosByDate[data.day].length > 3"
-                  class="cal-more"
+                  class="overflow-link"
+                  @click="showDayTodos(data.day)"
                 >
                   +{{ todosByDate[data.day].length - 3 }}
-                </div>
+                </span>
               </div>
             </div>
           </template>
@@ -394,6 +407,15 @@ onMounted(() => {
         </div>
       </el-card>
     </template>
+
+    <el-dialog v-model="dayTodosDialogVisible" title="当日待办" width="500">
+      <ul class="day-todo-list">
+        <li v-for="t in dayTodosFor" :key="t.id" class="day-todo-item">
+          <span>{{ t.title }}</span>
+          <el-tag size="small" :type="statusTagType[t.status]">{{ statusLabel[t.status] }}</el-tag>
+        </li>
+      </ul>
+    </el-dialog>
   </div>
 </template>
 
@@ -512,6 +534,31 @@ onMounted(() => {
   font-size: 12px;
   color: #909399;
   padding: 0 4px;
+}
+
+.overflow-link {
+  color: #409eff;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 4px;
+}
+
+.overflow-link:hover {
+  text-decoration: underline;
+}
+
+.day-todo-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.day-todo-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
 }
 
 .date-group {

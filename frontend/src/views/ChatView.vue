@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  ArrowDown,
   ArrowLeft,
   ChatDotRound,
   Delete,
@@ -10,6 +11,7 @@ import {
   MoreFilled,
   Plus,
   Promotion,
+  Search,
 } from '@element-plus/icons-vue'
 import { getCourse, type Course } from '../api/course'
 import {
@@ -49,11 +51,25 @@ const conversationsLoading = ref(false)
 const creating = ref(false)
 const activeConversationId = ref<number | null>(null)
 
+// Sidebar conversation search: filters the list by title (case-insensitive).
+// Empty keyword shows all conversations.
+const searchKeyword = ref('')
+const filteredConversations = computed(() => {
+  if (!searchKeyword.value.trim()) return conversations.value
+  const kw = searchKeyword.value.toLowerCase()
+  return conversations.value.filter((c) =>
+    c.title.toLowerCase().includes(kw),
+  )
+})
+
 const messages = ref<ChatMessage[]>([])
 const inputText = ref('')
 const sending = ref(false)
 
 const messageListRef = ref<HTMLElement | null>(null)
+// Scroll-to-bottom button visibility: shown when the user has scrolled
+// up more than ~200px from the bottom of the chat area.
+const showScrollBottom = ref(false)
 
 const drawerVisible = ref(false)
 const drawerCitation = ref<Citation | null>(null)
@@ -330,6 +346,7 @@ function historyToChatMessage(m: HistoryMessage): ChatMessage {
     role: m.role === 'user' ? 'user' : 'agent',
     content: m.content ?? '',
     messageId: m.id,
+    createdAt: m.created_at,
     citations,
     followUpQuestions,
     notFound,
@@ -372,7 +389,11 @@ async function handleSend() {
   }
   if (sending.value) return
 
-  messages.value.push({ role: 'user', content: question })
+  messages.value.push({
+    role: 'user',
+    content: question,
+    createdAt: new Date().toISOString(),
+  })
   inputText.value = ''
   await runChat(question)
 }
@@ -389,6 +410,7 @@ async function runChat(question: string) {
       content: '正在思考...',
       pending: true,
       courseId: courseId.value,
+      createdAt: new Date().toISOString(),
     }) - 1
   sending.value = true
 
@@ -498,10 +520,34 @@ function applyChatResult(pendingIndex: number, result: ChatResult): void {
   msg.pending = false
 }
 
+// Instant scroll to the latest message. Used after sending a question
+// and after a response arrives so the chat always lands on the newest
+// content without a jarring animated scroll mid-stream.
 function scrollToBottom() {
   if (messageListRef.value) {
     messageListRef.value.scrollTop = messageListRef.value.scrollHeight
   }
+}
+
+// Smooth scroll to the latest message, used by the floating
+// scroll-to-bottom button so the user sees the transition.
+function scrollToBottomSmooth() {
+  if (messageListRef.value) {
+    messageListRef.value.scrollTo({
+      top: messageListRef.value.scrollHeight,
+      behavior: 'smooth',
+    })
+  }
+}
+
+// Toggle the scroll-to-bottom button based on how far the user is from
+// the bottom of the chat area. The button appears once they scroll up
+// more than ~200px and hides again when they return near the bottom.
+function handleChatScroll() {
+  const el = messageListRef.value
+  if (!el) return
+  const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+  showScrollBottom.value = distFromBottom > 200
 }
 
 async function openCitationDrawer(citation: Citation, msg: ChatMessage) {
@@ -595,9 +641,19 @@ onMounted(async () => {
             新建
           </el-button>
         </div>
+        <div class="sidebar-search">
+          <el-input
+            v-model="searchKeyword"
+            placeholder="搜索对话..."
+            :prefix-icon="Search"
+            clearable
+            size="small"
+            class="conv-search"
+          />
+        </div>
         <div v-loading="conversationsLoading" class="conversation-list">
           <div
-            v-for="conv in conversations"
+            v-for="conv in filteredConversations"
             :key="conv.id"
             class="conversation-item"
             :class="{ active: conv.id === activeConversationId }"
@@ -635,6 +691,11 @@ onMounted(async () => {
             title="还没有对话"
             description="开始提问创建新对话"
           />
+          <EmptyState
+            v-else-if="!conversationsLoading && filteredConversations.length === 0"
+            title="未找到匹配的对话"
+            description="试试其他关键词"
+          />
         </div>
       </div>
 
@@ -643,6 +704,7 @@ onMounted(async () => {
           v-if="activeConversationId && messages.length > 0"
           ref="messageListRef"
           class="message-list"
+          @scroll="handleChatScroll"
         >
           <MessageList
             :messages="messages"
@@ -660,6 +722,18 @@ onMounted(async () => {
             @action="handleCreateConversation"
           />
         </div>
+
+        <!-- Floating scroll-to-bottom button: appears when the user has
+             scrolled up away from the latest message. -->
+        <transition name="fade">
+          <div
+            v-if="showScrollBottom"
+            class="scroll-bottom-btn"
+            @click="scrollToBottomSmooth"
+          >
+            <el-icon :size="20"><ArrowDown /></el-icon>
+          </div>
+        </transition>
 
         <SseStatusPanel
           v-if="activeConversationId"
@@ -769,6 +843,15 @@ onMounted(async () => {
   color: #303133;
 }
 
+.sidebar-search {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.conv-search {
+  margin-bottom: 0;
+}
+
 .conversation-list {
   flex: 1;
   overflow-y: auto;
@@ -855,6 +938,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
 }
 
 .message-list {
@@ -881,5 +965,40 @@ onMounted(async () => {
 
 .chat-input :deep(.el-textarea) {
   flex: 1;
+}
+
+/* Floating scroll-to-bottom button. Shown when the user scrolls up
+   away from the latest message; clicking it smooth-scrolls back. */
+.scroll-bottom-btn {
+  position: absolute;
+  bottom: 80px;
+  right: 24px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #409eff;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 10;
+  transition: opacity 0.3s, transform 0.3s;
+}
+
+.scroll-bottom-btn:hover {
+  transform: scale(1.1);
+  background: #66b1ff;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

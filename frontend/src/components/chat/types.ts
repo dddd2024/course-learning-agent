@@ -11,6 +11,10 @@ export interface ChatMessage {
   role: 'user' | 'agent'
   content: string
   messageId?: number
+  // ISO timestamp of when the message was created/sent. Populated from
+  // HistoryMessage.created_at on replay, or new Date().toISOString() for
+  // freshly composed messages. Displayed under each bubble by MessageList.
+  createdAt?: string
   citations?: Citation[]
   notFound?: boolean
   followUpQuestions?: string[]

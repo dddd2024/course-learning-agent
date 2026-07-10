@@ -38,6 +38,23 @@ async function copyMessage(content: string) {
     ElMessage.error('复制失败，请手动选择文本复制')
   }
 }
+
+// Format an ISO timestamp as "MM-DD HH:mm" for display under a bubble.
+// Returns an empty string for missing/invalid values so nothing renders.
+function formatTime(dt: string | null | undefined): string {
+  if (!dt) return ''
+  try {
+    const d = new Date(dt)
+    if (Number.isNaN(d.getTime())) return ''
+    return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+      d.getDate(),
+    ).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(
+      d.getMinutes(),
+    ).padStart(2, '0')}`
+  } catch {
+    return ''
+  }
+}
 </script>
 
 <template>
@@ -65,6 +82,10 @@ async function copyMessage(content: string) {
             <div class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
           </template>
           <template v-else>{{ msg.content }}</template>
+        </div>
+
+        <div v-if="formatTime(msg.createdAt)" class="msg-time">
+          {{ formatTime(msg.createdAt) }}
         </div>
 
         <!-- T05: surface LLM fallback state so users know when an
@@ -194,6 +215,12 @@ async function copyMessage(content: string) {
 
 .pending-text {
   vertical-align: middle;
+}
+
+.msg-time {
+  font-size: 11px;
+  color: #c0c4cc;
+  margin-top: 4px;
 }
 
 .message-user .message-bubble {

@@ -17,7 +17,7 @@ import {
 import { useAuthStore } from '../stores/auth'
 import { getDashboardSummary, type DashboardSummary } from '../api/dashboard'
 import { listCourses, type Course } from '../api/course'
-import { listTodos, type Todo } from '../api/plan'
+import { listTodos, updateTodo, type Todo } from '../api/plan'
 import { getAgentRuns, type AgentRun } from '../api/audit'
 import { parseApiError } from '../utils/error'
 import { MAX_PAGE_SIZE } from '../constants/pagination'
@@ -55,12 +55,12 @@ const weekDay = computed(() => {
 const stats = computed(() => {
   const s = summary.value
   return [
-    { key: 'course', label: '课程数', value: s?.course_count ?? 0, icon: Reading, color: '#409EFF' },
-    { key: 'material', label: '资料数', value: s?.material_count ?? 0, icon: Document, color: '#67C23A' },
-    { key: 'knowledge', label: '知识点数', value: s?.knowledge_point_count ?? 0, icon: Collection, color: '#E6A23C' },
-    { key: 'todo', label: '今日待办', value: s?.todo_today_count ?? 0, icon: Calendar, color: '#F56C6C' },
-    { key: 'completed', label: '已完成待办', value: s?.todo_completed_count ?? 0, icon: CircleCheck, color: '#909399' },
-    { key: 'agent', label: 'Agent 运行', value: s?.agent_run_count ?? 0, icon: Monitor, color: '#9C27B0' },
+    { key: 'course', label: '课程数', value: s?.course_count ?? 0, icon: Reading, color: '#409EFF', route: '/courses' },
+    { key: 'material', label: '资料数', value: s?.material_count ?? 0, icon: Document, color: '#67C23A', route: '/courses' },
+    { key: 'knowledge', label: '知识点数', value: s?.knowledge_point_count ?? 0, icon: Collection, color: '#E6A23C', route: '/knowledge-graph' },
+    { key: 'todo', label: '今日待办', value: s?.todo_today_count ?? 0, icon: Calendar, color: '#F56C6C', route: '/todos' },
+    { key: 'completed', label: '已完成待办', value: s?.todo_completed_count ?? 0, icon: CircleCheck, color: '#909399', route: '/todos' },
+    { key: 'agent', label: 'Agent 运行', value: s?.agent_run_count ?? 0, icon: Monitor, color: '#9C27B0', route: '/agent-runs' },
   ]
 })
 
@@ -124,6 +124,32 @@ function goCourseMaterials(id: number) {
   router.push(`/courses/${id}/materials`)
 }
 
+function goQuickUpload() {
+  if (recentCourses.value.length > 0) {
+    router.push(`/courses/${recentCourses.value[0].id}/materials`)
+  } else {
+    router.push('/courses')
+  }
+}
+function goQuickChat() {
+  if (recentCourses.value.length > 0) {
+    router.push(`/courses/${recentCourses.value[0].id}/chat`)
+  } else {
+    router.push('/courses')
+  }
+}
+
+async function handleCompleteTodo(todo: Todo) {
+  try {
+    const { data } = await updateTodo(todo.id, { status: 'completed' })
+    const idx = todayTodos.value.findIndex(t => t.id === todo.id)
+    if (idx >= 0) todayTodos.value[idx] = data
+    ElMessage.success('已完成')
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '完成待办失败'))
+  }
+}
+
 function handleRefresh() {
   fetchAll()
 }
@@ -152,7 +178,7 @@ onMounted(fetchAll)
     <!-- 统计卡片 -->
     <el-row :gutter="16" class="stat-row">
       <el-col v-for="s in stats" :key="s.key" :xs="12" :sm="8" :md="4">
-        <el-card class="stat-card" shadow="hover">
+        <el-card class="stat-card" shadow="hover" @click="go(s.route)">
           <div class="stat-body">
             <el-icon class="stat-icon" :style="{ color: s.color }">
               <component :is="s.icon" />
@@ -170,8 +196,8 @@ onMounted(fetchAll)
     <el-card class="section-card" shadow="never">
       <div class="section-title">快捷入口</div>
       <div class="quick-actions">
-        <el-button :icon="Tickets" @click="go('/courses')">上传资料</el-button>
-        <el-button :icon="ChatDotRound" @click="go('/courses')">课程问答</el-button>
+        <el-button :icon="Tickets" @click="goQuickUpload">上传资料</el-button>
+        <el-button :icon="ChatDotRound" @click="goQuickChat">课程问答</el-button>
         <el-button :icon="Calendar" @click="go('/plans')">生成计划</el-button>
         <el-button :icon="EditPen" @click="go('/quizzes')">生成测验</el-button>
       </div>
@@ -193,12 +219,20 @@ onMounted(fetchAll)
           <ul v-else class="todo-list">
             <li v-for="t in todayTodos" :key="t.id" class="todo-item">
               <span class="todo-title">{{ t.title }}</span>
-              <el-tag
-                size="small"
-                :type="t.status === 'completed' ? 'success' : 'warning'"
-              >
-                {{ t.status === 'completed' ? '已完成' : '待完成' }}
-              </el-tag>
+              <div class="todo-actions">
+                <el-tag size="small" :type="t.status === 'completed' ? 'success' : 'warning'">
+                  {{ t.status === 'completed' ? '已完成' : '待完成' }}
+                </el-tag>
+                <el-button
+                  v-if="t.status !== 'completed'"
+                  link
+                  type="primary"
+                  size="small"
+                  @click="handleCompleteTodo(t)"
+                >
+                  完成
+                </el-button>
+              </div>
             </li>
           </ul>
         </el-card>
@@ -332,6 +366,15 @@ onMounted(fetchAll)
   padding: 16px;
 }
 
+.stat-card {
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+}
+
 .stat-body {
   display: flex;
   align-items: center;
@@ -400,6 +443,12 @@ onMounted(fetchAll)
 .todo-title {
   font-size: 14px;
   color: #303133;
+}
+
+.todo-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .course-item {

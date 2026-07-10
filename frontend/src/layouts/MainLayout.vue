@@ -1,17 +1,38 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
-import { Odometer, Reading, Tickets, Calendar, EditPen, Share, Document } from '@element-plus/icons-vue'
+import { Odometer, Reading, Tickets, Calendar, EditPen, Share, Document, Fold, Expand } from '@element-plus/icons-vue'
 import AppBreadcrumbs from '../components/common/AppBreadcrumbs.vue'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 
+const isCollapse = ref(false)
+
 const activeMenu = computed(() => {
   if (route.path.startsWith('/plans')) return '/plans'
   return route.path
+})
+
+const pageTitle = computed(() => {
+  const path = route.path
+  if (path === '/dashboard') return '仪表盘'
+  if (path === '/courses') return '课程'
+  if (path.startsWith('/courses/') && !path.includes('/materials') && !path.includes('/chat') && !path.includes('/learn') && !path.includes('/outline')) return '课程详情'
+  if (path.includes('/materials')) return '课程资料'
+  if (path.includes('/chat')) return '课程问答'
+  if (path.includes('/learn')) return '文档学习'
+  if (path.includes('/outline')) return '知识点大纲'
+  if (path === '/todos') return '待办事项'
+  if (path.startsWith('/plans')) return '学习计划'
+  if (path === '/quizzes') return '测验'
+  if (path === '/knowledge-graph') return '知识图谱'
+  if (path === '/profile') return '个人中心'
+  if (path === '/logs') return '日志中心'
+  if (path === '/agent-runs') return 'Agent 审计'
+  return '课程学习助手'
 })
 
 function handleMenuSelect(index: string) {
@@ -26,10 +47,11 @@ function handleLogout() {
 
 <template>
   <el-container class="layout-container">
-    <el-aside width="220px" class="aside">
-      <div class="logo">课程学习助手</div>
+    <el-aside :width="isCollapse ? '64px' : '220px'" class="aside">
+      <div class="logo">{{ isCollapse ? '课' : '课程学习助手' }}</div>
       <el-menu
         :default-active="activeMenu"
+        :collapse="isCollapse"
         class="menu"
         background-color="#001529"
         text-color="#bfcbd9"
@@ -75,7 +97,13 @@ function handleLogout() {
     </el-aside>
     <el-container>
       <el-header class="header">
-        <div class="header-title">课程学习助手 Agent 平台</div>
+        <div class="header-left">
+          <el-icon class="collapse-btn" @click="isCollapse = !isCollapse">
+            <Fold v-if="!isCollapse" />
+            <Expand v-else />
+          </el-icon>
+          <div class="header-title">{{ pageTitle }}</div>
+        </div>
         <div class="header-right">
           <span class="username">{{ auth.username || '游客' }}</span>
           <el-button type="danger" size="small" @click="handleLogout">登出</el-button>
@@ -107,10 +135,16 @@ function handleLogout() {
   font-size: 18px;
   font-weight: 600;
   background-color: #002140;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .menu {
   border-right: none;
+}
+
+.menu:not(.el-menu--collapse) {
+  width: 220px;
 }
 
 .header {
@@ -120,6 +154,22 @@ function handleLogout() {
   background-color: #fff;
   border-bottom: 1px solid #e6e6e6;
   box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+}
+
+.collapse-btn {
+  font-size: 20px;
+  cursor: pointer;
+  color: #606266;
+  margin-right: 12px;
+}
+
+.collapse-btn:hover {
+  color: #409eff;
 }
 
 .header-title {
