@@ -70,7 +70,6 @@ test.describe('Auth & File Isolation', () => {
     await page.goto('/dashboard')
 
     // Should be redirected to login
-    await page.waitForURL('**/login', { timeout: 10_000 })
-    expect(page.url()).toContain('/login')
+    await expect(page).toHaveURL(/\/login/, { timeout: 10_000 })
   })
 })

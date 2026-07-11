@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -21,6 +22,10 @@ from app.models import (
     Course,
     MaterialChunk,
 )
+
+
+def build_compare_cache_key(*, provider: str, model: str, generation_mode: str, prompt_version: str, evidence_hash: str) -> dict[str, str]:
+    return {"provider": provider, "model_name": model, "generation_mode": generation_mode, "prompt_version": prompt_version, "evidence_hash": evidence_hash}
 
 
 def _load_evidence_chunks(
@@ -184,13 +189,16 @@ def get_or_create_compare_report(
     # GRAPH-V3-01: also match on provider so a report generated with
     # mock mode is NOT served when a real model is now available.
     # When force_refresh: do NOT return old degraded reports.
+    desired_provider = (user_config or {}).get("provider") or "mock"
+    desired_model = (user_config or {}).get("model") or "mock"
+    desired_mode = "real" if user_config else "mock"
+    key = build_compare_cache_key(provider=desired_provider, model=desired_model, generation_mode=desired_mode, prompt_version="v1", evidence_hash=evidence_hash)
     cached = db.query(ConceptCompareReport).filter_by(
         user_id=user_id,
         source_node_id=source_node_id,
         target_node_id=target_node_id,
         user_focus=user_focus,
-        evidence_hash=evidence_hash,
-        prompt_version="v1",
+        **key,
     ).first()
     if cached is None:
         cached = db.query(ConceptCompareReport).filter_by(
@@ -198,12 +206,12 @@ def get_or_create_compare_report(
             source_node_id=target_node_id,
             target_node_id=source_node_id,
             user_focus=user_focus,
-            evidence_hash=evidence_hash,
-            prompt_version="v1",
+            **key,
         ).first()
     if (
         cached is not None
         and not force_refresh
+        and (cached.expires_at is None or cached.expires_at > datetime.now())
         and (cached.report_status or "success") not in
             ("degraded", "insufficient_evidence")
     ):
@@ -246,6 +254,7 @@ def get_or_create_compare_report(
         actual_provider=result.get("provider"),
         actual_model=result.get("model_name"),
         generation_mode=result.get("generation_mode", "real"),
+        expires_at=utc_now() + timedelta(hours=24),
     )
     db.add(report)
     db.flush()

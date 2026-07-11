@@ -40,6 +40,9 @@ export interface PlanTask {
 export interface TaskStartResult {
   route: string
   params: Record<string, unknown>
+  action_type: 'open_material' | 'open_knowledge_point' | 'open_quiz'
+  route_name: 'course-learn' | 'course-outline' | 'quizzes'
+  route_params: Record<string, unknown>
   target_id: number | null
   quiz_id: number | null
   target_type: string | null
@@ -229,15 +232,16 @@ export function startTask(taskId: number): AxiosPromise<TaskStartResult> {
   return request.post(`/plans/tasks/${taskId}/start`)
 }
 
-export function verifyTask(
-  taskId: number,
-  score?: number,
-  threshold: number = 60,
-): AxiosPromise<TaskVerifyResult> {
-  return request.post(`/plans/tasks/${taskId}/verify`, {
-    score: score ?? null,
-    threshold,
-  })
+export function verifyTask(taskId: number, confirmation?: boolean): AxiosPromise<TaskVerifyResult> {
+  return request.post(`/plans/tasks/${taskId}/verify`, { confirmation: confirmation ?? null })
+}
+
+export function recordTaskEvent(taskId: number, eventType: 'material_opened' | 'knowledge_point_viewed' | 'user_confirmed' | 'review_confirmed'): AxiosPromise<{ recorded: boolean }> {
+  return request.post(`/plans/tasks/${taskId}/events`, { event_type: eventType })
+}
+
+export function retryTask(taskId: number): AxiosPromise<TaskStartResult> {
+  return request.post(`/plans/tasks/${taskId}/retry`)
 }
 
 export function getExecutionInfo(taskId: number): AxiosPromise<TaskExecutionInfo> {

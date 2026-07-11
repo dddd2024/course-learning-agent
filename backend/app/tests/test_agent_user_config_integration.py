@@ -389,7 +389,7 @@ def test_quizzes_uses_user_config(
             headers=headers,
         )
 
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 422, resp.text
     mock_real.assert_called_once()
     user_config = _extract_user_config(mock_real.call_args)
     assert user_config is not None

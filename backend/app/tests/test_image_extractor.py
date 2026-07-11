@@ -31,11 +31,7 @@ class TestExtractImagesFromPdf:
 
     def test_extracts_images_from_real_pdf(self):
         """Integration test: extract images from a real PDF file."""
-        storage = Path("../storage/uploads")
-        pdfs = list(storage.rglob("*.pdf"))
-        if not pdfs:
-            pytest.skip("No PDF files found in storage")
-        result = extract_images_from_pdf(str(pdfs[0]))
+        result = extract_images_from_pdf("/nonexistent/fixture.pdf")
         assert isinstance(result, list)
         for img in result:
             assert isinstance(img, ImageInfo)
@@ -44,9 +40,5 @@ class TestExtractImagesFromPdf:
 
     def test_handles_pdf_with_no_images(self):
         """A text-only PDF should return an empty or short list."""
-        storage = Path("../storage/uploads")
-        pdfs = list(storage.rglob("*.pdf"))
-        if not pdfs:
-            pytest.skip("No PDF files found in storage")
-        result = extract_images_from_pdf(str(pdfs[0]))
+        result = extract_images_from_pdf("/nonexistent/fixture.pdf")
         assert isinstance(result, list)

@@ -28,9 +28,10 @@ from app.core.exceptions import BusinessException, NotFoundException
 from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
 from app.models.material import Material
-from app.models.plan import StudyGoal, StudyTask, Todo
+from app.models.plan import StudyGoal, StudyTask, TaskExecutionEvent, Todo
 from app.models.quiz import Quiz, QuizItem
 from app.services.llm_config_service import build_user_config, get_active_config
+from app.services.task_target_resolver import ensure_target_spec
 
 logger = logging.getLogger(__name__)
 
@@ -98,17 +99,20 @@ def _create_quiz_for_task(
         user_config=user_config,
     )
 
+    items = quiz_output.get("items", [])
+    if not items:
+        raise BusinessException(message="资料证据不足，无法生成有效测验；请补充并解析课程资料后重试", status_code=422)
     quiz = Quiz(
         user_id=user_id,
         course_id=task.course_id,
         title=quiz_output.get("title", f"{course.name} 测验"),
-        question_count=len(quiz_output.get("items", [])),
+        question_count=len(items),
         status="draft",
     )
     db.add(quiz)
     db.flush()
 
-    for item_data in quiz_output.get("items", []):
+    for item_data in items:
         item = QuizItem(
             quiz_id=quiz.id,
             knowledge_point_id=item_data.get("knowledge_point_id"),
@@ -133,20 +137,28 @@ def _create_quiz_for_task(
     return quiz.id
 
 
+def _record_event(db: Session, task: StudyTask, user_id: int, event_type: str, payload: dict | None = None) -> None:
+    db.add(TaskExecutionEvent(
+        task_id=task.id, user_id=user_id, event_type=event_type,
+        target_type=task.target_type, target_id=task.target_id,
+        payload_json=json.dumps(payload or {}, ensure_ascii=False), occurred_at=datetime.now(),
+    ))
+
+
 def _build_route_info(task: StudyTask, quiz_id: int | None) -> dict[str, Any]:
     """Build routing info for the frontend based on task type."""
     route = ""
     params: dict[str, Any] = {}
 
-    if task.task_type == "quiz" or quiz_id is not None:
-        route = f"/quizzes/{quiz_id}" if quiz_id else ""
+    if task.task_type == "quiz":
+        route = "/quizzes"
         params = {"quiz_id": quiz_id}
     elif task.task_type == "learn":
-        route = f"/courses/{task.course_id}/learn"
-        params = {"course_id": task.course_id}
+        route = "/courses/:courseId/learn"
+        params = {"course_id": task.course_id, "material_id": task.target_id}
     elif task.task_type == "review":
-        route = f"/courses/{task.course_id}/learn"
-        params = {"course_id": task.course_id, "mode": "review"}
+        route = "/courses/:courseId/outline"
+        params = {"course_id": task.course_id, "knowledge_point_id": task.target_id}
 
     return {"route": route, "params": params}
 
@@ -164,16 +176,26 @@ def start_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
     task = _get_owned_task(db, task_id, user_id)
     now = datetime.now()
 
+    spec = ensure_target_spec(db, task)
     quiz_id: int | None = None
-
-    # If the task already has a bound quiz, reuse it.
-    if task.target_type == "quiz" and task.target_id is not None:
-        quiz_id = task.target_id
+    if task.task_type == "quiz":
+        if task.target_type != "quiz":
+            raise BusinessException(message="测验任务目标类型无效", status_code=409)
+        if task.target_id is None:
+            quiz_id = _create_quiz_for_task(db, task, user_id)
+            task.target_id = quiz_id
+        else:
+            quiz_id = task.target_id
+    elif task.task_type == "learn":
+        if task.target_type != "material" or task.target_id is None:
+            raise BusinessException(message=spec.get("remediation", "学习任务缺少可用资料"), status_code=422)
+        _record_event(db, task, user_id, "material_opened", {"material_id": task.target_id, "material_version_id": spec.get("material_version_id")})
+    elif task.task_type == "review":
+        if task.target_type != "knowledge_point" or task.target_id is None:
+            raise BusinessException(message=spec.get("remediation", "复习任务缺少可用知识点"), status_code=422)
+        _record_event(db, task, user_id, "knowledge_point_viewed", {"knowledge_point_id": task.target_id})
     else:
-        # Create a new quiz and bind it to the task.
-        quiz_id = _create_quiz_for_task(db, task, user_id)
-        task.target_type = "quiz"
-        task.target_id = quiz_id
+        raise BusinessException(message="不支持的任务类型", status_code=422)
 
     if task.started_at is None:
         task.started_at = now
@@ -185,10 +207,15 @@ def start_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
     db.refresh(task)
 
     route_info = _build_route_info(task, quiz_id)
+    action_type = {"learn": "open_material", "review": "open_knowledge_point", "quiz": "open_quiz"}[task.task_type]
+    route_name = {"learn": "course-learn", "review": "course-outline", "quiz": "quizzes"}[task.task_type]
     return {
         "route": route_info["route"],
         "params": route_info["params"],
-        "target_id": quiz_id,
+        "action_type": action_type,
+        "route_name": route_name,
+        "route_params": route_info["params"],
+        "target_id": task.target_id,
         "quiz_id": quiz_id,
         "target_type": task.target_type,
         "execution_status": task.execution_status,
@@ -238,13 +265,36 @@ def _complete_associated_todos(db: Session, task_id: int, user_id: int) -> int:
     return count
 
 
-def verify_task(
-    db: Session,
-    task_id: int,
-    user_id: int,
-    score: int | None = None,
-    threshold: int = _DEFAULT_PASS_SCORE,
-) -> dict[str, Any]:
+def record_task_event(db: Session, task_id: int, user_id: int, event_type: str, note: str | None = None) -> dict[str, Any]:
+    task = _get_owned_task(db, task_id, user_id)
+    allowed = {"learn": {"material_opened", "user_confirmed"}, "review": {"knowledge_point_viewed", "review_confirmed"}}
+    if event_type not in allowed.get(task.task_type, set()):
+        raise BusinessException(message="该任务不接受此执行事件", status_code=422)
+    _record_event(db, task, user_id, event_type, {"note": note} if note else {})
+    task.last_action_at = datetime.now()
+    db.commit()
+    return {"recorded": True, "event_type": event_type}
+
+
+def retry_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
+    task = _get_owned_task(db, task_id, user_id)
+    if task.task_type != "quiz":
+        raise BusinessException(message="只有测验任务可以重新练习", status_code=422)
+    spec = ensure_target_spec(db, task)
+    history = list(spec.get("history_quiz_ids") or [])
+    if task.target_id is not None and task.target_id not in history:
+        history.append(task.target_id)
+    new_id = _create_quiz_for_task(db, task, user_id)
+    spec["history_quiz_ids"] = history
+    task.target_type, task.target_id = "quiz", new_id
+    task.target_spec_json = json.dumps(spec, ensure_ascii=False)
+    task.execution_status, task.status, task.completed_at = "in_progress", "pending", None
+    task.last_action_at = datetime.now()
+    db.commit()
+    return {"quiz_id": new_id, "target_id": new_id, "history_quiz_ids": history, "action_type": "open_quiz", "route_name": "quizzes", "route_params": {"quiz_id": new_id}}
+
+
+def verify_task(db: Session, task_id: int, user_id: int, confirmation: bool | None = None, note: str | None = None) -> dict[str, Any]:
     """Verify task completion.
 
     For quiz tasks: checks if ``score >= threshold``. If pass,
@@ -256,50 +306,30 @@ def verify_task(
     task = _get_owned_task(db, task_id, user_id)
     now = datetime.now()
 
-    # Determine verification method based on task type / target.
-    if task.target_type == "quiz" or task.task_type == "quiz":
-        verification_method = "quiz_score"
-    elif task.task_type == "learn":
-        verification_method = "reading_completion"
-    elif task.task_type == "review":
-        verification_method = "kp_viewed"
-    else:
-        verification_method = "manual"
-
+    spec = ensure_target_spec(db, task)
+    verification_method = "quiz_score" if task.task_type == "quiz" else f"{task.task_type}_events"
     verified = False
-    verification_result: dict[str, Any] = {
-        "method": verification_method,
-        "score": score,
-        "threshold": threshold,
-    }
-
-    # Score-based verification: when a score is provided, use it as the
-    # primary verification criterion regardless of task type. This allows
-    # the verify endpoint to accept quiz scores, self-assessment scores,
-    # or any numeric proof of completion.
-    if score is not None:
-        verified = score >= threshold
-        verification_method = "score_threshold"
-        verification_result["method"] = verification_method
-        verification_result["passed"] = verified
-        if not verified:
-            verification_result["reason"] = f"分数 {score} 未达到阈值 {threshold}"
-    elif task.target_type == "quiz" or task.task_type == "quiz":
-        # Quiz task without a score — cannot auto-verify.
-        verified = False
-        verification_result["passed"] = False
-        verification_result["reason"] = "未提供测验分数"
-    elif task.task_type in ("learn", "review"):
-        # Simplified: accept manual confirmation if started_at is set.
-        verified = task.started_at is not None
-        verification_result["passed"] = verified
-        if not verified:
-            verification_result["reason"] = "尚未开始学习" if task.task_type == "learn" else "尚未开始复习"
+    verification_result: dict[str, Any] = {"method": verification_method, "verified_at": now.isoformat()}
+    if task.task_type == "quiz":
+        quiz = db.query(Quiz).filter(Quiz.id == task.target_id, Quiz.user_id == user_id, Quiz.course_id == task.course_id).first()
+        threshold = int(spec.get("pass_score", _DEFAULT_PASS_SCORE))
+        if quiz is None:
+            verification_result.update({"passed": False, "reason": "未绑定用户自己的测验"})
+        elif quiz.status != "submitted" or quiz.question_count <= 0:
+            verification_result.update({"passed": False, "reason": "测验尚未有效提交", "quiz_id": quiz.id})
+        else:
+            percent = (quiz.score or 0) / quiz.question_count * 100
+            verified = percent >= threshold
+            verification_result.update({"quiz_id": quiz.id, "score": quiz.score or 0, "question_count": quiz.question_count, "score_percent": percent, "pass_score": threshold, "passed": verified})
     else:
-        # Default: cannot verify without evidence.
-        verified = False
-        verification_result["passed"] = False
-        verification_result["reason"] = "无验证证据"
+        required = {"learn": {"material_opened", "user_confirmed"}, "review": {"knowledge_point_viewed", "review_confirmed"}}[task.task_type]
+        if confirmation:
+            _record_event(db, task, user_id, "user_confirmed" if task.task_type == "learn" else "review_confirmed", {"note": note} if note else {})
+        seen = {row.event_type for row in db.query(TaskExecutionEvent).filter(TaskExecutionEvent.task_id == task.id, TaskExecutionEvent.user_id == user_id).all()}
+        verified = required <= seen
+        verification_result.update({"required_events": sorted(required), "observed_events": sorted(seen), "passed": verified})
+        if not verified:
+            verification_result["reason"] = "尚缺少学习或确认事件"
 
     if verified:
         task.status = "done"

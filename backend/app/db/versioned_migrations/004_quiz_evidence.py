@@ -47,7 +47,7 @@ def up(db, engine: Engine) -> None:
         # Set verification_status for items missing it.
         if "verification_status" in cols:
             conn.execute(text(
-                "UPDATE quiz_items SET verification_status = 'verified' "
+                "UPDATE quiz_items SET verification_status = 'legacy_unverified' "
                 "WHERE verification_status IS NULL "
                 "OR verification_status = ''"
             ))

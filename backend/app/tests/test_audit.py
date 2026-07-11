@@ -349,4 +349,4 @@ def test_planner_run_created(client, tmp_path, monkeypatch) -> None:
     )
     planner_runs = [r for r in items if r["run_type"] == "planner"]
     assert len(planner_runs) >= 1
-    assert planner_runs[0]["status"] == "success"
+    assert planner_runs[0]["status"] == "degraded"

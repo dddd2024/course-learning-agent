@@ -11,6 +11,7 @@ import {
   updateGoal,
   updateTodo,
   startTask,
+  retryTask,
   overrideTask,
   type PlanGoal,
   type PlanPayload,
@@ -389,29 +390,13 @@ async function handleStartTask(task: PlanTask) {
   taskStarting.value = task.id
   try {
     const { data } = await startTask(task.id)
-    // Navigate to the returned route
-    if (data.quiz_id) {
-      // Navigate to the quiz page with task_id for verification on submit
-      router.push({
-        path: '/quizzes',
-        query: {
-          course_id: task.course_id,
-          task_id: String(task.id),
-          quiz_id: String(data.quiz_id),
-        },
-      })
-    } else if (data.route) {
-      // Navigate to learn/review route
-      const courseId = task.course_id
-      router.push({
-        path: `/courses/${courseId}/learn`,
-        query: { task_id: String(task.id) },
-      })
-    } else {
-      // Just refresh the task list to show the updated state
-      await loadSavedPlan(task.goal_id)
-      ElMessage.success('任务已开始')
+    if (!data.route_name && data.quiz_id) {
+      await router.push({ path: '/quizzes', query: { course_id: task.course_id, task_id: String(task.id), quiz_id: String(data.quiz_id) } })
+      return
     }
+    const query = { ...data.route_params, task_id: String(task.id), plan_id: String(task.goal_id) } as Record<string, string>
+    if (data.route_name === 'quizzes') query.course_id = String(task.course_id)
+    await router.push({ name: data.route_name, params: data.route_name === 'quizzes' ? {} : { id: String(task.course_id) }, query })
   } catch (err) {
     ElMessage.error(parseApiError(err, '启动任务失败'))
   } finally {
@@ -423,8 +408,7 @@ async function handleRetryTask(task: PlanTask) {
   // For completed quiz tasks: start a new quiz
   taskStarting.value = task.id
   try {
-    // Reset the task target to allow creating a new quiz
-    const { data } = await startTask(task.id)
+    const { data } = await retryTask(task.id)
     if (data.quiz_id) {
       router.push({
         path: '/quizzes',

@@ -6,6 +6,7 @@ these columns existed.
 """
 from __future__ import annotations
 
+import hashlib
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
@@ -65,12 +66,9 @@ def up(db, engine: Engine) -> None:
 
         # Backfill content_hash for chunks missing one.
         if "content_hash" in cols:
-            conn.execute(text(
-                "UPDATE material_chunks "
-                "SET content_hash = "
-                "  substr(hex(zeroblob(8)), 1, 16) "
-                "WHERE content_hash IS NULL OR content_hash = ''"
-            ))
+            rows = conn.execute(text("SELECT id, text FROM material_chunks WHERE content_hash IS NULL OR content_hash = ''")).fetchall()
+            for row in rows:
+                conn.execute(text("UPDATE material_chunks SET content_hash=:hash WHERE id=:id"), {"id": row.id, "hash": hashlib.sha256((row.text or "").encode("utf-8")).hexdigest()})
 
         # Set is_active = 1 for all chunks (default).
         if "is_active" in cols:

@@ -79,7 +79,7 @@ def _normalise_question_type(raw: str) -> str:
 
 
 def _normalise_rubric(raw: Any) -> list[dict[str, Any]]:
-    """Keep only machine-checkable criteria supplied for short answers."""
+    """Preserve the complete, evidence-backed scoring contract."""
     if not isinstance(raw, list):
         return []
     result: list[dict[str, Any]] = []
@@ -88,7 +88,24 @@ def _normalise_rubric(raw: Any) -> list[dict[str, Any]]:
             continue
         keywords = [str(value).strip() for value in criterion.get("keywords", []) if str(value).strip()]
         if keywords:
-            result.append({"criterion": str(criterion.get("criterion") or "关键要点"), "keywords": keywords[:5]})
+            evidence_ids = criterion.get("evidence_ids", [])
+            if not isinstance(evidence_ids, list):
+                evidence_ids = []
+            try:
+                weight = float(criterion.get("weight", 0))
+            except (TypeError, ValueError):
+                weight = 0
+            if weight <= 0:
+                continue
+            result.append({
+                "criterion": str(criterion.get("criterion") or "关键要点"),
+                "keywords": keywords[:5], "weight": weight,
+                "evidence_ids": evidence_ids, "required": bool(criterion.get("required", False)),
+            })
+    total = sum(item["weight"] for item in result)
+    if total:
+        for item in result:
+            item["weight"] = round(item["weight"] / total, 6)
     return result
 
 
@@ -136,8 +153,7 @@ def _map_knowledge_point_id(
             for kp in knowledge_points:
                 if kp.id == rid:
                     return kp.id
-    # Fallback: rotate by question index so every question gets a KP.
-    return knowledge_points[question_index % len(knowledge_points)].id
+    return None
 
 
 def _validate_schema(output: dict) -> None:
@@ -322,6 +338,19 @@ def generate_quiz(
             and ev.get("chunk_id") in valid_eid_set
         ]
 
+        rubric = _normalise_rubric(q.get("rubric"))
+        if any(not set(criterion.get("evidence_ids", [])) <= set(evidence_ids) for criterion in rubric):
+            logger.warning("Skipping quiz item %s: rubric references evidence outside the item", i)
+            continue
+        mapped_kp = _map_knowledge_point_id(q.get("knowledge_point_ids", []), i, knowledge_points)
+        if mapped_kp is not None:
+            point = next((kp for kp in knowledge_points if kp.id == mapped_kp), None)
+            try:
+                point_evidence = set(json.loads(point.source_chunk_ids or "[]")) if point else set()
+            except Exception:
+                point_evidence = set()
+            if not point_evidence.intersection(evidence_ids):
+                mapped_kp = None
         item_data = {
             "question_type": _normalise_question_type(
                 q.get("question_type", "")
@@ -329,14 +358,12 @@ def generate_quiz(
             "question_text": q.get("stem", ""),
             "options": _prefix_options(q.get("options", [])),
             "answer": str(q.get("answer", "")),
-            "rubric": _normalise_rubric(q.get("rubric")),
+            "rubric": rubric,
             "explanation": q.get("explanation", ""),
             "difficulty": q.get("difficulty"),
             "source_evidence_ids": evidence_ids,
             "source_evidence": filtered_source_evidence,
-            "knowledge_point_id": _map_knowledge_point_id(
-                q.get("knowledge_point_ids", []), i, knowledge_points
-            ),
+            "knowledge_point_id": mapped_kp,
             "order_index": i,
         }
 
@@ -358,19 +385,17 @@ def generate_quiz(
     partial_generation = total_questions_from_llm > len(items)
 
     if not items:
-        _safe_finish_run(
-            db,
-            run_id=run_id,
-            status="success",
-            output_summary={"item_count": 0, "insufficient_evidence": True},
-            started_at=run_started_at,
-        )
+        _safe_finalize_run(db, run_id=run_id, evidence_status="insufficient", output_summary={"item_count": 0, "insufficient_evidence": True}, started_at=run_started_at)
         timestamp = datetime.now().strftime("%m-%d %H:%M")
         return {
             "title": f"{course_name} 测验 ({timestamp})",
             "items": [],
             "insufficient_evidence": True,
             "partial_generation": False,
+            "requested_count": question_count,
+            "generated_count": 0,
+            "dropped_count": total_questions_from_llm,
+            "drop_reasons": ["insufficient_evidence"],
         }
 
     _safe_finalize_run(
@@ -397,6 +422,10 @@ def generate_quiz(
         "title": title,
         "items": items,
         "partial_generation": partial_generation,
+        "requested_count": question_count,
+        "generated_count": len(items),
+        "dropped_count": total_questions_from_llm - len(items),
+        "drop_reasons": ["item_verification_failed"] if partial_generation else [],
     }
 
 
