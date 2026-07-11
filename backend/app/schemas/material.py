@@ -90,6 +90,8 @@ class ChunkResponse(BaseModel):
     title: Optional[str] = None
     page_no: Optional[int] = None
     token_count: Optional[int] = None
+    char_count: Optional[int] = None
+    estimated_token_count: Optional[int] = None
     images: List[ImageResponse] = []
     quality_score: Optional[float] = None
     quality_reason: Optional[str] = None

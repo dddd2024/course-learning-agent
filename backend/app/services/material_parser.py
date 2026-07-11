@@ -181,7 +181,11 @@ def parse_with_retry(
                     stable_key=f"{material_id}:{chunk.get('page_no') or 0}:{hashlib.sha256(' '.join(text.split()).encode('utf-8')).hexdigest()[:24]}",
                     content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
                     is_active=1,
-                    token_count=len(text),
+                    # ``token_count`` is kept for legacy clients; it now
+                    # means an explicit approximation rather than chars.
+                    char_count=len(text),
+                    estimated_token_count=max(1, (len(text.encode("utf-8")) + 3) // 4),
+                    token_count=max(1, (len(text.encode("utf-8")) + 3) // 4),
                     keyword_text=clean_keyword_text(text),
                     quality_score=qr.get("quality", 0.5),
                     quality_reason=qr.get("reason", ""),

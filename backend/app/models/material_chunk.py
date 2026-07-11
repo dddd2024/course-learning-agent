@@ -32,6 +32,8 @@ class MaterialChunk(Base, TimestampMixin):
     page_no = Column(Integer)
     text = Column(Text, nullable=False)
     token_count = Column(Integer)
+    char_count = Column(Integer, nullable=True)
+    estimated_token_count = Column(Integer, nullable=True)
     keyword_text = Column(Text)  # cleaned text used for keyword retrieval
     embedding_id = Column(String(100))
     quality_score = Column(Float, nullable=True)  # AI quality score 0.0-1.0

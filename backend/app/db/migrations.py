@@ -60,6 +60,8 @@ _FIRST_ROUND_COLUMNS = {
         "stable_key": "VARCHAR(128)",
         "content_hash": "VARCHAR(64)",
         "is_active": "INTEGER DEFAULT 1 NOT NULL",
+        "char_count": "INTEGER",
+        "estimated_token_count": "INTEGER",
     },
     "knowledge_points": {
         "stable_key": "VARCHAR(320)",
