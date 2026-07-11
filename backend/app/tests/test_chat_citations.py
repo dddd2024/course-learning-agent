@@ -24,19 +24,20 @@ TLB_TEXT = (
 def _make_duplicate_citations(ranked):
     """Build an answer_question result with two citations sharing chunk_id."""
     top = ranked[0] if ranked else {"chunk_id": 1}
+    quote = (top.get("text") or "")[:20]
     return {
         "answer": "快表是页表的高速缓存。",
         "key_points": ["加速地址转换"],
         "citations": [
             {
                 "chunk_id": top["chunk_id"],
-                "quote_text": "快表 TLB 是页表的高速缓存",
+                "quote_text": quote,
                 "reason": "原因 A",
                 "confidence": 0.8,
             },
             {
                 "chunk_id": top["chunk_id"],
-                "quote_text": "快表 TLB 是页表的高速缓存",
+                "quote_text": quote,
                 "reason": "原因 B",
                 "confidence": 0.6,
             },
