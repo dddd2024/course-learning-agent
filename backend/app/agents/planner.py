@@ -3,8 +3,8 @@
 The agent:
 1. Loads the ``planner`` prompt template and fills the ``{goal}`` /
    ``{courses}`` / ``{deadline}`` / ``{daily_minutes}`` placeholders.
-2. Calls ``call_llm`` with ``agent_type="planner"`` to get a structured
-   JSON response with a ``goal_title`` and a ``tasks`` list.
+2. Calls ``call_llm_with_meta`` with ``agent_type="planner"`` to get a
+   structured JSON response with a ``goal_title`` and a ``tasks`` list.
 3. Reconciles each task's ``course_name`` against the user's actual
    course list (the mock LLM returns placeholder strings like
    ``"机器学习"``; the real LLM may return names that need validating),
@@ -12,25 +12,27 @@ The agent:
 4. Normalises ``deadline`` / ``daily_minutes`` to the user's input so
    the output is ready for persistence (the mock returns fixed values
    that may not match what the user requested).
+5. Records an ``AgentAudit`` run (``create_run`` -> ``add_step`` ->
+   ``finalize_run``); audit failures are swallowed so they never break
+   the main flow.
 """
 from __future__ import annotations
 
+import logging
+import time
 from datetime import date
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.agents.llm import call_llm
+from app.agents.audit import AgentAudit
+from app.agents.llm import call_llm_with_meta
 from app.agents.prompt_loader import load_prompt
+from app.core.config import settings
 
-_REQUIRED_TASK_FIELDS = (
-    "course_name",
-    "title",
-    "task_type",
-    "estimate_minutes",
-    "priority",
-    "acceptance",
-)
+logger = logging.getLogger(__name__)
+
+_PROMPT_VERSION = "planner_v1"
 
 
 def _format_courses(courses: list[str]) -> str:
@@ -74,7 +76,7 @@ def generate(
     """Decompose ``goal`` into stage tasks ready for persistence.
 
     Args:
-        db: SQLAlchemy session (reserved for future agent-run logging).
+        db: SQLAlchemy session (used for agent-run audit logging).
         user_id: The user the plan is being built for.
         goal: The user's free-text learning goal.
         courses: Display names of the user's actual courses. Each
@@ -99,8 +101,63 @@ def generate(
         daily_minutes=daily_minutes,
     )
 
-    output = call_llm(
-        prompt, agent_type="planner", user_config=user_config
+    # Determine provider/model_name before LLM call (best guess).
+    if user_config:
+        _provider = "user"
+        _model = user_config.get("model", "")
+    else:
+        _provider = "real" if settings.LLM_PROVIDER == "real" else "mock"
+        _model = settings.LLM_MODEL
+
+    run_started_at = time.monotonic()
+    run_id: int | None = None
+    try:
+        run = AgentAudit.create_run(
+            db,
+            user_id=user_id,
+            run_type="planner",
+            input_summary={
+                "goal": goal,
+                "courses": courses,
+                "deadline": str(deadline),
+                "daily_minutes": daily_minutes,
+            },
+            prompt_version=_PROMPT_VERSION,
+            model_name=_model,
+            provider=_provider,
+        )
+        run_id = run.id
+    except Exception as exc:  # pragma: no cover - audit must not break flow
+        logger.warning("AgentAudit.create_run(planner) failed: %s", exc)
+
+    generate_started = time.monotonic()
+    try:
+        output, meta = call_llm_with_meta(
+            prompt, agent_type="planner", user_config=user_config
+        )
+        # Update audit run with actual provider/model_name from meta
+        AgentAudit.update_run_meta(
+            db, run_id,
+            model_name=meta.get("model_name"),
+            provider=meta.get("provider"),
+            meta=meta,
+        )
+    except Exception as exc:
+        generate_duration = int((time.monotonic() - generate_started) * 1000)
+        _safe_finalize_run(
+            db, run_id=run_id,
+            error=str(exc),
+            duration_ms=generate_duration,
+        )
+        raise
+    generate_duration = int((time.monotonic() - generate_started) * 1000)
+
+    _safe_add_step(
+        db, run_id=run_id,
+        step_name="generate", step_index=0,
+        input_data={"prompt_version": _PROMPT_VERSION},
+        output_data={"task_count": len(output.get("tasks", []))},
+        duration_ms=generate_duration,
     )
 
     # Normalise scalar fields to the user's input so the persisted goal
@@ -128,7 +185,69 @@ def generate(
             }
         )
     output["tasks"] = normalised_tasks
+
+    _safe_finalize_run(
+        db, run_id=run_id,
+        fallback_used=bool(meta.get("fallback_used", False)),
+        output_summary={"task_count": len(normalised_tasks)},
+        duration_ms=int((time.monotonic() - run_started_at) * 1000),
+    )
+
     return output
+
+
+def _safe_add_step(
+    db: Session,
+    run_id: int | None,
+    step_name: str,
+    step_index: int,
+    input_data=None,
+    output_data=None,
+    duration_ms: int | None = None,
+    status: str = "success",
+) -> None:
+    """Add an audit step, swallowing any error so the main flow runs on."""
+    if run_id is None:
+        return
+    try:
+        AgentAudit.add_step(
+            db,
+            run_id=run_id,
+            step_name=step_name,
+            step_index=step_index,
+            input_data=input_data,
+            output_data=output_data,
+            duration_ms=duration_ms,
+            status=status,
+        )
+    except Exception as exc:  # pragma: no cover - audit must not break flow
+        logger.warning("AgentAudit.add_step(%s) failed: %s", step_name, exc)
+
+
+def _safe_finalize_run(
+    db: Session,
+    run_id: int | None,
+    error: str | None = None,
+    fallback_used: bool = False,
+    evidence_status: str | None = None,
+    output_summary=None,
+    duration_ms: int | None = None,
+) -> None:
+    """Finalize an audit run, swallowing any error so the main flow runs on."""
+    if run_id is None:
+        return
+    try:
+        AgentAudit.finalize_run(
+            db,
+            run_id=run_id,
+            error=error,
+            fallback_used=fallback_used,
+            evidence_status=evidence_status,
+            output_summary=output_summary,
+            duration_ms=duration_ms,
+        )
+    except Exception as exc:  # pragma: no cover - audit must not break flow
+        logger.warning("AgentAudit.finalize_run(planner) failed: %s", exc)
 
 
 __all__ = ["generate"]

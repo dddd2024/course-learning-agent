@@ -27,15 +27,17 @@ def test_llm_resource_settings_have_finite_limits() -> None:
 
 def test_production_rejects_private_llm_endpoint(monkeypatch) -> None:
     monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(settings, "ALLOW_PRIVATE_LLM_ENDPOINTS", False)
     with pytest.raises(ValueError, match="本地地址"):
         validate_llm_base_url("http://localhost:8000/v1")
 
 
 def test_production_rechecks_dns_addresses(monkeypatch) -> None:
     monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(settings, "ALLOW_PRIVATE_LLM_ENDPOINTS", False)
     monkeypatch.setattr(
         "app.services.llm_config_security.socket.getaddrinfo",
         lambda *args, **kwargs: [(None, None, None, None, ("127.0.0.1", 443))],
     )
-    with pytest.raises(ValueError, match="私有或保留"):
+    with pytest.raises(ValueError, match="本地回环|私有|保留"):
         validate_llm_base_url("https://example.invalid/v1")

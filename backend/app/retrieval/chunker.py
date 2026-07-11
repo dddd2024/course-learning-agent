@@ -143,6 +143,54 @@ def _is_low_quality_chunk(text: str) -> bool:
     return False
 
 
+def _compute_noise_flags(text: str) -> dict | None:
+    """Compute specific noise type flags for a chunk.
+
+    Returns a dict like ``{"line_repetition": true, "short_line_stacking":
+    false, "low_diversity": true}`` when the chunk is low-quality, or
+    ``None`` when the chunk passes all quality checks.
+
+    LEARN-V3-01: the flags are stored on the MaterialChunk row so the UI
+    can show exactly why a chunk was filtered.
+    """
+    text = text.strip()
+    if not text:
+        return {"line_repetition": False, "short_line_stacking": False, "low_diversity": False, "empty": True}
+
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if not lines:
+        return {"line_repetition": False, "short_line_stacking": False, "low_diversity": False, "empty": True}
+
+    flags: dict = {
+        "line_repetition": False,
+        "short_line_stacking": False,
+        "low_diversity": False,
+    }
+
+    # line_repetition: unique_ratio < 0.5
+    unique_ratio = len(set(lines)) / len(lines)
+    if unique_ratio < 0.5:
+        flags["line_repetition"] = True
+
+    # short_line_stacking: > 60% lines < 4 chars
+    short_lines = sum(1 for l in lines if len(l) < 4)
+    if len(lines) > 3 and short_lines / len(lines) > 0.6:
+        flags["short_line_stacking"] = True
+
+    # low_diversity: vocabulary diversity < 0.3 for chunks > 50 chars
+    if len(text) > 50:
+        chars = [c for c in text if "\u4e00" <= c <= "\u9fff" or c.isalpha()]
+        if chars:
+            unique_chars = len(set(chars))
+            if unique_chars / len(chars) < 0.3:
+                flags["low_diversity"] = True
+
+    # Only return flags if at least one noise type was detected.
+    if any(flags.values()):
+        return flags
+    return None
+
+
 def chunk_text(
     text: str,
     chunk_size: int = 600,
@@ -174,6 +222,7 @@ def chunk_text(
         if not content:
             continue
         if len(content) <= chunk_size:
+            noise_flags = _compute_noise_flags(content)
             chunks.append(
                 {
                     "text": content,
@@ -181,6 +230,7 @@ def chunk_text(
                     "title": title,
                     "page_no": None,
                     "is_indexable": not _is_low_quality_chunk(content),
+                    "noise_flags": noise_flags,
                 }
             )
             chunk_index += 1
@@ -191,6 +241,7 @@ def chunk_text(
         while start < content_len:
             piece = content[start : start + chunk_size]
             start += step
+            noise_flags = _compute_noise_flags(piece)
             chunks.append(
                 {
                     "text": piece,
@@ -198,6 +249,7 @@ def chunk_text(
                     "title": title,
                     "page_no": None,
                     "is_indexable": not _is_low_quality_chunk(piece),
+                    "noise_flags": noise_flags,
                 }
             )
             chunk_index += 1

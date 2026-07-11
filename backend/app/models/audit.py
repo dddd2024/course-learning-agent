@@ -48,6 +48,9 @@ class AgentRun(Base, TimestampMixin):
     actual_model = Column(String(100), nullable=True)
     fallback_used = Column(Integer, nullable=False, default=0)
     fallback_reason = Column(Text)
+    # JSON-serialised list of fallback chain steps, each with
+    # provider / model / status / reason.
+    fallback_chain = Column(Text)
     evidence_status = Column(String(30), nullable=True)
     # mock / real / user — invocation source for the LLM call.
     # - mock:  mock mode (no real LLM)

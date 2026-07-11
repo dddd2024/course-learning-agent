@@ -23,8 +23,25 @@ TLB_TEXT = (
 ).encode("utf-8")
 
 
-def _get_first_chunk_id(client, headers, course_id):
-    """Retrieve the first chunk_id for a course by asking a question."""
+def _get_first_chunk_id(client, headers, course_id, material_id=None):
+    """Retrieve the first chunk_id for a course.
+
+    Uses the chunks list endpoint (or the chat endpoint as fallback) to
+    obtain a valid chunk_id. The chat endpoint fallback may return empty
+    citations in mock mode (EVID-V3-01), so the chunks endpoint is
+    preferred when ``material_id`` is provided.
+    """
+    if material_id is not None:
+        resp = client.get(
+            f"/api/v1/materials/{material_id}/chunks",
+            headers=headers,
+        )
+        if resp.status_code == 200:
+            chunks = resp.json().get("chunks") or resp.json().get("items", [])
+            if chunks:
+                return chunks[0]["id"]
+
+    # Fallback: ask a question and extract chunk_id from citations.
     conv_resp = client.post(
         "/api/v1/conversations",
         json={"course_id": course_id, "title": "TLB 答疑"},
@@ -41,9 +58,15 @@ def _get_first_chunk_id(client, headers, course_id):
         headers=headers,
     )
     assert chat_resp.status_code == 200
+    # EVID-V3-01: in mock mode all citations are "weak" and filtered out,
+    # so fall back to retrieved_chunks which are always present.
     citations = chat_resp.json().get("citations", [])
-    assert len(citations) >= 1
-    return citations[0]["chunk_id"]
+    if citations:
+        return citations[0]["chunk_id"]
+    retrieved = chat_resp.json().get("retrieved_chunks", [])
+    if retrieved:
+        return retrieved[0]["chunk_id"]
+    raise AssertionError("No chunks found via chat or chunks endpoint")
 
 
 def test_get_chunk_owner(client, tmp_path, monkeypatch) -> None:
@@ -53,10 +76,10 @@ def test_get_chunk_owner(client, tmp_path, monkeypatch) -> None:
         "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
     )
     headers = auth_headers(client, username="alice")
-    course_id, _ = setup_course_with_material(
+    course_id, material_id = setup_course_with_material(
         client, headers, content=TLB_TEXT
     )
-    chunk_id = _get_first_chunk_id(client, headers, course_id)
+    chunk_id = _get_first_chunk_id(client, headers, course_id, material_id)
 
     resp = client.get(f"/api/v1/chunks/{chunk_id}", headers=headers)
     assert resp.status_code == 200
@@ -78,10 +101,10 @@ def test_get_chunk_cross_user_404(client, tmp_path, monkeypatch) -> None:
         "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
     )
     headers_a = auth_headers(client, username="alice")
-    course_id, _ = setup_course_with_material(
+    course_id, material_id = setup_course_with_material(
         client, headers_a, content=TLB_TEXT
     )
-    chunk_id = _get_first_chunk_id(client, headers_a, course_id)
+    chunk_id = _get_first_chunk_id(client, headers_a, course_id, material_id)
 
     headers_b = auth_headers(client, username="bob")
     resp = client.get(f"/api/v1/chunks/{chunk_id}", headers=headers_b)

@@ -4,7 +4,7 @@ ConceptNode  — a knowledge point synced into the graph layer.
 ConceptEdge  — a discovered relationship between two nodes.
 ConceptCompareReport — cached structured compare report.
 """
-from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text
 
 from app.models.base import Base, TimestampMixin
 
@@ -101,6 +101,21 @@ class ConceptCompareReport(Base, TimestampMixin):
     audit_run_id = Column(
         Integer, ForeignKey("agent_runs.id"), nullable=True
     )
+    # GRAPH-V3-01: preserve compare cache generation semantics so a
+    # cache hit restores the real metadata (fallback, provider, etc.)
+    # instead of defaulting to fallback=false.
+    report_status = Column(
+        String(40), default="success", nullable=False
+    )  # success / degraded / insufficient_evidence
+    fallback_used = Column(Integer, default=0, nullable=False)
+    fallback_reason = Column(Text, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    generated_at = Column(DateTime, nullable=True)
+    actual_provider = Column(String(50), nullable=True)
+    actual_model = Column(String(100), nullable=True)
+    generation_mode = Column(
+        String(20), default="real", nullable=False
+    )  # real / mock / fallback
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<ConceptCompareReport id={self.id}>"

@@ -20,6 +20,21 @@ _REQUIRED_COLUMNS = {
     "evidence_hash": "VARCHAR(64) DEFAULT '' NOT NULL",
 }
 
+# GRAPH-V3-01: preserve compare cache generation semantics. These
+# columns are added so a cache hit restores the real metadata (fallback,
+# provider, model, generation_mode, etc.) instead of defaulting to
+# fallback=false.
+_GRAPH_V3_COLUMNS = {
+    "report_status": "VARCHAR(40) DEFAULT 'success' NOT NULL",
+    "fallback_used": "INTEGER DEFAULT 0 NOT NULL",
+    "fallback_reason": "TEXT",
+    "expires_at": "DATETIME",
+    "generated_at": "DATETIME",
+    "actual_provider": "VARCHAR(50)",
+    "actual_model": "VARCHAR(100)",
+    "generation_mode": "VARCHAR(20) DEFAULT 'real' NOT NULL",
+}
+
 
 def ensure_concept_compare_report_columns(engine: Engine) -> None:
     """Add user_focus/evidence_hash to concept_compare_reports if missing.
@@ -36,6 +51,19 @@ def ensure_concept_compare_report_columns(engine: Engine) -> None:
         for col, ddl in _REQUIRED_COLUMNS.items():
             if col not in existing:
                 logger.info("adding column %s to concept_compare_reports", col)
+                conn.execute(
+                    text(
+                        f"ALTER TABLE concept_compare_reports "
+                        f"ADD COLUMN {col} {ddl}"
+                    )
+                )
+        # GRAPH-V3-01: add generation-metadata columns so cache hits
+        # restore real fallback/provider/model state.
+        for col, ddl in _GRAPH_V3_COLUMNS.items():
+            if col not in existing:
+                logger.info(
+                    "adding column %s to concept_compare_reports", col
+                )
                 conn.execute(
                     text(
                         f"ALTER TABLE concept_compare_reports "
@@ -66,6 +94,10 @@ _FIRST_ROUND_COLUMNS = {
         "cleaner_version": "VARCHAR(32)",
         "noise_score": "FLOAT",
         "is_indexable": "INTEGER DEFAULT 1 NOT NULL",
+        # LEARN-V3-01: expose text filtering decisions as a JSON dict of
+        # noise types detected (line_repetition, short_line_stacking,
+        # low_diversity) so the UI can show why a chunk was filtered.
+        "noise_flags": "TEXT",
     },
     "knowledge_points": {
         "stable_key": "VARCHAR(320)",
@@ -78,6 +110,8 @@ _FIRST_ROUND_COLUMNS = {
         "source_evidence_ids": "TEXT DEFAULT '[]'",
         "evidence_snapshot": "TEXT",
         "rubric_json": "TEXT DEFAULT '[]'",
+        "source_evidence": "TEXT DEFAULT '[]'",
+        "verification_status": "VARCHAR(30) DEFAULT 'verified'",
     },
     "weak_points": {
         "correct_count": "INTEGER DEFAULT 0 NOT NULL",
@@ -94,6 +128,12 @@ _FIRST_ROUND_COLUMNS = {
         "execution_status": "VARCHAR(30) DEFAULT 'pending' NOT NULL",
         "verification_method": "VARCHAR(50)",
         "auto_completed_at": "DATETIME",
+        # PLAN-V3-01: executable task target columns
+        "target_spec_json": "TEXT",
+        "verification_result_json": "TEXT",
+        "started_at": "DATETIME",
+        "completed_at": "DATETIME",
+        "last_action_at": "DATETIME",
     },
     "material_images": {
         "is_decorative": "INTEGER DEFAULT 0 NOT NULL",
@@ -109,6 +149,7 @@ _FIRST_ROUND_COLUMNS = {
         "actual_model": "VARCHAR(100)",
         "fallback_used": "INTEGER DEFAULT 0 NOT NULL",
         "fallback_reason": "TEXT",
+        "fallback_chain": "TEXT",
         "evidence_status": "VARCHAR(30)",
     },
     "citations": {

@@ -90,8 +90,24 @@ def generate_compare(
                 db, run.id, "generate", 0,
                 output_data={"keys": list(result.keys())},
             )
-            AgentAudit.finish_run(
-                db, run.id, status="success",
+            # Determine report_status and generation_mode based on the
+            # actual LLM call metadata. A real-model success is
+            # report_status="success" + generation_mode="real"; a mock
+            # fallback (meta.fallback_used) is "degraded" + "mock".
+            fallback_used = bool(meta.get("fallback_used", False))
+            if fallback_used:
+                report_status = "degraded"
+                generation_mode = "fallback"
+            elif result.get("insufficient_evidence"):
+                report_status = "insufficient_evidence"
+                generation_mode = "real"
+            else:
+                report_status = "success"
+                generation_mode = "real"
+            AgentAudit.finalize_run(
+                db, run.id,
+                fallback_used=fallback_used,
+                evidence_status="insufficient" if result.get("insufficient_evidence") else None,
                 output_summary={"keys": list(result.keys())},
             )
             return {
@@ -99,9 +115,11 @@ def generate_compare(
                 "citation_chunk_ids": _extract_citation_ids(result),
                 "provider": meta.get("provider", "mock"),
                 "model_name": meta.get("model_name", "mock"),
-                "fallback_used": bool(meta.get("fallback_used", False)),
+                "fallback_used": fallback_used,
                 "fallback_reason": meta.get("fallback_reason") or "",
                 "audit_run_id": run.id,
+                "report_status": report_status,
+                "generation_mode": generation_mode,
             }
 
         # LLM returned a generic/unknown envelope -> use structured mock.
@@ -177,8 +195,10 @@ def _mock_fallback(
         db, run.id, "generate", 0,
         output_data={"fallback": True},
     )
-    AgentAudit.finish_run(
-        db, run.id, status="degraded",
+    AgentAudit.finalize_run(
+        db, run.id,
+        fallback_used=True,
+        evidence_status="insufficient",
         output_summary={"fallback": True},
     )
     return {
@@ -189,6 +209,8 @@ def _mock_fallback(
         "fallback_used": True,
         "fallback_reason": reason,
         "audit_run_id": run.id,
+        "report_status": "insufficient_evidence",
+        "generation_mode": "mock",
     }
 
 

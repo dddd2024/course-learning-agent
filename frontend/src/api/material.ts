@@ -59,6 +59,8 @@ export interface Chunk {
   images?: ChunkImage[]
   quality_score?: number | null
   quality_reason?: string | null
+  // LEARN-V3-01: JSON string of noise type flags, or null when clean
+  noise_flags?: string | null
 }
 
 export interface ChunkListResult {

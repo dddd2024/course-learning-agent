@@ -21,6 +21,13 @@ export interface AgentStep {
   created_at: string | null
 }
 
+export interface FallbackChainStep {
+  provider?: string
+  model?: string
+  status?: string
+  reason?: string | null
+}
+
 export interface AgentRun {
   id: number
   user_id: number
@@ -30,7 +37,17 @@ export interface AgentRun {
   output_summary: unknown
   prompt_version: string | null
   model_name: string | null
+  // V3-02: provider / model traceability fields
   provider: string | null
+  requested_provider: string | null
+  requested_model: string | null
+  actual_provider: string | null
+  actual_model: string | null
+  fallback_used: boolean
+  fallback_reason: string | null
+  fallback_chain: FallbackChainStep[] | null
+  evidence_status: string | null
+  final_status: string | null
   config_id: number | null
   duration_ms: number | null
   error_message: string | null

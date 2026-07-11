@@ -24,12 +24,11 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.agents.audit import AgentAudit
 from app.agents.planner import generate as planner_generate
 from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import BusinessException, NotFoundException
 from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
 from app.models.material import Material
@@ -50,8 +49,10 @@ from app.schemas.plan import (
     PlanProgressResponse,
     PlanResponse,
     PlanSummaryResponse,
+    TaskOverrideRequest,
     TaskResponse,
     TaskUpdate,
+    TaskVerifyRequest,
     TodoListResponse,
     TodoResponse,
     TodoUpdate,
@@ -62,12 +63,16 @@ from app.services.llm_config_service import (
 )
 from app.services.multi_scheduler import schedule_multi_courses
 from app.services.scheduler import schedule_tasks_with_conflicts
+from app.services.task_execution_service import (
+    get_execution_info,
+    override_task as override_task_service,
+    start_task as start_task_service,
+    verify_task as verify_task_service,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 todos_router = APIRouter()
-
-_PROMPT_VERSION = "planner_v1"
 
 
 def _normalise_task_type(value: str | None) -> str:
@@ -214,6 +219,12 @@ def _build_weak_point_review_tasks(
 
 
 def _task_to_response(task: StudyTask, course_name: str) -> TaskResponse:
+    """Build a TaskResponse from a StudyTask ORM row.
+
+    PLAN-V3-01: includes execution fields (target_type, target_id,
+    target_spec, execution_status, verification_method,
+    verification_result, started_at, completed_at, last_action_at).
+    """
     return TaskResponse(
         id=task.id,
         goal_id=task.goal_id,
@@ -225,6 +236,16 @@ def _task_to_response(task: StudyTask, course_name: str) -> TaskResponse:
         priority=task.priority,
         acceptance=task.acceptance,
         status=task.status,
+        target_type=task.target_type,
+        target_id=task.target_id,
+        target_spec=task.target_spec_json,
+        execution_status=task.execution_status,
+        verification_method=task.verification_method,
+        verification_result=task.verification_result_json,
+        auto_completed_at=task.auto_completed_at,
+        started_at=task.started_at,
+        completed_at=task.completed_at,
+        last_action_at=task.last_action_at,
     )
 
 
@@ -397,7 +418,12 @@ def update_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> TaskResponse:
-    """Update a study task's status (404 if not owned)."""
+    """Update a study task's status (404 if not owned).
+
+    PLAN-V3-02: ``status=done`` / ``status=completed`` are rejected
+    here — tasks can only be completed through the verify endpoint
+    (or the manual override endpoint).
+    """
     task = (
         db.query(StudyTask)
         .join(StudyGoal, StudyGoal.id == StudyTask.goal_id)
@@ -410,6 +436,12 @@ def update_task(
     if task is None:
         raise NotFoundException(message="任务不存在")
 
+    if payload.status is not None and payload.status in {"done", "completed"}:
+        raise BusinessException(
+            message="任务不能直接标记为完成，请通过验证端点完成",
+            status_code=400,
+        )
+
     if payload.status is not None:
         task.status = payload.status
 
@@ -418,18 +450,73 @@ def update_task(
 
     course = db.query(Course).filter(Course.id == task.course_id).first()
     course_name = course.name if course else ""
-    return TaskResponse(
-        id=task.id,
-        goal_id=task.goal_id,
-        course_id=task.course_id,
-        course_name=course_name,
-        title=task.title,
-        task_type=task.task_type,
-        estimate_minutes=task.estimate_minutes,
-        priority=task.priority,
-        acceptance=task.acceptance,
-        status=task.status,
+    return _task_to_response(task, course_name)
+
+
+@router.post("/tasks/{task_id}/start")
+def start_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Start task execution (PLAN-V3-02).
+
+    For quiz tasks: creates a Quiz if ``target_id`` is empty and binds
+    the resulting ``quiz_id`` to the task's ``target_id``. Sets
+    ``started_at`` and returns routing info so the frontend can navigate
+    to the created resource.
+    """
+    return start_task_service(db, task_id, current_user.id)
+
+
+@router.post("/tasks/{task_id}/verify")
+def verify_task(
+    task_id: int,
+    payload: TaskVerifyRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Verify task completion (PLAN-V3-02).
+
+    For quiz tasks: checks if ``score >= threshold`` (default 60). On
+    pass, auto-completes the task + Todo + recalculates Goal progress.
+    """
+    return verify_task_service(
+        db,
+        task_id,
+        current_user.id,
+        score=payload.score,
+        threshold=payload.threshold,
     )
+
+
+@router.get("/tasks/{task_id}/execution")
+def get_task_execution(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Get task execution info (PLAN-V3-02).
+
+    Returns execution status, verification method, verification result,
+    started_at, completed_at, etc.
+    """
+    return get_execution_info(db, task_id, current_user.id)
+
+
+@router.post("/tasks/{task_id}/override")
+def override_task(
+    task_id: int,
+    payload: TaskOverrideRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Manually override a task to completed (PLAN-V3-02).
+
+    Records user, time, reason, and sets
+    ``verification_method=manual_override`` for audit trail.
+    """
+    return override_task_service(db, task_id, current_user.id, payload.reason)
 
 
 @router.patch("/{goal_id}", response_model=GoalResponse)
@@ -456,13 +543,7 @@ def update_goal(
 
     db.commit()
     db.refresh(goal)
-    return GoalResponse(
-        id=goal.id,
-        title=goal.title,
-        deadline=goal.deadline,
-        daily_minutes=goal.daily_minutes,
-        status=goal.status,
-    )
+    return GoalResponse.model_validate(goal)
 
 
 @router.delete("/{goal_id}", status_code=204)
@@ -505,46 +586,11 @@ def create_plan(
 
     active_config = get_active_config(db, current_user.id)
     user_config = build_user_config(active_config) if active_config else None
-    provider = (
-        "user"
-        if active_config
-        else ("real" if settings.LLM_PROVIDER == "real" else "mock")
-    )
-    config_id = active_config.id if active_config else None
-    model_name = active_config.model if active_config else settings.LLM_MODEL
 
-    # Open an audit run for this planner invocation. Audit failures are
-    # swallowed so they never break the main flow.
     run_started_at = time.monotonic()
-    run_id: int | None = None
-    try:
-        run = AgentAudit.create_run(
-            db,
-            user_id=current_user.id,
-            run_type="planner",
-            input_summary={
-                "goal": payload.goal,
-                "course_ids": [course.id for course in user_courses],
-                "courses": [course.name for course in user_courses],
-                "deadline": str(payload.deadline),
-                "daily_minutes": payload.daily_minutes,
-            },
-            prompt_version=_PROMPT_VERSION,
-            model_name=model_name,
-            provider=provider,
-            config_id=config_id,
-        )
-        run_id = run.id
-        db.commit()
-    except Exception as exc:  # pragma: no cover - audit must not break flow
-        logger.warning("AgentAudit.create_run failed: %s", exc)
-        try:
-            db.rollback()
-        except Exception:
-            pass
 
     # 2. Run the PlannerAgent to decompose the goal into tasks.
-    generate_started = time.monotonic()
+    #    The agent now manages its own audit run internally.
     try:
         plan_output = planner_generate(
             db=db,
@@ -556,24 +602,7 @@ def create_plan(
             user_config=user_config,
         )
     except Exception as exc:
-        _safe_finish_run(
-            db,
-            run_id=run_id,
-            status="failed",
-            error_message=str(exc),
-            started_at=run_started_at,
-        )
         raise
-    generate_duration = int((time.monotonic() - generate_started) * 1000)
-    _safe_add_step(
-        db,
-        run_id=run_id,
-        step_name="generate",
-        step_index=0,
-        input_data={"prompt_version": _PROMPT_VERSION},
-        output_data={"task_count": len(plan_output.get("tasks", []))},
-        duration_ms=generate_duration,
-    )
 
     # 2b. Append weak-point review tasks for any course in the plan that
     #     has recorded weak points. These get boosted priority so the
@@ -646,15 +675,6 @@ def create_plan(
         daily_minutes=payload.daily_minutes,
     )
     schedule_duration = int((time.monotonic() - schedule_started) * 1000)
-    _safe_add_step(
-        db,
-        run_id=run_id,
-        step_name="schedule",
-        step_index=1,
-        input_data={"task_count": len(task_rows), "deadline": str(payload.deadline)},
-        output_data={"todo_count": len(scheduled), "unscheduled_count": len(unscheduled)},
-        duration_ms=schedule_duration,
-    )
 
     # 6. Persist Todo rows.
     todo_rows: list[Todo] = []
@@ -677,18 +697,6 @@ def create_plan(
         todo_rows.append(todo)
 
     db.commit()
-
-    _safe_finish_run(
-        db,
-        run_id=run_id,
-        status="success",
-        output_summary={
-            "goal_id": goal.id,
-            "task_count": len(task_rows),
-            "todo_count": len(todo_rows),
-        },
-        duration_ms=int((time.monotonic() - run_started_at) * 1000),
-    )
 
     # 7. Build the response with denormalised course_name.
     course_name_by_id = {c.id: c.name for c in user_courses}
@@ -923,67 +931,3 @@ def update_todo(
     course_name = course.name if course else ""
     return _todo_to_response(todo, course_name)
 
-
-def _safe_add_step(
-    db: Session,
-    run_id: int | None,
-    step_name: str,
-    step_index: int,
-    input_data=None,
-    output_data=None,
-    duration_ms: int | None = None,
-    status: str = "success",
-) -> None:
-    """Add an audit step, swallowing any error so the main flow runs on."""
-    if run_id is None:
-        return
-    try:
-        AgentAudit.add_step(
-            db,
-            run_id=run_id,
-            step_name=step_name,
-            step_index=step_index,
-            input_data=input_data,
-            output_data=output_data,
-            duration_ms=duration_ms,
-            status=status,
-        )
-        db.commit()
-    except Exception as exc:  # pragma: no cover - audit must not break flow
-        logger.warning("AgentAudit.add_step(%s) failed: %s", step_name, exc)
-        try:
-            db.rollback()
-        except Exception:
-            pass
-
-
-def _safe_finish_run(
-    db: Session,
-    run_id: int | None,
-    status: str,
-    output_summary=None,
-    duration_ms: int | None = None,
-    error_message: str | None = None,
-    started_at: float | None = None,
-) -> None:
-    """Finish an audit run, swallowing any error so the main flow runs on."""
-    if run_id is None:
-        return
-    if duration_ms is None and started_at is not None:
-        duration_ms = int((time.monotonic() - started_at) * 1000)
-    try:
-        AgentAudit.finish_run(
-            db,
-            run_id=run_id,
-            status=status,
-            output_summary=output_summary,
-            duration_ms=duration_ms,
-            error_message=error_message,
-        )
-        db.commit()
-    except Exception as exc:  # pragma: no cover - audit must not break flow
-        logger.warning("AgentAudit.finish_run failed: %s", exc)
-        try:
-            db.rollback()
-        except Exception:
-            pass

@@ -5,6 +5,12 @@ is invisible to callers. The plaintext API key never enters persistence:
 :func:`create_config` / :func:`update_config` encrypt it via
 :func:`app.core.crypto.encrypt` before flushing, and responses only ever
 surface the masked form via the ``UserLLMConfig.api_key_masked`` property.
+
+SEC-V3-01: Both config-save-time and request-time SSRF validation are
+enforced. ``test_connection`` calls
+:func:`validate_llm_base_url_request_time` before making the HTTP probe
+so a URL that was valid at save time but now resolves to a private IP
+is rejected.
 """
 from __future__ import annotations
 
@@ -13,7 +19,10 @@ from sqlalchemy.orm import Session
 
 from app.core.crypto import decrypt, encrypt
 from app.models.llm_config import UserLLMConfig
-from app.services.llm_config_security import validate_llm_base_url
+from app.services.llm_config_security import (
+    validate_llm_base_url,
+    validate_llm_base_url_request_time,
+)
 
 
 def get_user_configs(db: Session, user_id: int) -> list[UserLLMConfig]:
@@ -150,6 +159,11 @@ def test_connection(config: UserLLMConfig) -> dict:
     envelope. It does **not** require the model's reply body to be JSON
     — a plain-text ``"OK"`` reply is enough to pass.
 
+    SEC-V3-01: Before making the HTTP request, the base URL is
+    re-validated via :func:`validate_llm_base_url_request_time`. If the
+    URL resolves to a private/blocked IP, a ``ValueError`` is raised
+    (caught by the API endpoint as a 400 ``BusinessException``).
+
     Success criteria: HTTP 2xx + ``resp.json()`` succeeds +
     ``choices[0].message.content`` exists.
 
@@ -158,7 +172,17 @@ def test_connection(config: UserLLMConfig) -> dict:
     dict
         ``{"status": "success" | "failed", "error": str | None,
         "provider": str, "model": str}``.
+
+    Raises
+    ------
+    ValueError
+        When request-time SSRF validation fails.
     """
+    # SEC-V3-01: request-time SSRF validation.
+    is_valid, reason = validate_llm_base_url_request_time(config.base_url)
+    if not is_valid:
+        raise ValueError(f"SSRF protection: {reason}")
+
     url = f"{config.base_url.rstrip('/')}/chat/completions"
     headers = {
         "Authorization": f"Bearer {decrypt(config.api_key_encrypted)}",
@@ -170,8 +194,26 @@ def test_connection(config: UserLLMConfig) -> dict:
         "temperature": 0,
         "max_tokens": 16,
     }
+    # SEC-V3-01: independent timeouts and disabled redirects.
+    http_timeout = httpx.Timeout(
+        connect=30.0,
+        read=120.0,
+        write=30.0,
+        pool=10.0,
+    )
+    config_timeout = config.timeout_seconds or 60
+    if config_timeout < 120:
+        http_timeout = httpx.Timeout(
+            connect=min(30.0, config_timeout),
+            read=config_timeout,
+            write=min(30.0, config_timeout),
+            pool=10.0,
+        )
     try:
-        with httpx.Client(timeout=config.timeout_seconds, follow_redirects=False) as client:
+        with httpx.Client(
+            timeout=http_timeout,
+            follow_redirects=False,
+        ) as client:
             resp = client.post(url, headers=headers, json=body)
         resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
@@ -226,4 +268,5 @@ __all__ = [
     "delete_config",
     "enable_config",
     "test_connection",
+    "validate_llm_base_url_request_time",
 ]

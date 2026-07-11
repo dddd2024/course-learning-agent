@@ -103,6 +103,9 @@ class ChunkResponse(BaseModel):
     images: List[ImageResponse] = []
     quality_score: Optional[float] = None
     quality_reason: Optional[str] = None
+    # LEARN-V3-01: JSON dict of noise types detected (line_repetition,
+    # short_line_stacking, low_diversity) or None when the chunk is clean.
+    noise_flags: Optional[str] = None
 
 
 class ChunkListResponse(BaseModel):

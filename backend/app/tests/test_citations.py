@@ -42,6 +42,21 @@ def test_citations_persisted_after_chat(
     monkeypatch.setattr(
         "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
     )
+    # EVID-V3-01: mock call_llm_with_meta with degraded=False so citations
+    # are not forced to "weak" status (which would be filtered out).
+    from app.agents import course_qa as qa_module
+    original_call_llm = qa_module.call_llm_with_meta
+
+    def non_degraded_call_llm(prompt, agent_type, schema=None, user_config=None):
+        output, meta = original_call_llm(
+            prompt, agent_type, schema=schema, user_config=user_config
+        )
+        meta["degraded"] = False
+        return output, meta
+
+    monkeypatch.setattr(
+        "app.agents.course_qa.call_llm_with_meta", non_degraded_call_llm
+    )
 
     headers = auth_headers(client, username="alice")
     course_id, _ = setup_course_with_material(

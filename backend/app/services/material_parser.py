@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import hashlib
+import json
 import time
 from pathlib import Path
 from typing import Callable
@@ -168,6 +169,14 @@ def parse_with_retry(
                 if not text:
                     text = raw_text.strip()
                 qr = quality_results[i] if i < len(quality_results) else {"quality": 0.5, "reason": ""}
+                # LEARN-V3-01: persist noise_flags as JSON so the UI can
+                # show why a chunk was filtered out of retrieval.
+                noise_flags = chunk.get("noise_flags")
+                noise_flags_json = (
+                    json.dumps(noise_flags, ensure_ascii=False)
+                    if noise_flags
+                    else None
+                )
                 mc = MaterialChunk(
                     material_id=material_id,
                     material_version_id=version_row.id,
@@ -191,6 +200,7 @@ def parse_with_retry(
                     keyword_text=clean_keyword_text(text),
                     quality_score=qr.get("quality", 0.5),
                     quality_reason=qr.get("reason", ""),
+                    noise_flags=noise_flags_json,
                 )
                 db.add(mc)
                 saved_chunks.append(mc)

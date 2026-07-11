@@ -28,6 +28,26 @@ def _fast_parse_retries(monkeypatch):
     monkeypatch.setattr("app.services.material_parser.time.sleep", lambda _: None)
 
 
+@pytest.fixture(autouse=True)
+def _allow_private_llm_endpoints_in_tests(monkeypatch):
+    """Allow private/localhost LLM endpoints in tests by default.
+
+    SEC-V3-01 SSRF protection blocks localhost/private addresses by
+    default (``ALLOW_PRIVATE_LLM_ENDPOINTS=False``). Many existing tests
+    use localhost URLs or public URLs that resolve to private IPs in the
+    test environment. This fixture sets ``ALLOW_PRIVATE_LLM_ENDPOINTS=True``
+    for all tests so those tests pass.
+
+    Tests that specifically verify SSRF rejection (e.g.
+    ``test_v3_ssrf.py``) override this by setting
+    ``ALLOW_PRIVATE_LLM_ENDPOINTS=False`` in their own autouse fixture,
+    which runs after this one and takes precedence.
+    """
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "ALLOW_PRIVATE_LLM_ENDPOINTS", True)
+
+
 @pytest.fixture()
 def client(monkeypatch) -> Iterator[TestClient]:
     """Return a TestClient backed by an in-memory SQLite database.

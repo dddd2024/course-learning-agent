@@ -69,3 +69,9 @@ build/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Database backups and WAL files
+*.db-shm
+*.db-wal
+*.db.backup-*
+

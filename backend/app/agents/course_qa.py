@@ -85,12 +85,15 @@ def _compute_reliability_level(output: dict[str, Any]) -> str:
       ``confidence < 0.5``.
     - ``high``: two or more citations with at least one
       ``confidence >= 0.5``.
+
+    EVID-V3-01: both ``verified`` and ``supported`` citations count as
+    evidence-backed; ``weak`` citations are excluded.
     """
     if output.get("not_found"):
         return "failed"
     citations = [
         citation for citation in output.get("citations", [])
-        if citation.get("support_status") == "verified"
+        if citation.get("support_status") in ("verified", "supported")
     ]
     count = len(citations)
     if count == 0:
@@ -130,7 +133,7 @@ def _annotate_support(citation: dict[str, Any], answer: str) -> dict[str, Any]:
     claim_terms = terms(claim)
     quote_terms = terms(quote)
     if claim_terms & quote_terms:
-        citation["support_status"] = "verified"
+        citation["support_status"] = "supported"
         citation["verification_reason"] = "原文精确匹配，且回答结论可定位并与原文共享关键术语"
     else:
         citation["support_status"] = "weak"

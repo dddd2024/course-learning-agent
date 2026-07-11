@@ -145,14 +145,17 @@ def _validate_schema(output: dict) -> None:
 
     Raises ``ValueError`` when required top-level or per-question fields
     are missing so the caller can surface a clear error.
+
+    QUIZ-V3-01: an empty ``questions`` list is now valid — it signals
+    that no evidence-backed questions could be generated. The caller
+    handles this by returning an empty quiz with ``insufficient_evidence``.
     """
     if not isinstance(output, dict):
         raise ValueError("LLM output must be a dict")
     questions = output.get("questions")
     if not isinstance(questions, list):
         raise ValueError("LLM output missing 'questions' list")
-    if not questions:
-        raise ValueError("LLM returned no questions")
+    # Empty questions list is valid (insufficient evidence).
     for i, q in enumerate(questions):
         if not isinstance(q, dict):
             raise ValueError(f"Question {i} is not a dict")
@@ -251,10 +254,10 @@ def generate_quiz(
         )
         _validate_schema(output)
     except Exception:
-        _safe_finish_run(
+        _safe_finalize_run(
             db,
             run_id=run_id,
-            status="failed",
+            error="quiz generation failed",
             started_at=run_started_at,
         )
         raise
@@ -271,6 +274,26 @@ def generate_quiz(
     )
 
     items: list[dict[str, Any]] = []
+    # QUIZ-V3-02: fetch chunk texts for verification.
+    from app.models.material_chunk import MaterialChunk
+    all_evidence_ids: set[int] = set()
+    for q in output.get("questions", []):
+        for raw_id in q.get("source_chunk_ids", []):
+            if str(raw_id).isdigit():
+                all_evidence_ids.add(int(raw_id))
+    chunk_rows: list = []
+    if all_evidence_ids:
+        chunk_rows = (
+            db.query(MaterialChunk)
+            .filter(MaterialChunk.id.in_(all_evidence_ids))
+            .all()
+        )
+    chunk_texts = [
+        {"id": r.id, "text": r.text or ""} for r in chunk_rows
+    ]
+
+    from app.services.quiz_item_verifier import verify_quiz_item
+
     for i, q in enumerate(output.get("questions", [])):
         evidence_ids = _valid_evidence_ids(
             db, course_id, q.get("source_chunk_ids", []), knowledge_points
@@ -281,29 +304,80 @@ def generate_quiz(
         if not evidence_ids:
             logger.warning("Skipping quiz item %s because it has no valid evidence", i)
             continue
-        items.append(
+        # QUIZ-V3-01: carry source_evidence (chunk_id + quote_text) so the
+        # grounding can be independently verified against the original chunks.
+        source_evidence = q.get("source_evidence", [])
+        if not isinstance(source_evidence, list):
+            source_evidence = []
+        # Filter source_evidence to only include entries whose chunk_id is
+        # in the valid evidence_ids set.
+        valid_eid_set = set(evidence_ids)
+        filtered_source_evidence = [
             {
-                "question_type": _normalise_question_type(
-                    q.get("question_type", "")
-                ),
-                "question_text": q.get("stem", ""),
-                "options": _prefix_options(q.get("options", [])),
-                "answer": str(q.get("answer", "")),
-                "rubric": _normalise_rubric(q.get("rubric")),
-                "explanation": q.get("explanation", ""),
-                "difficulty": q.get("difficulty"),
-                "source_evidence_ids": evidence_ids,
-                "knowledge_point_id": _map_knowledge_point_id(
-                    q.get("knowledge_point_ids", []), i, knowledge_points
-                ),
-                "order_index": i,
+                "chunk_id": ev.get("chunk_id"),
+                "quote_text": ev.get("quote_text", ""),
             }
-        )
+            for ev in source_evidence
+            if isinstance(ev, dict)
+            and ev.get("chunk_id") in valid_eid_set
+        ]
 
-    _safe_finish_run(
+        item_data = {
+            "question_type": _normalise_question_type(
+                q.get("question_type", "")
+            ),
+            "question_text": q.get("stem", ""),
+            "options": _prefix_options(q.get("options", [])),
+            "answer": str(q.get("answer", "")),
+            "rubric": _normalise_rubric(q.get("rubric")),
+            "explanation": q.get("explanation", ""),
+            "difficulty": q.get("difficulty"),
+            "source_evidence_ids": evidence_ids,
+            "source_evidence": filtered_source_evidence,
+            "knowledge_point_id": _map_knowledge_point_id(
+                q.get("knowledge_point_ids", []), i, knowledge_points
+            ),
+            "order_index": i,
+        }
+
+        # QUIZ-V3-02: verify the quiz item against source evidence.
+        is_valid, reason = verify_quiz_item(item_data, chunk_texts)
+        if not is_valid:
+            logger.warning(
+                "Skipping quiz item %s: verification failed — %s", i, reason
+            )
+            continue
+        item_data["verification_status"] = "verified"
+        items.append(item_data)
+
+    # QUIZ-V3-01: when no questions have valid evidence, return empty items
+    # with an insufficient_evidence flag instead of raising an error.
+    # QUIZ-V3-02: when some items were dropped by verification, set
+    # partial_generation=True.
+    total_questions_from_llm = len(output.get("questions", []))
+    partial_generation = total_questions_from_llm > len(items)
+
+    if not items:
+        _safe_finish_run(
+            db,
+            run_id=run_id,
+            status="success",
+            output_summary={"item_count": 0, "insufficient_evidence": True},
+            started_at=run_started_at,
+        )
+        timestamp = datetime.now().strftime("%m-%d %H:%M")
+        return {
+            "title": f"{course_name} 测验 ({timestamp})",
+            "items": [],
+            "insufficient_evidence": True,
+            "partial_generation": False,
+        }
+
+    _safe_finalize_run(
         db,
         run_id=run_id,
-        status="success",
+        fallback_used=bool(meta.get("fallback_used", False)),
+        evidence_status="insufficient" if not items else None,
         output_summary={"item_count": len(items)},
         started_at=run_started_at,
     )
@@ -322,27 +396,25 @@ def generate_quiz(
     return {
         "title": title,
         "items": items,
+        "partial_generation": partial_generation,
     }
 
 
 def _valid_evidence_ids(db: Session, course_id: int, raw_ids: list, points: list[KnowledgePoint]) -> list[int]:
-    """Accept only active chunks in this course, never model-invented IDs."""
-    import json
+    """Accept only active chunks in this course, never model-invented IDs.
+
+    QUIZ-V3-01: the borrowing fallback that took evidence from other
+    knowledge points has been removed. Only IDs the model explicitly
+    returns AND that are valid active chunks in this course are accepted.
+    If none are valid, an empty list is returned (causing the caller to
+    skip the question).
+    """
     from app.models.material_chunk import MaterialChunk
     valid = {r[0] for r in db.query(MaterialChunk.id).filter(
         MaterialChunk.course_id == course_id, MaterialChunk.is_active == 1
     )}
     selected = [int(x) for x in raw_ids if str(x).isdigit() and int(x) in valid]
-    if selected:
-        return selected[:5]
-    for point in points:
-        try:
-            selected = [int(x) for x in json.loads(point.source_chunk_ids or "[]") if int(x) in valid]
-        except (TypeError, ValueError, json.JSONDecodeError):
-            continue
-        if selected:
-            return selected[:5]
-    return []
+    return selected[:5]
 
 
 def _format_evidence(db: Session, points: list[KnowledgePoint]) -> str:
@@ -386,6 +458,38 @@ def _safe_add_step(
         )
     except Exception as exc:  # pragma: no cover - audit must not break flow
         logger.warning("AgentAudit.add_step(%s) failed: %s", step_name, exc)
+
+
+def _safe_finalize_run(
+    db: Session,
+    run_id: int | None,
+    error: str | None = None,
+    fallback_used: bool = False,
+    evidence_status: str | None = None,
+    output_summary=None,
+    duration_ms: int | None = None,
+    error_message: str | None = None,
+    started_at: float | None = None,
+) -> None:
+    """Finalize an audit run, swallowing any error so the main flow runs on."""
+    if run_id is None:
+        return
+    if duration_ms is None and started_at is not None:
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+    if error is None and error_message is not None:
+        error = error_message
+    try:
+        AgentAudit.finalize_run(
+            db,
+            run_id=run_id,
+            error=error,
+            fallback_used=fallback_used,
+            evidence_status=evidence_status,
+            output_summary=output_summary,
+            duration_ms=duration_ms,
+        )
+    except Exception as exc:  # pragma: no cover - audit must not break flow
+        logger.warning("AgentAudit.finalize_run(quiz) failed: %s", exc)
 
 
 def _safe_finish_run(

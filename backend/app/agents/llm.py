@@ -670,35 +670,156 @@ def _mock_multi_course_schedule(prompt: str = "") -> dict[str, Any]:
 
 
 def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
-    return {
-        "questions": [
-            {
+    """Generate quiz questions from actual evidence chunks in the prompt.
+
+    Parses the evidence chunks (format: ``[evidence_id={id} page={page}] text``)
+    from the prompt and creates true/false and short-answer questions based on
+    actual text from the chunks. Each question includes ``source_evidence``
+    with ``chunk_id`` and ``quote_text`` that is a substring of the actual chunk
+    text, so the grounding can be independently verified.
+
+    No hardcoded "梯度下降" or "学习率" questions are produced.
+    """
+    # Parse evidence chunks from the prompt.
+    evidence_pattern = re.compile(
+        r"\[evidence_id=(\d+)[^\]]*\]\s*(.+?)(?=\n\[evidence_id=|\n\n|\Z)",
+        re.DOTALL,
+    )
+    chunks_raw = evidence_pattern.findall(prompt)
+
+    if not chunks_raw:
+        return {"questions": []}
+
+    # Build (chunk_id:int, text:str) pairs, filtering very short chunks.
+    chunks: list[tuple[int, str]] = []
+    for cid_str, text in chunks_raw:
+        text = text.strip()
+        if text and len(text) >= 10:
+            chunks.append((int(cid_str), text))
+
+    if not chunks:
+        return {"questions": []}
+
+    questions: list[dict[str, Any]] = []
+    for idx, (chunk_id, chunk_text) in enumerate(chunks):
+        lines = [
+            l.strip() for l in chunk_text.split("\n")
+            if l.strip() and len(l.strip()) >= 8
+        ]
+        if not lines:
+            continue
+
+        kp_label = f"kp_{idx + 1}"
+
+        # --- True/False question from the first meaningful line ---
+        source_line = lines[0]
+        # Use a substring of the actual chunk text as the quote.
+        quote_tf = source_line[:120]
+        # Ensure the quote is a substring of the chunk text.
+        if quote_tf not in chunk_text:
+            quote_tf = source_line
+
+        questions.append({
+            "question_type": "true_false",
+            "difficulty": 3,
+            "stem": f"根据课程资料，以下说法是否正确：{source_line[:80]}",
+            "options": [],
+            "answer": "true",
+            "explanation": "该说法直接来自课程资料原文。",
+            "rubric": [],
+            "knowledge_point_ids": [kp_label],
+            "source_chunk_ids": [str(chunk_id)],
+            "source_evidence": [
+                {
+                    "chunk_id": chunk_id,
+                    "quote_text": quote_tf,
+                }
+            ],
+        })
+
+        # --- Short-answer / fill-in-the-blank from a second line ---
+        if len(lines) > 1:
+            second_line = lines[1]
+            quote_sa = second_line[:120]
+            if quote_sa not in chunk_text:
+                quote_sa = second_line
+
+            # Extract a CJK term to blank out for a fill-in question.
+            cjk_terms = re.findall(r"[\u4e00-\u9fff]{2,}", second_line)
+            if cjk_terms:
+                blank_term = cjk_terms[0]
+                blanked = second_line.replace(blank_term, "____", 1)
+                questions.append({
+                    "question_type": "short_answer",
+                    "difficulty": 3,
+                    "stem": f"填空：{blanked}",
+                    "options": [],
+                    "answer": blank_term,
+                    "explanation": f"根据课程资料，该处应填入「{blank_term}」。",
+                    "rubric": [
+                        {
+                            "criterion": f"包含关键词「{blank_term}」",
+                            "keywords": [blank_term],
+                            "weight": 1.0,
+                            "evidence_ids": [chunk_id],
+                            "required": True,
+                        }
+                    ],
+                    "knowledge_point_ids": [kp_label],
+                    "source_chunk_ids": [str(chunk_id)],
+                    "source_evidence": [
+                        {
+                            "chunk_id": chunk_id,
+                            "quote_text": quote_sa,
+                        }
+                    ],
+                })
+
+        # --- Choice question from the chunk text ---
+        if len(lines) >= 2:
+            # Build a choice question: which statement matches the source?
+            correct_option = lines[0][:60]
+            # Distractors: take fragments from other lines or modify the correct one.
+            distractors: list[str] = []
+            for d_line in lines[1:]:
+                if d_line[:60] != correct_option:
+                    distractors.append(d_line[:60])
+            # If not enough distractors, create generic wrong answers
+            while len(distractors) < 3:
+                distractors.append(f"以上说法均不正确（选项{len(distractors) + 1}）")
+
+            options = [correct_option] + distractors[:3]
+            # Shuffle deterministically (keep correct at known position)
+            import random as _rnd
+            _rnd.seed(chunk_id)
+            indices = list(range(len(options)))
+            _rnd.shuffle(indices)
+            shuffled = [options[i] for i in indices]
+            correct_letter = chr(65 + indices.index(0))
+
+            quote_choice = correct_option
+            if quote_choice not in chunk_text:
+                quote_choice = lines[0][:120]
+
+            questions.append({
                 "question_type": "single_choice",
                 "difficulty": 3,
-                "stem": "梯度下降更新参数的方向是？",
-                "options": [
-                    "正梯度方向",
-                    "负梯度方向",
-                    "随机方向",
-                    "零向量方向",
+                "stem": "以下哪项说法与课程资料原文一致？",
+                "options": shuffled,
+                "answer": correct_letter,
+                "explanation": "该选项直接来自课程资料原文。",
+                "rubric": [],
+                "knowledge_point_ids": [kp_label],
+                "source_chunk_ids": [str(chunk_id)],
+                "source_evidence": [
+                    {
+                        "chunk_id": chunk_id,
+                        "quote_text": quote_choice,
+                    }
                 ],
-                "answer": "B",
-                "explanation": "沿负梯度方向更新可使损失下降。",
-                "knowledge_point_ids": ["kp_1"],
-                "source_chunk_ids": ["chunk_1"],
-            },
-            {
-                "question_type": "short_answer",
-                "difficulty": 4,
-                "stem": "简述学习率过大可能带来的问题。",
-                "options": [],
-                "answer": "学习率过大会导致参数更新步长过大，可能越过最优点甚至发散。",
-                "explanation": "步长过大时损失不单调下降，易震荡或发散。",
-                "knowledge_point_ids": ["kp_2"],
-                "source_chunk_ids": ["chunk_3"],
-            },
-        ]
-    }
+            })
+
+    return {"title": "课程资料测验", "questions": questions[:10]}
 
 
 def _mock_citation_verify(prompt: str = "") -> dict[str, Any]:
@@ -938,6 +1059,12 @@ def _real_response(
     rejects this field with a 400, the call is retried once without it
     to stay compatible with providers that do not support JSON mode.
 
+    SEC-V3-01: Before making the HTTP request, the base URL is
+    re-validated via :func:`validate_llm_base_url_request_time` to
+    prevent DNS rebinding. Redirects are disabled, independent timeouts
+    are used, and response size is limited (10 MB body / 100 KB
+    headers). Authorization headers and API keys are never logged.
+
     Parameters
     ----------
     prompt:
@@ -971,6 +1098,10 @@ def _real_response(
         Any httpx/JSON error propagates to :func:`call_llm`, which is
         responsible for falling back to the mock provider.
     """
+    from app.services.llm_config_security import (
+        validate_llm_base_url_request_time,
+    )
+
     if user_config is not None:
         base_url = user_config["base_url"]
         model = user_config["model"]
@@ -989,6 +1120,20 @@ def _real_response(
         temperature = settings.LLM_TEMPERATURE
         max_tokens = settings.LLM_MAX_TOKENS
         timeout = timeout_override or settings.LLM_TIMEOUT_SECONDS
+
+    # SEC-V3-01: request-time SSRF validation — re-resolve DNS and check
+    # all resolved IPs before making the HTTP request.
+    # When ALLOW_PRIVATE_LLM_ENDPOINTS is True (development/testing mode),
+    # skip the request-time validation because private endpoints are already
+    # permitted at config-save time and the DNS rebinding check is unnecessary.
+    # Production mode (ALLOW_PRIVATE_LLM_ENDPOINTS=False) enforces strict
+    # request-time SSRF validation.
+    if not settings.ALLOW_PRIVATE_LLM_ENDPOINTS:
+        is_valid, reason = validate_llm_base_url_request_time(base_url)
+        if not is_valid:
+            raise RuntimeError(
+                f"SSRF protection blocked LLM request: {reason}"
+            )
 
     url = f"{base_url.rstrip('/')}/chat/completions"
     headers = {
@@ -1012,15 +1157,64 @@ def _real_response(
         "response_format": {"type": "json_object"},
     }
 
-    with httpx.Client(timeout=timeout) as client:
-        # First attempt asks for JSON-mode output.
-        resp = client.post(url, headers=headers, json=body)
-        if resp.status_code == 400:
-            # Some OpenAI-compatible backends reject response_format;
-            # retry once without it so we still get a usable answer.
-            body.pop("response_format", None)
+    # SEC-V3-01: independent timeouts and disabled redirects.
+    http_timeout = httpx.Timeout(
+        connect=30.0,
+        read=120.0,
+        write=30.0,
+        pool=10.0,
+    )
+    # Use the shorter of the config timeout and the SSRF-mandated
+    # read timeout, so a user-configured 5s timeout still works.
+    if isinstance(timeout, (int, float)) and timeout < 120:
+        http_timeout = httpx.Timeout(
+            connect=min(30.0, timeout),
+            read=timeout,
+            write=min(30.0, timeout),
+            pool=10.0,
+        )
+
+    max_body_bytes = 10 * 1024 * 1024  # 10 MB
+    max_header_bytes = 100 * 1024     # 100 KB
+
+    try:
+        with httpx.Client(
+            timeout=http_timeout,
+            follow_redirects=False,
+        ) as client:
+            # First attempt asks for JSON-mode output.
             resp = client.post(url, headers=headers, json=body)
-        resp.raise_for_status()
+            if resp.status_code == 400:
+                # Some OpenAI-compatible backends reject response_format;
+                # retry once without it so we still get a usable answer.
+                body.pop("response_format", None)
+                resp = client.post(url, headers=headers, json=body)
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        # SEC-V3-01: never log Authorization header or API key values.
+        snippet = (exc.response.text or "")[:300]
+        raise RuntimeError(
+            f"LLM HTTP {exc.response.status_code}: {snippet}"
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError(
+            f"LLM 网络请求失败: {exc}"
+        ) from exc
+
+    # SEC-V3-01: response size limits.
+    header_size = sum(
+        len(k) + len(v) + 4 for k, v in resp.headers.items()
+    )
+    if header_size > max_header_bytes:
+        raise RuntimeError(
+            f"LLM 响应头超过 {max_header_bytes} 字节限制 "
+            f"(实际: {header_size})"
+        )
+    if len(resp.content) > max_body_bytes:
+        raise RuntimeError(
+            f"LLM 响应体超过 {max_body_bytes} 字节限制 "
+            f"(实际: {len(resp.content)})"
+        )
 
     try:
         data = resp.json()

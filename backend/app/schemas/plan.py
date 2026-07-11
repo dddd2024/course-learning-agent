@@ -1,10 +1,11 @@
 """Pydantic schemas for the study-plan and todo endpoints."""
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, time
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class PlanCreate(BaseModel):
@@ -36,11 +37,6 @@ class GoalResponse(BaseModel):
     deadline: date
     daily_minutes: int
     status: str
-    target_type: Optional[str] = None
-    target_id: Optional[int] = None
-    execution_status: str = "pending"
-    verification_method: Optional[str] = None
-    auto_completed_at: Optional[datetime] = None
 
 
 class TaskResponse(BaseModel):
@@ -48,6 +44,12 @@ class TaskResponse(BaseModel):
 
     ``course_name`` is denormalised on the way out (looked up from
     ``Course.name``) so the frontend does not need a second round-trip.
+
+    PLAN-V3-01: execution fields (``target_type``, ``target_id``,
+    ``target_spec``, ``execution_status``, ``verification_method``,
+    ``verification_result``, ``started_at``, ``completed_at``,
+    ``last_action_at``) are now exposed so the frontend can drive
+    the task lifecycle.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -62,6 +64,49 @@ class TaskResponse(BaseModel):
     priority: int
     acceptance: Optional[str] = None
     status: str
+    # Execution fields
+    target_type: Optional[str] = None
+    target_id: Optional[int] = None
+    target_spec: Optional[Dict[str, Any]] = None
+    execution_status: str = "pending"
+    verification_method: Optional[str] = None
+    verification_result: Optional[Dict[str, Any]] = None
+    auto_completed_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    last_action_at: Optional[datetime] = None
+
+    @field_validator("target_spec", mode="before")
+    @classmethod
+    def _parse_target_spec(cls, value):
+        """Parse the JSON string stored in the DB into a dict."""
+        if value is None or value == "":
+            return None
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                return parsed if isinstance(parsed, dict) else None
+            except (json.JSONDecodeError, TypeError):
+                return None
+        return None
+
+    @field_validator("verification_result", mode="before")
+    @classmethod
+    def _parse_verification_result(cls, value):
+        """Parse the JSON string stored in the DB into a dict."""
+        if value is None or value == "":
+            return None
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                return parsed if isinstance(parsed, dict) else None
+            except (json.JSONDecodeError, TypeError):
+                return None
+        return None
 
 
 class TodoResponse(BaseModel):
@@ -135,6 +180,19 @@ class TaskUpdate(BaseModel):
     """Payload for PATCH /plans/tasks/{task_id}. All fields optional."""
 
     status: Optional[str] = None
+
+
+class TaskVerifyRequest(BaseModel):
+    """Payload for POST /plans/tasks/{task_id}/verify."""
+
+    score: Optional[int] = None
+    threshold: int = 60
+
+
+class TaskOverrideRequest(BaseModel):
+    """Payload for POST /plans/tasks/{task_id}/override."""
+
+    reason: str = Field(..., min_length=1)
 
 
 class GoalUpdate(BaseModel):

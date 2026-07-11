@@ -37,6 +37,10 @@ class QuizItemOut(BaseModel):
     options: List[QuizOption] = []
     explanation: Optional[str] = None
     order_index: int
+    # QUIZ-V3-01: source evidence with chunk_id and quote_text for grounding.
+    source_evidence: List[dict] = []
+    # QUIZ-V3-02: verification status of this quiz item.
+    verification_status: str = "verified"
 
     @field_validator("options", mode="before")
     @classmethod
@@ -61,6 +65,20 @@ class QuizItemOut(BaseModel):
                 result.append({"label": label, "text": text, "value": label})
         return result
 
+    @field_validator("source_evidence", mode="before")
+    @classmethod
+    def _parse_source_evidence(cls, value):
+        """Parse the JSON string stored in the DB into a list."""
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                value = parsed if isinstance(parsed, list) else []
+            except (json.JSONDecodeError, TypeError):
+                return []
+        if value is None:
+            return []
+        return value
+
 
 class QuizOut(BaseModel):
     """A quiz with its items (answers excluded)."""
@@ -75,6 +93,10 @@ class QuizOut(BaseModel):
     score: Optional[int] = None
     created_at: Optional[datetime] = None
     items: List[QuizItemOut] = []
+    # QUIZ-V3-01: flag for quizzes with no evidence-backed items.
+    insufficient_evidence: bool = False
+    # QUIZ-V3-02: flag when some items were dropped during verification.
+    partial_generation: bool = False
 
 
 class QuizListResponse(BaseModel):
@@ -103,6 +125,10 @@ class QuizResultItemOut(BaseModel):
     Unlike ``QuizItemOut`` (used before submit), this one DOES expose the
     ``correct_answer`` so the client can render the right answer next to
     the user's answer in the review screen.
+
+    QUIZ-V3-03: ``rubric_feedback`` now includes per-criterion details
+    (weight, score, hit_keywords, missing_keywords) and a total score
+    summary entry when using weighted rubrics.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -118,6 +144,10 @@ class QuizResultItemOut(BaseModel):
     knowledge_point_id: Optional[int] = None
     rubric_feedback: List[dict] = []
     needs_review: bool = False
+    # QUIZ-V3-01: source evidence in result items.
+    source_evidence: List[dict] = []
+    # QUIZ-V3-02: verification status.
+    verification_status: str = "verified"
 
     @field_validator("options", mode="before")
     @classmethod
@@ -130,6 +160,20 @@ class QuizResultItemOut(BaseModel):
             except (json.JSONDecodeError, TypeError):
                 return []
         return QuizItemOut._parse_options(value)
+
+    @field_validator("source_evidence", mode="before")
+    @classmethod
+    def _parse_source_evidence(cls, value):
+        """Parse the JSON string stored in the DB into a list."""
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                value = parsed if isinstance(parsed, list) else []
+            except (json.JSONDecodeError, TypeError):
+                return []
+        if value is None:
+            return []
+        return value
 
 
 class QuizResultOut(BaseModel):

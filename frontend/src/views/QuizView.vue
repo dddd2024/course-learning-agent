@@ -19,6 +19,7 @@ import {
   type QuizStatus,
   type WeakPoint,
 } from '../api/quiz'
+import { verifyTask } from '../api/plan'
 import { parseApiError } from '../utils/error'
 import EmptyState from '../components/common/EmptyState.vue'
 import QuizAnswerControl from '../components/quiz/QuizAnswerControl.vue'
@@ -160,8 +161,38 @@ async function fetchCourses() {
       selectedCourseId.value = courses.value.some((course) => course.id === requestedCourseId)
         ? requestedCourseId
         : courses.value[0].id
-      fetchQuizzes()
+      await fetchQuizzes()
       fetchWeakPoints()
+
+      // PLAN-V3-03: Auto-open a quiz if quiz_id is in the query
+      // (e.g., when navigating from the Plans page).
+      const queryQuizId = Number(route.query.quiz_id)
+      if (Number.isInteger(queryQuizId) && queryQuizId > 0) {
+        const target = quizzes.value.find((q) => q.id === queryQuizId)
+        if (target && isQuizOpenable(target.status)) {
+          openQuiz(target)
+        } else if (target) {
+          // Quiz exists but is in a non-openable state — fetch it directly
+          try {
+            const { data: quizData } = await getQuiz(queryQuizId)
+            if (isQuizOpenable(quizData.status)) {
+              openQuiz(quizData)
+            }
+          } catch {
+            // Ignore — user can manually open it from the list
+          }
+        } else {
+          // Quiz not in the list for this course — try fetching directly
+          try {
+            const { data: quizData } = await getQuiz(queryQuizId)
+            if (isQuizOpenable(quizData.status)) {
+              openQuiz(quizData)
+            }
+          } catch {
+            // Ignore — quiz may belong to a different course
+          }
+        }
+      }
     }
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取课程列表失败'))
@@ -342,6 +373,27 @@ async function handleSubmit() {
       score: data.score,
     }
     ElMessage.success('提交成功')
+
+    // PLAN-V3-02/03: If we came from a plan task, verify the task
+    // with the quiz score so it auto-completes.
+    const queryTaskId = route.query.task_id
+    if (queryTaskId) {
+      const taskId = Number(queryTaskId)
+      if (Number.isInteger(taskId) && data.total > 0) {
+        const pct = Math.round((data.score / data.total) * 100)
+        try {
+          const { data: verifyData } = await verifyTask(taskId, pct, 60)
+          if (verifyData.verified) {
+            ElMessage.success('任务验证通过，已自动完成')
+          } else {
+            ElMessage.warning(`任务验证未通过（得分 ${pct}%，需 ≥ 60%）`)
+          }
+        } catch {
+          // Verification failure is non-fatal — the quiz was still submitted.
+        }
+      }
+    }
+
     fetchQuizzes()
     fetchWeakPoints()
   } catch (err) {
@@ -564,15 +616,45 @@ onUnmounted(() => {
             </div>
             <div v-if="resultMap[item.id]?.rubric_feedback?.length" class="rubric-feedback">
               <span class="result-label">评分要点：</span>
-              <el-tag
-                v-for="feedback in resultMap[item.id].rubric_feedback"
-                :key="feedback.criterion"
-                :type="feedback.met ? 'success' : 'warning'"
-                size="small"
-                class="rubric-tag"
+              <div class="rubric-criteria-list">
+                <div
+                  v-for="feedback in resultMap[item.id].rubric_feedback.filter(f => f.criterion)"
+                  :key="feedback.criterion"
+                  class="rubric-criterion-item"
+                  :class="{ 'criterion-met': feedback.met, 'criterion-missed': !feedback.met }"
+                >
+                  <div class="criterion-header">
+                    <el-tag
+                      :type="feedback.met ? 'success' : 'warning'"
+                      size="small"
+                    >
+                      {{ feedback.met ? '已覆盖' : '未覆盖' }}
+                    </el-tag>
+                    <span class="criterion-text">{{ feedback.criterion }}</span>
+                    <span v-if="feedback.weight !== undefined" class="criterion-weight">
+                      权重: {{ (feedback.weight * 100).toFixed(0) }}%
+                    </span>
+                  </div>
+                  <div v-if="feedback.hit_keywords?.length" class="criterion-keywords hit">
+                    命中: {{ feedback.hit_keywords.join('、') }}
+                  </div>
+                  <div v-if="feedback.missing_keywords?.length" class="criterion-keywords missed">
+                    缺失: {{ feedback.missing_keywords.join('、') }}
+                  </div>
+                  <div v-if="feedback.legacy_scoring" class="criterion-legacy">
+                    旧版评分模式
+                  </div>
+                </div>
+              </div>
+              <!-- Total score summary for weighted rubrics -->
+              <div
+                v-if="resultMap[item.id].rubric_feedback.find(f => f.total_score !== undefined)"
+                class="rubric-total-score"
               >
-                {{ feedback.criterion }}：{{ feedback.message }}
-              </el-tag>
+                总分: {{
+                  ((resultMap[item.id].rubric_feedback.find(f => f.total_score !== undefined)?.total_score) ?? 0) * 100
+                }}%
+              </div>
               <el-alert
                 v-if="resultMap[item.id].needs_review"
                 title="该答案接近自动评分边界，建议教师或助教复核。"
@@ -581,6 +663,18 @@ onUnmounted(() => {
                 show-icon
                 class="rubric-review-alert"
               />
+            </div>
+            <!-- Source evidence display -->
+            <div v-if="resultMap[item.id]?.source_evidence?.length" class="source-evidence">
+              <span class="result-label">来源证据：</span>
+              <div
+                v-for="(ev, evIdx) in resultMap[item.id].source_evidence"
+                :key="evIdx"
+                class="evidence-item"
+              >
+                <el-tag size="small" type="info">片段 #{{ ev.chunk_id }}</el-tag>
+                <span class="evidence-quote">{{ ev.quote_text }}</span>
+              </div>
             </div>
           </div>
         </el-card>
@@ -1168,14 +1262,101 @@ onUnmounted(() => {
 .rubric-feedback {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding-top: 4px;
+  flex-direction: column;
+}
+
+.rubric-criteria-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.rubric-criterion-item {
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid #ebeef5;
+}
+
+.criterion-met {
+  background: #f0f9eb;
+  border-color: #e1f3d8;
+}
+
+.criterion-missed {
+  background: #fdf6ec;
+  border-color: #faecd8;
+}
+
+.criterion-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.criterion-text {
+  font-size: 13px;
+  color: #303133;
+}
+
+.criterion-weight {
+  font-size: 12px;
+  color: #909399;
+  margin-left: auto;
+}
+
+.criterion-keywords {
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.criterion-keywords.hit {
+  color: #67c23a;
+}
+
+.criterion-keywords.missed {
+  color: #e6a23c;
+}
+
+.criterion-legacy {
+  font-size: 11px;
+  color: #909399;
+  margin-top: 2px;
+}
+
+.rubric-total-score {
+  font-size: 14px;
+  font-weight: 600;
+  color: #409eff;
+  padding: 4px 0;
 }
 
 .rubric-tag {
   white-space: normal;
   height: auto;
+  line-height: 1.5;
+}
+
+.source-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+}
+
+.evidence-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.evidence-quote {
+  color: #606266;
   line-height: 1.5;
 }
 

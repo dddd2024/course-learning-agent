@@ -68,6 +68,9 @@ export interface ChatResult {
   provider?: string
   fallback_used?: boolean
   fallback_reason?: string | null
+  // CHAT-V3-01: expose original vs resolved query for audit
+  original_query?: string | null
+  resolved_query?: string | null
 }
 
 // T04: conversation history replay types.

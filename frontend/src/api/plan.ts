@@ -24,6 +24,49 @@ export interface PlanTask {
   priority: number
   acceptance: string | null
   status: string
+  // PLAN-V3-01: execution fields
+  target_type: string | null
+  target_id: number | null
+  target_spec: Record<string, unknown> | null
+  execution_status: string
+  verification_method: string | null
+  verification_result: Record<string, unknown> | null
+  auto_completed_at: string | null
+  started_at: string | null
+  completed_at: string | null
+  last_action_at: string | null
+}
+
+export interface TaskStartResult {
+  route: string
+  params: Record<string, unknown>
+  target_id: number | null
+  quiz_id: number | null
+  target_type: string | null
+  execution_status?: string
+  started_at?: string | null
+}
+
+export interface TaskVerifyResult {
+  verified: boolean
+  verification_result: Record<string, unknown>
+  completion_status: string
+  execution_status?: string
+  status?: string
+}
+
+export interface TaskExecutionInfo {
+  task_id: number
+  target_type: string | null
+  target_id: number | null
+  target_spec: Record<string, unknown> | null
+  execution_status: string
+  verification_method: string | null
+  verification_result: Record<string, unknown> | null
+  auto_completed_at: string | null
+  started_at: string | null
+  completed_at: string | null
+  last_action_at: string | null
 }
 
 export interface Todo {
@@ -178,4 +221,32 @@ export function updateGoal(id: number, payload: GoalUpdatePayload): AxiosPromise
 
 export function deletePlan(id: number): AxiosPromise<void> {
   return request.delete(`/plans/${id}`)
+}
+
+// PLAN-V3-02: Task execution API functions
+
+export function startTask(taskId: number): AxiosPromise<TaskStartResult> {
+  return request.post(`/plans/tasks/${taskId}/start`)
+}
+
+export function verifyTask(
+  taskId: number,
+  score?: number,
+  threshold: number = 60,
+): AxiosPromise<TaskVerifyResult> {
+  return request.post(`/plans/tasks/${taskId}/verify`, {
+    score: score ?? null,
+    threshold,
+  })
+}
+
+export function getExecutionInfo(taskId: number): AxiosPromise<TaskExecutionInfo> {
+  return request.get(`/plans/tasks/${taskId}/execution`)
+}
+
+export function overrideTask(
+  taskId: number,
+  reason: string,
+): AxiosPromise<TaskVerifyResult> {
+  return request.post(`/plans/tasks/${taskId}/override`, { reason })
 }

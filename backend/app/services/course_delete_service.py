@@ -1,6 +1,7 @@
 """Transactional course cleanup with a recoverable on-disk staging area."""
 from __future__ import annotations
 
+import logging
 import shutil
 from pathlib import Path
 
@@ -15,9 +16,11 @@ from app.models.knowledge_point import KnowledgePoint
 from app.models.material import Material, MaterialVersion
 from app.models.material_chunk import MaterialChunk
 from app.models.material_image import MaterialImage
-from app.models.plan import StudyTask, Todo
+from app.models.plan import StudyGoal, StudyTask, Todo
 from app.models.quiz import Quiz, QuizItem, WeakPoint
 from app.models.security_finding import MaterialSecurityFinding
+
+logger = logging.getLogger(__name__)
 
 
 def delete_course(db: Session, course: Course) -> None:
@@ -46,6 +49,15 @@ def delete_course(db: Session, course: Course) -> None:
         node_ids = [r[0] for r in db.query(ConceptNode.id).filter(ConceptNode.course_id == course_id)]
         task_ids = [r[0] for r in db.query(StudyTask.id).filter(StudyTask.course_id == course_id)]
 
+        # DATA-V3-01: Record affected goal_ids before deleting tasks so we
+        # can clean up orphan goals after task deletion.
+        affected_goal_ids: set[int] = set()
+        if task_ids:
+            goal_rows = db.query(StudyTask.goal_id).filter(
+                StudyTask.id.in_(task_ids)
+            ).distinct().all()
+            affected_goal_ids = {row[0] for row in goal_rows}
+
         if message_ids:
             db.query(Citation).filter(Citation.message_id.in_(message_ids)).delete(synchronize_session=False)
         if chunk_ids:
@@ -66,6 +78,53 @@ def delete_course(db: Session, course: Course) -> None:
         if task_ids:
             db.query(Todo).filter(Todo.task_id.in_(task_ids)).delete(synchronize_session=False)
             db.query(StudyTask).filter(StudyTask.id.in_(task_ids)).delete(synchronize_session=False)
+
+        # DATA-V3-01: Clean up orphan StudyGoals left behind by task deletion.
+        # For each affected goal, either delete it (no remaining tasks) or
+        # recalculate its progress (remaining tasks from other courses).
+        deleted_goals: list[int] = []
+        preserved_goals: list[int] = []
+        for goal_id in affected_goal_ids:
+            remaining_count = (
+                db.query(StudyTask)
+                .filter(StudyTask.goal_id == goal_id)
+                .count()
+            )
+            if remaining_count == 0:
+                # No tasks left — delete the goal entirely.
+                db.query(StudyGoal).filter(
+                    StudyGoal.id == goal_id
+                ).delete(synchronize_session=False)
+                deleted_goals.append(goal_id)
+            else:
+                # Multi-course goal — recalculate status and progress.
+                remaining_tasks = (
+                    db.query(StudyTask)
+                    .filter(StudyTask.goal_id == goal_id)
+                    .all()
+                )
+                done_count = sum(
+                    1 for t in remaining_tasks if t.status == "done"
+                )
+                total_count = len(remaining_tasks)
+                goal = (
+                    db.query(StudyGoal)
+                    .filter(StudyGoal.id == goal_id)
+                    .first()
+                )
+                if goal:
+                    if done_count == total_count and total_count > 0:
+                        goal.status = "done"
+                    else:
+                        goal.status = "active"
+                preserved_goals.append(goal_id)
+
+        logger.info(
+            "Course deletion (course_id=%s): deleted_goals=%s, "
+            "preserved_goals=%s",
+            course_id, deleted_goals, preserved_goals,
+        )
+
         db.query(Todo).filter(Todo.course_id == course_id).delete(synchronize_session=False)
         db.query(WeakPoint).filter(WeakPoint.course_id == course_id).delete(synchronize_session=False)
         quiz_ids = [r[0] for r in db.query(Quiz.id).filter(Quiz.course_id == course_id)]

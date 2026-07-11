@@ -88,7 +88,11 @@ def _get_owned_quiz(db: Session, quiz_id: int, user_id: int) -> Quiz:
     return quiz
 
 
-def _quiz_to_response(quiz: Quiz) -> QuizOut:
+def _quiz_to_response(
+    quiz: Quiz,
+    partial_generation: bool = False,
+    insufficient_evidence: bool = False,
+) -> QuizOut:
     """Build a ``QuizOut`` (with items, without answers) from a ``Quiz``."""
     items = [
         QuizItemOut.model_validate(item)
@@ -103,6 +107,8 @@ def _quiz_to_response(quiz: Quiz) -> QuizOut:
         score=quiz.score,
         created_at=quiz.created_at,
         items=items,
+        partial_generation=partial_generation,
+        insufficient_evidence=insufficient_evidence,
     )
 
 
@@ -123,32 +129,92 @@ def _legacy_rubric(answer: str) -> list[dict]:
 
 
 def _short_answer_feedback(item: QuizItem, user_answer) -> tuple[bool, list[dict], bool]:
-    """Return deterministic scoring details for a short answer."""
+    """Return deterministic scoring details for a short answer.
+
+    QUIZ-V3-03: supports weighted rubric criteria. When the rubric has
+    ``weight`` fields, the total score is computed as a weighted sum.
+    Per-criterion details include hit keywords, missing points, and
+    individual scores. ``legacy_scoring`` is set to True for old items
+    without weighted rubrics. ``needs_human_review`` is set for
+    borderline scores (0.4 <= score < 0.6).
+    """
     try:
         rubric = json.loads(item.rubric_json or "[]")
     except (TypeError, json.JSONDecodeError):
         rubric = []
     if not isinstance(rubric, list) or not rubric:
         rubric = _legacy_rubric(item.answer or "")
+
+    # QUIZ-V3-03: detect whether this is a weighted rubric.
+    has_weights = any(
+        isinstance(c, dict) and "weight" in c and c.get("weight", 0) > 0
+        for c in rubric
+    )
+    legacy_scoring = not has_weights
+
     text = str(user_answer or "").strip().lower()
     feedback: list[dict] = []
+    total_weight = 0.0
+    earned_weight = 0.0
+
     for criterion in rubric:
         if not isinstance(criterion, dict):
             continue
-        keywords = [str(value).strip().lower() for value in criterion.get("keywords", []) if str(value).strip()]
+        keywords = [
+            str(value).strip().lower()
+            for value in criterion.get("keywords", [])
+            if str(value).strip()
+        ]
         if not keywords:
             continue
         met = any(keyword in text for keyword in keywords)
+        weight = float(criterion.get("weight", 0.0)) if not legacy_scoring else 0.0
+        if legacy_scoring:
+            weight = 1.0 / len(rubric)
+        total_weight += weight
+        if met:
+            earned_weight += weight
+        hit_keywords = [kw for kw in keywords if kw in text]
+        missing_keywords = [kw for kw in keywords if kw not in text]
         feedback.append({
             "criterion": str(criterion.get("criterion") or "关键要点"),
             "met": met,
             "keywords": keywords,
+            "hit_keywords": hit_keywords,
+            "missing_keywords": missing_keywords,
+            "weight": round(weight, 4),
+            "score": 1.0 if met else 0.0,
             "message": "已覆盖该要点" if met else "尚未说明该要点",
+            "evidence_ids": criterion.get("evidence_ids", []),
+            "required": criterion.get("required", True),
         })
+
     if not feedback:
         return False, [], True
-    ratio = sum(entry["met"] for entry in feedback) / len(feedback)
-    return ratio >= 0.5, feedback, 0.4 <= ratio < 0.6
+
+    if legacy_scoring:
+        ratio = sum(entry["met"] for entry in feedback) / len(feedback)
+        correct = ratio >= 0.5
+        needs_review = 0.4 <= ratio < 0.6
+        # Add legacy_scoring flag to each feedback entry.
+        for entry in feedback:
+            entry["legacy_scoring"] = True
+    else:
+        total_score = earned_weight / total_weight if total_weight > 0 else 0.0
+        correct = total_score >= 0.5
+        needs_review = 0.4 <= total_score < 0.6
+        for entry in feedback:
+            entry["legacy_scoring"] = False
+        # Add total score summary.
+        feedback.append({
+            "total_score": round(total_score, 4),
+            "earned_weight": round(earned_weight, 4),
+            "total_weight": round(total_weight, 4),
+            "legacy_scoring": False,
+            "needs_human_review": needs_review,
+        })
+
+    return correct, feedback, needs_review
 
 
 def _grade_item_details(item: QuizItem, user_answer) -> tuple[bool, list[dict], bool]:
@@ -273,8 +339,9 @@ def create_quiz(
         question_count=payload.question_count,
         user_config=user_config,
     )
-    if not quiz_output.get("items"):
-        raise BusinessException(message="课程资料缺少可追溯证据，暂不能生成测验")
+    # QUIZ-V3-01: when no valid evidence exists, return a quiz with 0 items
+    # instead of raising a 400 error. The frontend can show an empty state.
+    insufficient_evidence = quiz_output.get("insufficient_evidence", False)
 
     quiz = Quiz(
         user_id=current_user.id,
@@ -300,6 +367,11 @@ def create_quiz(
             difficulty=item_data.get("difficulty"),
             source_evidence_ids=json.dumps(item_data.get("source_evidence_ids", [])),
             evidence_snapshot=json.dumps(item_data.get("source_evidence_ids", [])),
+            # QUIZ-V3-01: store source_evidence for grounding verification.
+            source_evidence=json.dumps(
+                item_data.get("source_evidence", []), ensure_ascii=False
+            ),
+            verification_status=item_data.get("verification_status", "verified"),
             rubric_json=json.dumps(item_data.get("rubric", []), ensure_ascii=False),
             order_index=item_data.get("order_index", 0),
         )
@@ -307,7 +379,13 @@ def create_quiz(
 
     db.commit()
     db.refresh(quiz)
-    return _quiz_to_response(quiz)
+    # QUIZ-V3-02: pass partial_generation flag to the response.
+    partial_gen = quiz_output.get("partial_generation", False)
+    return _quiz_to_response(
+        quiz,
+        partial_generation=partial_gen,
+        insufficient_evidence=insufficient_evidence,
+    )
 
 
 @router.get("", response_model=QuizListResponse)
@@ -362,6 +440,8 @@ def get_quiz_result(
             knowledge_point_id=item.knowledge_point_id,
             rubric_feedback=rubric_feedback,
             needs_review=needs_review,
+            source_evidence=item.source_evidence or "[]",
+            verification_status=getattr(item, "verification_status", "verified") or "verified",
         ))
     return QuizResultOut(
         id=quiz.id,
@@ -460,6 +540,8 @@ def submit_quiz(
                 knowledge_point_id=item.knowledge_point_id,
                 rubric_feedback=rubric_feedback,
                 needs_review=needs_review,
+                source_evidence=item.source_evidence or "[]",
+                verification_status=getattr(item, "verification_status", "verified") or "verified",
             )
         )
 

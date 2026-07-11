@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # T09: environment + CORS hardening.
     ENVIRONMENT: str = "development"  # development | production
     CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # SEC-V3-01: When True, allow private/localhost LLM endpoints in ALL
+    # environments. Defaults to False so SSRF protection is always active.
+    # The cloud metadata endpoint 169.254.169.254 is ALWAYS blocked.
+    ALLOW_PRIVATE_LLM_ENDPOINTS: bool = False
     # Task C: project identity exposed by /api/v1/health so the Windows
     # launcher can verify port 8000 actually serves this backend.
     APP_NAME: str = "course-learning-agent"

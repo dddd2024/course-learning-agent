@@ -155,7 +155,7 @@ def get_or_create_compare_report(
             target_node_id=source_node_id, user_focus=user_focus,
             evidence_hash="",
         ).first()
-        if cached is not None:
+        if cached is not None and not force_refresh:
             return _report_to_dict(cached)
         report = ConceptCompareReport(
             user_id=user_id, source_node_id=source_node_id,
@@ -171,19 +171,26 @@ def get_or_create_compare_report(
             }, ensure_ascii=False),
             citation_chunk_ids="[]", prompt_version="v1", provider="mock",
             model_name="mock", user_focus=user_focus, evidence_hash="",
+            report_status="insufficient_evidence",
+            fallback_used=0,
+            generation_mode="mock",
         )
         db.add(report)
         db.flush()
-        return _report_to_dict(report, {"fallback_used": False})
+        return _report_to_dict(report)
 
     # Cache lookup: same user + same node pair (either order)
-    # + same user_focus + same evidence_hash.
+    # + same user_focus + same evidence_hash + same prompt_version.
+    # GRAPH-V3-01: also match on provider so a report generated with
+    # mock mode is NOT served when a real model is now available.
+    # When force_refresh: do NOT return old degraded reports.
     cached = db.query(ConceptCompareReport).filter_by(
         user_id=user_id,
         source_node_id=source_node_id,
         target_node_id=target_node_id,
         user_focus=user_focus,
         evidence_hash=evidence_hash,
+        prompt_version="v1",
     ).first()
     if cached is None:
         cached = db.query(ConceptCompareReport).filter_by(
@@ -192,8 +199,14 @@ def get_or_create_compare_report(
             target_node_id=source_node_id,
             user_focus=user_focus,
             evidence_hash=evidence_hash,
+            prompt_version="v1",
         ).first()
-    if cached is not None and not force_refresh:
+    if (
+        cached is not None
+        and not force_refresh
+        and (cached.report_status or "success") not in
+            ("degraded", "insufficient_evidence")
+    ):
         return _report_to_dict(cached)
 
     # Generate a fresh report via the compare agent.
@@ -206,6 +219,8 @@ def get_or_create_compare_report(
         user_config=user_config,
         user_focus=user_focus,
     )
+
+    from app.core.timezone import utc_now
 
     report = ConceptCompareReport(
         user_id=user_id,
@@ -222,6 +237,15 @@ def get_or_create_compare_report(
         user_focus=user_focus,
         evidence_hash=evidence_hash,
         audit_run_id=result["audit_run_id"],
+        # GRAPH-V3-01: persist complete generation metadata so a cache
+        # hit restores the real fallback/provider/model state.
+        report_status=result.get("report_status", "success"),
+        fallback_used=1 if result.get("fallback_used") else 0,
+        fallback_reason=result.get("fallback_reason") or None,
+        generated_at=utc_now(),
+        actual_provider=result.get("provider"),
+        actual_model=result.get("model_name"),
+        generation_mode=result.get("generation_mode", "real"),
     )
     db.add(report)
     db.flush()
@@ -231,6 +255,14 @@ def get_or_create_compare_report(
 def _report_to_dict(
     report: ConceptCompareReport, gen_meta: dict | None = None
 ) -> dict[str, Any]:
+    """Build the response dict from a ConceptCompareReport row.
+
+    When ``gen_meta`` is provided (fresh generation), it takes precedence
+    over the DB-stored columns so the just-computed values are returned.
+    When ``gen_meta`` is None (cache hit), all metadata is restored from
+    the DB row so a cached degraded report keeps its real fallback_used /
+    report_status instead of defaulting to fallback=false.
+    """
     meta = gen_meta or {}
     return {
         "id": report.id,
@@ -244,9 +276,35 @@ def _report_to_dict(
         "prompt_version": report.prompt_version,
         "provider": report.provider,
         "model_name": report.model_name,
-        "fallback_used": bool(meta.get("fallback_used", False)),
-        "fallback_reason": meta.get("fallback_reason", ""),
+        "fallback_used": bool(
+            meta.get(
+                "fallback_used",
+                bool(report.fallback_used) if report.fallback_used is not None else False,
+            )
+        ),
+        "fallback_reason": meta.get(
+            "fallback_reason",
+            report.fallback_reason or "",
+        ),
         "audit_run_id": report.audit_run_id,
+        "report_status": meta.get(
+            "report_status",
+            report.report_status or "success",
+        ),
+        "expires_at": getattr(report, "expires_at", None),
+        "generated_at": getattr(report, "generated_at", None),
+        "actual_provider": meta.get(
+            "actual_provider",
+            getattr(report, "actual_provider", None) or report.provider,
+        ),
+        "actual_model": meta.get(
+            "actual_model",
+            getattr(report, "actual_model", None) or report.model_name,
+        ),
+        "generation_mode": meta.get(
+            "generation_mode",
+            getattr(report, "generation_mode", None) or "real",
+        ),
     }
 
 

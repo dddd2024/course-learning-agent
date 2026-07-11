@@ -66,6 +66,12 @@ class StudyTask(Base, TimestampMixin):
     execution_status = Column(String(30), nullable=False, default="pending")
     verification_method = Column(String(50), nullable=True)
     auto_completed_at = Column(DateTime, nullable=True)
+    # PLAN-V3-01: executable task target columns
+    target_spec_json = Column(Text, nullable=True)  # JSON spec for the task target
+    verification_result_json = Column(Text, nullable=True)  # JSON result of verification
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    last_action_at = Column(DateTime, nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (

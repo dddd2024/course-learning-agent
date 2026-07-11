@@ -6,6 +6,15 @@
         <el-icon><ArrowLeft /></el-icon>
         返回课程
       </el-button>
+      <el-button
+        v-if="fromTaskId"
+        link
+        type="primary"
+        @click="goBackToPlan"
+      >
+        <el-icon><ArrowLeft /></el-icon>
+        返回计划
+      </el-button>
       <h2 class="learn-title">{{ courseName || '课程学习' }}</h2>
       <el-button
         type="primary"
@@ -188,6 +197,13 @@
                 >
                   AI 质量 {{ Math.round(chunk.quality_score * 100) }}%
                 </span>
+                <span
+                  v-if="parseNoiseFlags(chunk.noise_flags)"
+                  class="noise-badge"
+                  :title="formatNoiseTooltip(chunk.noise_flags)"
+                >
+                  {{ formatNoiseLabel(chunk.noise_flags) }}
+                </span>
               </div>
               <div
                 class="doc-chunk-text"
@@ -199,6 +215,11 @@
                   :key="img.id"
                   class="doc-chunk-image-item"
                 >
+                  <div v-if="img.is_decorative" class="image-decorative-tag">
+                    <el-tag type="info" size="small" effect="plain">
+                      已过滤：{{ img.decorative_reason || '装饰性图片' }}
+                    </el-tag>
+                  </div>
                   <el-image
                     :src="imageUrls[img.id] || ''"
                     :preview-src-list="imageUrls[img.id] ? [imageUrls[img.id]] : []"
@@ -335,6 +356,11 @@ const router = useRouter()
 
 const courseId = computed(() => Number(route.params.id))
 const courseName = ref('')
+// PLAN-V3-03: track if we navigated here from a plan task
+const fromTaskId = computed(() => {
+  const tid = Number(route.query.task_id)
+  return Number.isInteger(tid) && tid > 0 ? tid : null
+})
 const materials = ref<Material[]>([])
 const selectedMaterialId = ref<number | null>(null)
 const rawChunks = ref<Chunk[]>([])
@@ -500,6 +526,42 @@ function getQualityClass(score: number): string {
   if (score >= 0.7) return 'quality-high'
   if (score >= 0.4) return 'quality-medium'
   return 'quality-low'
+}
+
+// LEARN-V3-01: noise_flags display helpers
+function parseNoiseFlags(noiseFlags: string | null | undefined): Record<string, boolean> | null {
+  if (!noiseFlags) return null
+  try {
+    const parsed = JSON.parse(noiseFlags)
+    if (parsed && typeof parsed === 'object') {
+      // Only show if at least one flag is true
+      const hasNoise = Object.values(parsed).some((v) => v === true)
+      return hasNoise ? parsed : null
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return null
+}
+
+function formatNoiseLabel(noiseFlags: string | null | undefined): string {
+  const flags = parseNoiseFlags(noiseFlags)
+  if (!flags) return ''
+  const labels: string[] = []
+  if (flags.line_repetition) labels.push('重复行')
+  if (flags.short_line_stacking) labels.push('短行堆叠')
+  if (flags.low_diversity) labels.push('低多样性')
+  return labels.length > 0 ? `噪音：${labels.join('、')}` : ''
+}
+
+function formatNoiseTooltip(noiseFlags: string | null | undefined): string {
+  const flags = parseNoiseFlags(noiseFlags)
+  if (!flags) return ''
+  const reasons: string[] = []
+  if (flags.line_repetition) reasons.push('行重复率 > 50%')
+  if (flags.short_line_stacking) reasons.push('短行（<4字符）占比 > 60%')
+  if (flags.low_diversity) reasons.push('词汇多样性 < 0.3')
+  return reasons.join('；')
 }
 
 // --- Term highlighting ---
@@ -854,6 +916,11 @@ async function copyMessage(content: string) {
 function goBack() {
   router.push(`/courses/${courseId.value}`)
 }
+
+// PLAN-V3-03: Navigate back to the plans page
+function goBackToPlan() {
+  router.push('/plans')
+}
 </script>
 
 <style scoped>
@@ -1158,6 +1225,21 @@ function goBack() {
   font-weight: 600;
   flex-shrink: 0;
   cursor: help;
+}
+
+.noise-badge {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  background: #f56c6c22;
+  color: #f56c6c;
+  border: 1px solid #f56c6c44;
+  cursor: help;
+}
+.image-decorative-tag {
+  margin-bottom: 4px;
 }
 
 .quality-high {

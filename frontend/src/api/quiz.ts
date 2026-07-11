@@ -12,6 +12,8 @@ export interface QuizItem {
   options: QuizOption[]
   explanation: string
   order_index: number
+  source_evidence?: Array<{ chunk_id: number; quote_text: string }>
+  verification_status?: string
 }
 
 export interface Quiz {
@@ -23,6 +25,8 @@ export interface Quiz {
   score: number | null
   created_at: string
   items: QuizItem[]
+  insufficient_evidence?: boolean
+  partial_generation?: boolean
 }
 
 export interface QuizListResult {
@@ -39,6 +43,24 @@ export interface QuizSubmitPayload {
   answers: QuizSubmitAnswer[]
 }
 
+export interface RubricFeedbackEntry {
+  criterion: string
+  met: boolean
+  keywords: string[]
+  hit_keywords?: string[]
+  missing_keywords?: string[]
+  weight?: number
+  score?: number
+  message: string
+  evidence_ids?: number[]
+  required?: boolean
+  legacy_scoring?: boolean
+  total_score?: number
+  earned_weight?: number
+  total_weight?: number
+  needs_human_review?: boolean
+}
+
 export interface QuizResultItem {
   id: number
   question_text: string
@@ -49,8 +71,10 @@ export interface QuizResultItem {
   is_correct: boolean
   explanation: string
   knowledge_point_id: number | null
-  rubric_feedback: Array<{ criterion: string; met: boolean; keywords: string[]; message: string }>
+  rubric_feedback: RubricFeedbackEntry[]
   needs_review: boolean
+  source_evidence?: Array<{ chunk_id: number; quote_text: string }>
+  verification_status?: string
 }
 
 export interface QuizResult {

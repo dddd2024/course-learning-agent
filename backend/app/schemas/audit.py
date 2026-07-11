@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 
 def _maybe_parse_json(value: Any) -> Any:
@@ -53,7 +53,19 @@ class AgentRunResponse(BaseModel):
     output_summary: Optional[Any] = None
     prompt_version: Optional[str] = None
     model_name: Optional[str] = None
+    # V3-02: provider / model traceability fields
     provider: Optional[str] = None
+    requested_provider: Optional[str] = None
+    requested_model: Optional[str] = None
+    actual_provider: Optional[str] = None
+    actual_model: Optional[str] = None
+    fallback_used: bool = False
+    fallback_reason: Optional[str] = None
+    fallback_chain: Optional[Any] = None
+    evidence_status: Optional[str] = None
+    # final_status mirrors status but makes the "definitive outcome"
+    # semantics explicit for the frontend.
+    final_status: Optional[str] = None
     config_id: Optional[int] = None
     duration_ms: Optional[int] = None
     error_message: Optional[str] = None
@@ -61,10 +73,35 @@ class AgentRunResponse(BaseModel):
     finished_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
-    @field_validator("input_summary", "output_summary", mode="before")
+    @field_validator("input_summary", "output_summary", "fallback_chain", mode="before")
     @classmethod
-    def _parse_summary_field(cls, value):
+    def _parse_json_field(cls, value):
         return _maybe_parse_json(value)
+
+    @field_validator("fallback_used", mode="before")
+    @classmethod
+    def _coerce_bool(cls, value):
+        """SQLite stores booleans as 0/1 integers."""
+        if value is None:
+            return False
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return bool(value)
+
+    @field_validator("final_status", mode="before")
+    @classmethod
+    def _default_final_status(cls, value):
+        """If final_status is not explicitly set, default to status."""
+        return value
+
+    @model_validator(mode="after")
+    def _populate_final_status(self):
+        """Ensure final_status is populated with the run's status."""
+        if not self.final_status:
+            self.final_status = self.status
+        return self
 
 
 class AgentRunDetailResponse(AgentRunResponse):

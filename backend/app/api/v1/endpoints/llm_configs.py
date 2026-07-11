@@ -150,7 +150,10 @@ def test(
     so the UI can surface the most recent result.
     """
     config = _get_owned_config(db, config_id, current_user.id)
-    result = _test_connection(config)
+    try:
+        result = _test_connection(config)
+    except ValueError as exc:
+        raise BusinessException(message=str(exc)) from exc
     config.last_test_status = result["status"]
     config.last_test_error = result["error"]
     config.last_test_at = datetime.now()

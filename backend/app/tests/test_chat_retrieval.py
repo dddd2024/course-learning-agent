@@ -127,6 +127,23 @@ def test_retrieved_chunks_is_cited_flag(
     monkeypatch.setattr(
         "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
     )
+    # Mock call_llm_with_meta with degraded=False so citations are not
+    # forced to "weak" status by the degraded-mock override.
+    # (EVID-V3-01 filters out weak citations, so we need non-degraded
+    # citations for the is_cited flag to work.)
+    from app.agents import course_qa as qa_module
+    original_call_llm = qa_module.call_llm_with_meta
+
+    def non_degraded_call_llm(prompt, agent_type, schema=None, user_config=None):
+        output, meta = original_call_llm(
+            prompt, agent_type, schema=schema, user_config=user_config
+        )
+        meta["degraded"] = False
+        return output, meta
+
+    monkeypatch.setattr(
+        "app.agents.course_qa.call_llm_with_meta", non_degraded_call_llm
+    )
 
     headers = auth_headers(client, username="alice")
     course_id, conv_id = _setup_chat(client, headers)
@@ -257,7 +274,12 @@ def test_reliability_level_high(client, tmp_path, monkeypatch) -> None:
 
 
 def test_reliability_level_low_for_degraded_mock(client, tmp_path, monkeypatch) -> None:
-    """A mock fallback may show a source, but is never marked verified."""
+    """A mock fallback may show a source, but is never marked verified.
+
+    EVID-V3-01: weak citations from a degraded mock are now filtered out
+    entirely. The answer is replaced with an evidence-insufficient message
+    and not_found is set to True.
+    """
     monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
     monkeypatch.setattr(
         "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
@@ -277,11 +299,12 @@ def test_reliability_level_low_for_degraded_mock(client, tmp_path, monkeypatch) 
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    # The mock may return an exact source quote for UI continuity, but its
-    # support status is deliberately weak and cannot inflate reliability.
-    assert len(body["citations"]) == 1
-    assert body["citations"][0]["support_status"] == "weak"
-    assert body["reliability_level"] == "low"
+    # EVID-V3-01: all citations are weak (degraded mock), so they are
+    # filtered out. The answer is replaced with an evidence-insufficient
+    # message and not_found is set to True.
+    assert len(body["citations"]) == 0
+    assert body["not_found"] is True
+    assert "证据" in body["answer"] or "不足" in body["answer"]
 
 
 def test_reliability_level_failed(client, tmp_path, monkeypatch) -> None:

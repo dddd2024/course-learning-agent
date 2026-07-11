@@ -1,4 +1,5 @@
 """Pydantic schemas for concept graph API."""
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel
@@ -70,3 +71,11 @@ class CompareReportResponse(BaseModel):
     fallback_used: bool = False
     fallback_reason: str = ""
     audit_run_id: int | None = None
+    # GRAPH-V3-01: expose generation metadata so the frontend can show
+    # whether a cached report was degraded/mock and when it expires.
+    report_status: str = "success"
+    expires_at: datetime | None = None
+    generated_at: datetime | None = None
+    actual_provider: str | None = None
+    actual_model: str | None = None
+    generation_mode: str = "real"

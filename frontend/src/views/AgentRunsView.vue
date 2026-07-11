@@ -8,6 +8,7 @@ import {
   type AgentRunDetail,
   type AgentRunListParams,
   type AgentStep,
+  type FallbackChainStep,
 } from '../api/audit'
 import { parseApiError } from '../utils/error'
 
@@ -32,26 +33,44 @@ const runTypeOptions = [
   { value: 'outline', label: 'outline' },
   { value: 'planner', label: 'planner' },
   { value: 'quiz', label: 'quiz' },
+  { value: 'concept_compare', label: 'concept_compare' },
+  { value: 'material_overview', label: 'material_overview' },
 ]
 
 // 状态词表与后端 AgentRun.status / AgentStep.status 对齐：
-// running / success / failed（后端 AgentAudit.create_run/finish_run 写入）。
+// running / success / degraded / insufficient_evidence / failed / cancelled
 const statusOptions = [
   { value: 'running', label: '进行中' },
   { value: 'success', label: '成功' },
+  { value: 'degraded', label: '降级' },
+  { value: 'insufficient_evidence', label: '证据不足' },
   { value: 'failed', label: '失败' },
+  { value: 'cancelled', label: '已取消' },
 ]
 
-const statusTagType: Record<string, 'success' | 'danger' | 'warning' | 'info'> = {
+const statusTagType: Record<string, 'success' | 'danger' | 'warning' | 'info' | ''> = {
   success: 'success',
   failed: 'danger',
   running: 'warning',
+  degraded: 'warning',
+  insufficient_evidence: 'warning',
+  cancelled: 'info',
 }
 
 const statusLabel: Record<string, string> = {
   success: '成功',
   failed: '失败',
   running: '进行中',
+  degraded: '降级',
+  insufficient_evidence: '证据不足',
+  cancelled: '已取消',
+}
+
+const evidenceStatusLabel: Record<string, string> = {
+  supported: '已验证',
+  partial: '部分支持',
+  insufficient: '不足',
+  not_required: '非必需',
 }
 
 const providerLabel: Record<string, string> = {
@@ -131,6 +150,24 @@ function stepStatus(status: string): 'finish' | 'error' | 'process' | 'wait' {
   if (status === 'failed') return 'error'
   if (status === 'running') return 'process'
   return 'wait'
+}
+
+function providerModelDiff(row: AgentRun): boolean {
+  return (
+    !!row.requested_provider &&
+    !!row.actual_provider &&
+    row.requested_provider !== row.actual_provider
+  ) || (
+    !!row.requested_model &&
+    !!row.actual_model &&
+    row.requested_model !== row.actual_model
+  )
+}
+
+function fallbackChainSteps(row: AgentRun): FallbackChainStep[] {
+  if (!row.fallback_chain) return []
+  if (Array.isArray(row.fallback_chain)) return row.fallback_chain as FallbackChainStep[]
+  return []
 }
 
 const sortedSteps = computed<AgentStep[]>(() => {
@@ -245,10 +282,18 @@ onMounted(() => {
         :row-style="{ cursor: 'pointer' }"
       >
         <el-table-column prop="run_type" label="运行类型" width="120" />
-        <el-table-column label="状态" width="100" align="center">
+        <el-table-column label="状态" width="120" align="center">
           <template #default="{ row }">
             <el-tag :type="statusTagType[row.status] || 'info'" size="small">
               {{ statusLabel[row.status] || row.status }}
+            </el-tag>
+            <el-tag
+              v-if="row.fallback_used"
+              type="warning"
+              size="small"
+              style="margin-left: 4px"
+            >
+              降级
             </el-tag>
           </template>
         </el-table-column>
@@ -349,7 +394,71 @@ onMounted(() => {
             <el-descriptions-item label="创建时间">
               {{ formatDateTime(detail.created_at) }}
             </el-descriptions-item>
+            <el-descriptions-item label="请求 Provider">
+              {{ detail.requested_provider || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="实际 Provider">
+              <span v-if="detail.actual_provider">
+                {{ detail.actual_provider }}
+                <el-tag
+                  v-if="providerModelDiff(detail)"
+                  type="warning"
+                  size="small"
+                  style="margin-left: 4px"
+                >
+                  与请求不一致
+                </el-tag>
+              </span>
+              <span v-else>-</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="请求模型">
+              {{ detail.requested_model || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="实际模型">
+              {{ detail.actual_model || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="证据状态">
+              <el-tag
+                v-if="detail.evidence_status"
+                :type="detail.evidence_status === 'supported' ? 'success' : detail.evidence_status === 'insufficient' ? 'danger' : 'warning'"
+                size="small"
+              >
+                {{ evidenceStatusLabel[detail.evidence_status] || detail.evidence_status }}
+              </el-tag>
+              <span v-else>-</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="Fallback">
+              <el-tag v-if="detail.fallback_used" type="warning" size="small">是</el-tag>
+              <span v-else>否</span>
+              <span v-if="detail.fallback_reason" style="margin-left: 8px; color: #909399; font-size: 12px">
+                {{ detail.fallback_reason }}
+              </span>
+            </el-descriptions-item>
           </el-descriptions>
+
+          <div v-if="fallbackChainSteps(detail).length > 0" class="detail-section">
+            <div class="section-subtitle">Fallback Chain</div>
+            <el-timeline>
+              <el-timeline-item
+                v-for="(step, i) in fallbackChainSteps(detail)"
+                :key="i"
+                :type="step.status === 'success' ? 'success' : step.status === 'failed' ? 'danger' : 'warning'"
+                placement="top"
+              >
+                <div class="fallback-step">
+                  <span class="fallback-provider">{{ step.provider || '-' }}</span>
+                  <span v-if="step.model" class="fallback-model">{{ step.model }}</span>
+                  <el-tag
+                    :type="step.status === 'success' ? 'success' : step.status === 'failed' ? 'danger' : 'warning'"
+                    size="small"
+                  >
+                    {{ step.status || '-' }}
+                  </el-tag>
+                  <span v-if="step.reason" class="fallback-reason">{{ step.reason }}</span>
+                </div>
+              </el-timeline-item>
+            </el-timeline>
+          </div>
 
           <div class="detail-section">
             <div class="section-subtitle">输入摘要</div>
@@ -645,5 +754,28 @@ onMounted(() => {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.fallback-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fallback-provider {
+  font-weight: 600;
+  color: #303133;
+  font-size: 13px;
+}
+
+.fallback-model {
+  color: #606266;
+  font-size: 13px;
+}
+
+.fallback-reason {
+  color: #909399;
+  font-size: 12px;
 }
 </style>

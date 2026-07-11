@@ -9,8 +9,9 @@ import {
   getPlan,
   listPlans,
   updateGoal,
-  updateTask,
   updateTodo,
+  startTask,
+  overrideTask,
   type PlanGoal,
   type PlanPayload,
   type PlanResult,
@@ -69,6 +70,13 @@ const planResult = ref<PlanResult | null>(null)
 const goal = ref<PlanGoal | null>(null)
 const tasks = ref<PlanTask[]>([])
 const todos = ref<Todo[]>([])
+
+// PLAN-V3-02/03: task execution state
+const taskStarting = ref<number | null>(null)
+const overrideDialogVisible = ref(false)
+const overrideReason = ref('')
+const overrideTaskId = ref<number | null>(null)
+const overrideLoading = ref(false)
 
 const calendarDate = ref<Date>(new Date())
 
@@ -156,6 +164,80 @@ function taskTypeLabel(taskType: string): string {
   return labels[taskType] || taskType
 }
 
+// PLAN-V3-03: execution status helpers
+function executionStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    pending: '待开始',
+    in_progress: '进行中',
+    completed: '已完成',
+  }
+  return labels[status] || status
+}
+
+function executionStatusTagType(status: string): 'info' | 'warning' | 'success' {
+  if (status === 'completed') return 'success'
+  if (status === 'in_progress') return 'warning'
+  return 'info'
+}
+
+function verificationMethodLabel(method: string | null): string {
+  if (!method) return ''
+  const labels: Record<string, string> = {
+    quiz_score: '测验分数',
+    score_threshold: '分数达标',
+    reading_completion: '阅读完成',
+    kp_viewed: '知识点已查看',
+    manual_override: '手动覆盖',
+    manual: '手动确认',
+  }
+  return labels[method] || method
+}
+
+/**
+ * Determine the primary action button label for a task based on its
+ * type and execution status.
+ */
+function taskActionButton(task: PlanTask): { label: string; type: 'primary' | 'success' | 'default' } {
+  if (task.execution_status === 'completed' || task.status === 'done') {
+    if (task.target_type === 'quiz' && task.target_id) {
+      return { label: '查看结果', type: 'default' }
+    }
+    return { label: '已完成', type: 'default' }
+  }
+  if (task.target_type === 'quiz' && task.target_id) {
+    return { label: '继续测验', type: 'primary' }
+  }
+  if (task.task_type === 'quiz') {
+    return { label: '生成测验', type: 'primary' }
+  }
+  if (task.task_type === 'learn') {
+    return { label: '开始学习', type: 'primary' }
+  }
+  if (task.task_type === 'review') {
+    return { label: '复习知识点', type: 'primary' }
+  }
+  return { label: '开始', type: 'primary' }
+}
+
+/** Whether the task shows a "重新练习" button alongside "查看结果". */
+function canRetryTask(task: PlanTask): boolean {
+  return (
+    (task.execution_status === 'completed' || task.status === 'done') &&
+    task.task_type === 'quiz'
+  )
+}
+
+/** Whether the task can be manually overridden (not yet completed). */
+function canOverrideTask(task: PlanTask): boolean {
+  return task.execution_status !== 'completed' && task.status !== 'done'
+}
+
+/** Whether to show a verification tip for insufficient evidence quizzes. */
+function hasInsufficientEvidence(task: PlanTask): boolean {
+  if (!task.verification_result) return false
+  return Boolean(task.verification_result.insufficient_evidence)
+}
+
 const statusTagType: Record<string, 'warning' | 'success' | 'info'> = {
   pending: 'warning',
   completed: 'success',
@@ -202,6 +284,9 @@ async function loadSavedPlan(planId: number, updateQuery = true) {
     selectedPlanId.value = planId
     isCreating.value = false
     if (updateQuery) await syncPlanQuery(planId)
+    // Persist the plan ID so it can be restored when returning from
+    // quiz/learn pages (where the plan_id query param is lost).
+    sessionStorage.setItem('plans:lastPlanId', String(planId))
   } catch (err) {
     ElMessage.error(parseApiError(err, '读取学习计划失败'))
   } finally {
@@ -225,7 +310,8 @@ async function restorePlans(preferredId?: number) {
     }
 
     const queryId = Number(route.query.plan_id)
-    const requestedId = preferredId || (Number.isInteger(queryId) ? queryId : 0)
+    const storedId = Number(sessionStorage.getItem('plans:lastPlanId'))
+    const requestedId = preferredId || (Number.isInteger(queryId) ? queryId : 0) || (Number.isInteger(storedId) ? storedId : 0)
     const target =
       data.items.find((plan) => plan.goal.id === requestedId)
       ?? data.items.find((plan) => plan.goal.status === 'active')
@@ -298,16 +384,99 @@ async function handleSubmit() {
   }
 }
 
-async function toggleTaskStatus(task: PlanTask) {
-  const newStatus = task.status === 'done' ? 'pending' : 'done'
+// PLAN-V3-02/03: Task execution handlers
+async function handleStartTask(task: PlanTask) {
+  taskStarting.value = task.id
   try {
-    const { data: updated } = await updateTask(task.id, { status: newStatus })
-    const idx = tasks.value.findIndex((t) => t.id === task.id)
-    if (idx >= 0) tasks.value[idx] = updated
-    ElMessage.success(newStatus === 'done' ? '任务已标记完成' : '任务已恢复待完成')
+    const { data } = await startTask(task.id)
+    // Navigate to the returned route
+    if (data.quiz_id) {
+      // Navigate to the quiz page with task_id for verification on submit
+      router.push({
+        path: '/quizzes',
+        query: {
+          course_id: task.course_id,
+          task_id: String(task.id),
+          quiz_id: String(data.quiz_id),
+        },
+      })
+    } else if (data.route) {
+      // Navigate to learn/review route
+      const courseId = task.course_id
+      router.push({
+        path: `/courses/${courseId}/learn`,
+        query: { task_id: String(task.id) },
+      })
+    } else {
+      // Just refresh the task list to show the updated state
+      await loadSavedPlan(task.goal_id)
+      ElMessage.success('任务已开始')
+    }
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '启动任务失败'))
+  } finally {
+    taskStarting.value = null
+  }
+}
+
+async function handleRetryTask(task: PlanTask) {
+  // For completed quiz tasks: start a new quiz
+  taskStarting.value = task.id
+  try {
+    // Reset the task target to allow creating a new quiz
+    const { data } = await startTask(task.id)
+    if (data.quiz_id) {
+      router.push({
+        path: '/quizzes',
+        query: {
+          course_id: task.course_id,
+          task_id: String(task.id),
+          quiz_id: String(data.quiz_id),
+        },
+      })
+    } else {
+      await loadSavedPlan(task.goal_id)
+      ElMessage.success('已生成新测验')
+    }
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '重新练习失败'))
+  } finally {
+    taskStarting.value = null
+  }
+}
+
+async function handleViewResult(task: PlanTask) {
+  if (task.target_type === 'quiz' && task.target_id) {
+    router.push({
+      path: '/quizzes',
+      query: {
+        course_id: task.course_id,
+        task_id: String(task.id),
+        quiz_id: String(task.target_id),
+      },
+    })
+  }
+}
+
+function openOverrideDialog(task: PlanTask) {
+  overrideTaskId.value = task.id
+  overrideReason.value = ''
+  overrideDialogVisible.value = true
+}
+
+async function handleOverride() {
+  if (!overrideTaskId.value || !overrideReason.value.trim()) return
+  overrideLoading.value = true
+  try {
+    await overrideTask(overrideTaskId.value, overrideReason.value.trim())
+    ElMessage.success('任务已手动覆盖为完成')
+    overrideDialogVisible.value = false
+    await loadSavedPlan(selectedPlanId.value ?? overrideTaskId.value)
     await restorePlans(selectedPlanId.value ?? undefined)
   } catch (err) {
-    ElMessage.error(parseApiError(err, '更新任务状态失败'))
+    ElMessage.error(parseApiError(err, '手动覆盖失败'))
+  } finally {
+    overrideLoading.value = false
   }
 }
 
@@ -601,23 +770,61 @@ onMounted(async () => {
             </template>
           </el-table-column>
           <el-table-column prop="acceptance" label="完成标准" min-width="180" show-overflow-tooltip />
-          <el-table-column label="状态" width="90" align="center">
+          <el-table-column label="执行状态" width="100" align="center">
             <template #default="{ row }">
-              <el-tag :type="row.status === 'done' ? 'success' : 'info'" size="small">
-                {{ row.status === 'done' ? '已完成' : '待完成' }}
+              <el-tag :type="executionStatusTagType(row.execution_status)" size="small">
+                {{ executionStatusLabel(row.execution_status) }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="100" align="center" fixed="right">
+          <el-table-column label="验证方式" width="100" align="center">
             <template #default="{ row }">
-              <el-button
-                :type="row.status === 'done' ? 'default' : 'success'"
-                size="small"
-                link
-                @click="toggleTaskStatus(row)"
-              >
-                {{ row.status === 'done' ? '撤销完成' : '完成' }}
-              </el-button>
+              <span v-if="row.verification_method" class="verify-method">
+                {{ verificationMethodLabel(row.verification_method) }}
+              </span>
+              <span v-else class="verify-method-empty">-</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="220" align="center" fixed="right">
+            <template #default="{ row }">
+              <div class="task-actions">
+                <el-button
+                  v-if="taskActionButton(row).label !== '已完成'"
+                  :type="taskActionButton(row).type"
+                  size="small"
+                  :loading="taskStarting === row.id"
+                  @click="handleStartTask(row)"
+                >
+                  {{ taskActionButton(row).label }}
+                </el-button>
+                <el-button
+                  v-if="row.execution_status === 'completed' && row.target_type === 'quiz' && row.target_id"
+                  size="small"
+                  @click="handleViewResult(row)"
+                >
+                  查看结果
+                </el-button>
+                <el-button
+                  v-if="canRetryTask(row)"
+                  size="small"
+                  :loading="taskStarting === row.id"
+                  @click="handleRetryTask(row)"
+                >
+                  重新练习
+                </el-button>
+                <el-button
+                  v-if="canOverrideTask(row)"
+                  size="small"
+                  link
+                  type="warning"
+                  @click="openOverrideDialog(row)"
+                >
+                  手动完成
+                </el-button>
+              </div>
+              <div v-if="hasInsufficientEvidence(row)" class="insufficient-tip">
+                证据不足，建议先学习相关知识点再生成测验
+              </div>
             </template>
           </el-table-column>
         </el-table>
@@ -731,6 +938,41 @@ onMounted(async () => {
           </el-button>
         </li>
       </ul>
+    </el-dialog>
+
+    <el-dialog
+      v-model="overrideDialogVisible"
+      title="手动完成任务"
+      width="min(480px, calc(100vw - 32px))"
+    >
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        title="手动覆盖将跳过验证流程，请确认任务确实已完成。"
+        style="margin-bottom: 16px;"
+      />
+      <el-form label-position="top">
+        <el-form-item label="覆盖原因（必填）">
+          <el-input
+            v-model="overrideReason"
+            type="textarea"
+            :rows="3"
+            placeholder="请输入手动完成的原因，例如：已线下完成、已通过其他方式验证等"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="overrideDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="overrideLoading"
+          :disabled="!overrideReason.trim()"
+          @click="handleOverride"
+        >
+          确认覆盖
+        </el-button>
+      </template>
     </el-dialog>
   </div>
 </template>
@@ -1095,5 +1337,29 @@ onMounted(async () => {
   .todo-course {
     display: none;
   }
+}
+
+/* PLAN-V3-03: task execution UI */
+.task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+}
+
+.verify-method {
+  font-size: 12px;
+  color: #606266;
+}
+
+.verify-method-empty {
+  color: #c0c4cc;
+}
+
+.insufficient-tip {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #e6a23c;
+  line-height: 1.4;
 }
 </style>

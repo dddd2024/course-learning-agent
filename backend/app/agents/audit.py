@@ -7,8 +7,14 @@ This module is the single entry point for recording agent runs:
 - ``add_step`` appends an ``AgentStep`` row to an existing run, capturing
   the step's name / index / input / output / duration / status so the
   full trace can be replayed later.
-- ``finish_run`` closes the run with ``status`` / ``finished_at`` /
-  ``duration_ms`` / ``output_summary`` / ``error_message``.
+- ``update_run_meta`` writes requested/actual provider, model, and
+  fallback_chain to the run — it does NOT touch ``status``.
+- ``finalize_run`` closes the run, computing the final status from
+  error / fallback_used / evidence_status. It never downgrades a
+  previously set degraded/failed/insufficient_evidence status to
+  ``success``.
+- ``finish_run`` is kept for backward compatibility; when called with
+  ``status='success'`` it preserves an already-set non-success status.
 
 Callers should wrap audit calls in ``try/except`` so an audit failure
 never breaks the main flow — the audit is observability, not part of the
@@ -23,6 +29,21 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models.audit import AgentRun, AgentStep
+
+# Status constants — centralised so all agents use the same vocabulary.
+STATUS_RUNNING = "running"
+STATUS_SUCCESS = "success"
+STATUS_DEGRADED = "degraded"
+STATUS_INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+STATUS_FAILED = "failed"
+STATUS_CANCELLED = "cancelled"
+
+# Statuses that must NOT be silently overridden by a later ``success``.
+_TERMINAL_STATUSES = frozenset({
+    STATUS_DEGRADED,
+    STATUS_FAILED,
+    STATUS_INSUFFICIENT_EVIDENCE,
+})
 
 
 def _to_json(value: Any) -> str | None:
@@ -122,7 +143,13 @@ class AgentAudit:
         duration_ms: int | None = None,
         error_message: str | None = None,
     ) -> AgentRun | None:
-        """Mark a run as finished: set status / finished_at / duration_ms."""
+        """Mark a run as finished: set status / finished_at / duration_ms.
+
+        When ``status='success'`` is requested but the run is already in
+        a terminal non-success status (degraded / failed /
+        insufficient_evidence), the existing status is preserved so a
+        late ``finish_run(success)`` call never masks a prior failure.
+        """
         run = (
             db.query(AgentRun)
             .filter(AgentRun.id == run_id)
@@ -130,7 +157,12 @@ class AgentAudit:
         )
         if run is None:
             return None
-        run.status = status
+        # Preserve terminal statuses: a ``success`` finish must not
+        # override a previously set degraded/failed/insufficient_evidence.
+        if status == STATUS_SUCCESS and run.status in _TERMINAL_STATUSES:
+            pass  # keep existing status
+        else:
+            run.status = status
         run.finished_at = datetime.now()
         if duration_ms is not None:
             run.duration_ms = duration_ms
@@ -142,6 +174,63 @@ class AgentAudit:
         return run
 
     @staticmethod
+    def finalize_run(
+        db: Session,
+        run_id: int,
+        error: str | None = None,
+        fallback_used: bool = False,
+        evidence_status: str | None = None,
+        output_summary: Any = None,
+        duration_ms: int | None = None,
+    ) -> AgentRun | None:
+        """Close a run, computing the final status from its outcome.
+
+        Status priority (highest first):
+        1. ``error`` is not None → ``failed``
+        2. ``fallback_used`` is True → ``degraded``
+        3. ``evidence_status`` indicates insufficient evidence →
+           ``insufficient_evidence``
+        4. No issues → ``success``
+
+        CRITICAL: if the run is already in a terminal non-success status
+        (degraded / failed / insufficient_evidence) and the computed
+        status would be ``success``, the existing status is preserved.
+        A terminal status is never silently downgraded to ``success``.
+        """
+        run = (
+            db.query(AgentRun)
+            .filter(AgentRun.id == run_id)
+            .first()
+        )
+        if run is None:
+            return None
+
+        # Compute the new status based on the outcome.
+        if error is not None:
+            new_status = STATUS_FAILED
+        elif fallback_used:
+            new_status = STATUS_DEGRADED
+        elif evidence_status in ("insufficient", "not_required"):
+            new_status = STATUS_INSUFFICIENT_EVIDENCE
+        else:
+            new_status = STATUS_SUCCESS
+
+        # Never downgrade a terminal status to success.
+        if new_status == STATUS_SUCCESS and run.status in _TERMINAL_STATUSES:
+            new_status = run.status
+
+        run.status = new_status
+        run.finished_at = datetime.now()
+        if duration_ms is not None:
+            run.duration_ms = duration_ms
+        if output_summary is not None:
+            run.output_summary = _to_json(output_summary)
+        if error is not None:
+            run.error_message = error
+        db.flush()
+        return run
+
+    @staticmethod
     def update_run_meta(
         db: Session,
         run_id: int | None,
@@ -149,9 +238,12 @@ class AgentAudit:
         provider: str | None = None,
         meta: dict | None = None,
     ) -> None:
-        """Update an existing AgentRun's model_name/provider after the LLM
-        call completes, so the audit record reflects the actual provider
-        used (which may differ from the pre-call guess due to fallback).
+        """Update an existing AgentRun's provider/model/fallback metadata.
+
+        Writes requested/actual provider, model, fallback_used,
+        fallback_reason, and fallback_chain. It does NOT modify
+        ``status`` — status is set by ``finalize_run`` based on the
+        overall outcome.
         """
         if run_id is None:
             return
@@ -167,11 +259,20 @@ class AgentAudit:
                     run.actual_model = meta.get("actual_model", model_name)
                     run.fallback_used = 1 if meta.get("fallback_used") else 0
                     run.fallback_reason = meta.get("fallback_reason")
-                    if meta.get("degraded"):
-                        run.status = "degraded"
+                    chain = meta.get("fallback_chain")
+                    if chain is not None:
+                        run.fallback_chain = _to_json(chain)
                 db.flush()
         except Exception:
             pass  # audit must not break the main flow
 
 
-__all__ = ["AgentAudit"]
+__all__ = [
+    "AgentAudit",
+    "STATUS_RUNNING",
+    "STATUS_SUCCESS",
+    "STATUS_DEGRADED",
+    "STATUS_INSUFFICIENT_EVIDENCE",
+    "STATUS_FAILED",
+    "STATUS_CANCELLED",
+]

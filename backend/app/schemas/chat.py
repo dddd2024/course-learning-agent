@@ -65,3 +65,8 @@ class ChatResponse(BaseModel):
     provider: str = "mock"
     fallback_used: bool = False
     fallback_reason: Optional[str] = None
+    # CHAT-V3-01: expose the original and resolved query for audit.
+    # The resolved query was used for retrieval; the original is what the
+    # user typed. Both are optional for backward compatibility.
+    original_query: Optional[str] = None
+    resolved_query: Optional[str] = None

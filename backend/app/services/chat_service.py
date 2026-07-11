@@ -34,6 +34,7 @@ from app.services.llm_config_service import (
     build_user_config,
     get_active_config,
 )
+from app.services.query_rewriter import rewrite_query
 
 logger = logging.getLogger(__name__)
 _PROMPT_VERSION = "course_qa_v1"
@@ -96,6 +97,27 @@ def _build_conversation_context(db: Session, conversation_id: int) -> str:
     )
 
 
+def _build_conversation_history(db: Session, conversation_id: int) -> list[dict]:
+    """Build a structured message list for the query rewriter.
+
+    Returns ``[{"role": "user"|"assistant", "content": "..."}, ...]`` for
+    the most recent turns (excluding the current question which has not
+    been persisted yet).
+    """
+    messages = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.id.desc())
+        .limit(6)
+        .all()
+    )
+    return [
+        {"role": msg.role, "content": msg.content or ""}
+        for msg in reversed(messages)
+        if msg.content
+    ]
+
+
 def _safe_add_step(db, run_id, **kw) -> None:
     if run_id is None:
         return
@@ -122,6 +144,51 @@ def _safe_finish_run(db, run_id, **kw) -> None:
             db.rollback()
         except Exception:
             pass
+
+
+def _safe_finalize_run(
+    db,
+    run_id,
+    error=None,
+    fallback_used=False,
+    evidence_status=None,
+    output_summary=None,
+    duration_ms=None,
+) -> None:
+    """Wrap finalize_run so audit failures never break the main flow."""
+    if run_id is None:
+        return
+    try:
+        AgentAudit.finalize_run(
+            db,
+            run_id=run_id,
+            error=error,
+            fallback_used=fallback_used,
+            evidence_status=evidence_status,
+            output_summary=output_summary,
+            duration_ms=duration_ms,
+        )
+        db.commit()
+    except Exception as exc:  # pragma: no cover
+        logger.warning("AgentAudit.finalize_run failed: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+def _compute_evidence_status(citations: list) -> str:
+    """Derive an evidence-status string from the final citation list.
+
+    - ``supported``: at least one citation has ``support_status='verified'``
+    - ``partial``: citations exist but none are verified (all weak)
+    - ``insufficient``: no citations survived verification
+    """
+    if not citations:
+        return "insufficient"
+    if any(c.support_status == "verified" for c in citations):
+        return "supported"
+    return "partial"
 
 
 def _should_persist_steps(status: str) -> bool:
@@ -260,6 +327,18 @@ def run_chat_pipeline(
     # bounded context is used for pronoun resolution in both retrieval and
     # generation, never as an evidence source.
     conversation_context = _build_conversation_context(db, conversation.id)
+    conversation_history = _build_conversation_history(db, conversation.id)
+
+    # CHAT-V3-01: rewrite the query to resolve coreferences (e.g. "它" ->
+    # "TLB") before retrieval. The rewritten query is used ONLY for
+    # keyword_search; it must never enter the evidence chain.
+    rewrite_result = rewrite_query(
+        question=question,
+        conversation_history=conversation_history,
+        user_config=user_config,
+    )
+    resolved_query = rewrite_result["resolved_query"]
+    original_query = rewrite_result["original_query"]
 
     # 1. Persist the user's question.
     user_msg = Message(
@@ -271,21 +350,105 @@ def run_chat_pipeline(
     db.commit()
     db.refresh(user_msg)
 
+    # If the rewriter flagged an ambiguous reference, return a
+    # clarification prompt instead of proceeding with retrieval.
+    if rewrite_result["needs_clarification"]:
+        entities_str = "、".join(rewrite_result["entities"][:3])
+        clarification_msg = (
+            f"您提到的「它/这个/前者」可能指多个概念"
+            f"（{entities_str}），请明确您想了解的是哪一个？"
+        )
+        assistant_msg = Message(
+            conversation_id=conversation.id,
+            role="assistant",
+            content=clarification_msg,
+            answer_json=json.dumps(
+                {
+                    "answer": clarification_msg,
+                    "not_found": True,
+                    "citations": [],
+                    "follow_up_questions": [],
+                    "provider": "mock",
+                    "fallback_used": False,
+                    "fallback_reason": None,
+                    "needs_clarification": True,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        db.add(assistant_msg)
+        db.commit()
+        db.refresh(assistant_msg)
+        _safe_finalize_run(
+            db,
+            run_id=run_id,
+            evidence_status="insufficient",
+            output_summary={
+                "needs_clarification": True,
+                "entities": rewrite_result["entities"],
+            },
+            duration_ms=int((time.monotonic() - run_started_at) * 1000),
+        )
+        yield {
+            "event": "final",
+            "data": ChatResponse(
+                message_id=assistant_msg.id,
+                answer=clarification_msg,
+                citations=[],
+                not_found=True,
+                follow_up_questions=[],
+                agent_run_id=run_id,
+                reliability_level="failed",
+                retrieved_chunks=[],
+                provider="mock",
+                fallback_used=False,
+                fallback_reason=None,
+                original_query=original_query,
+                resolved_query=resolved_query,
+            ).model_dump(mode="json"),
+        }
+        return
+
+    # CHAT-V3-01: store the original vs resolved query in the audit run
+    # so the rewriting decision is auditable. This is a metadata step —
+    # the rewritten query must never enter the evidence chain.
+    try:
+        AgentAudit.add_step(
+            db, run_id, "query_rewrite", 0,
+            input_data={
+                "original_query": original_query,
+                "conversation_turns": len(conversation_history),
+            },
+            output_data={
+                "resolved_query": resolved_query,
+                "resolution_reason": rewrite_result.get("resolution_reason", ""),
+                "entities": rewrite_result.get("entities", []),
+                "needs_clarification": rewrite_result.get(
+                    "needs_clarification", False
+                ),
+            },
+        )
+        db.flush()
+    except Exception as exc:  # pragma: no cover
+        logger.warning("AgentAudit.add_step(query_rewrite) failed: %s", exc)
+        db.rollback()
+
     # 2. Retrieve
     yield {"event": "step_started", "step": "retrieve", "message": "正在检索课程资料"}
     retrieve_started = time.monotonic()
     try:
-        retrieval_query = question
-        if conversation_context:
-            retrieval_query = f"{question}\n\n近期上下文：\n{conversation_context}"
+        # CHAT-V3-01: use the rewritten query (with pronouns resolved)
+        # for keyword_search instead of appending the entire conversation
+        # context. The resolved query is retrieval-only and never enters
+        # the evidence chain.
+        retrieval_query = resolved_query
         candidates = keyword_search(db, course_id, retrieval_query, top_k=12)
         ranked = rerank(retrieval_query, candidates, top_k=6)
     except Exception as exc:
         _log_error(db, current_user.id, conversation_id, "retrieve",
                    provider, model_name, config_id, exc,
                    course_id=course_id, agent_run_id=run_id)
-        _safe_finish_run(db, run_id, status="failed",
-                         error_message=str(exc),
+        _safe_finalize_run(db, run_id, error=str(exc),
                          duration_ms=int((time.monotonic() - run_started_at) * 1000))
         yield {
             "event": "step_error",
@@ -350,10 +513,10 @@ def run_chat_pipeline(
         db.add(assistant_msg)
         db.commit()
         db.refresh(assistant_msg)
-        _safe_finish_run(
+        _safe_finalize_run(
             db,
             run_id=run_id,
-            status="success",
+            evidence_status="insufficient",
             output_summary={"not_found": True, "citation_count": 0},
             duration_ms=int((time.monotonic() - run_started_at) * 1000),
         )
@@ -371,6 +534,8 @@ def run_chat_pipeline(
                 provider="mock",
                 fallback_used=False,
                 fallback_reason=None,
+                original_query=original_query,
+                resolved_query=resolved_query,
             ).model_dump(mode="json"),
         }
         return
@@ -400,8 +565,7 @@ def run_chat_pipeline(
                 status="failed",
                 error_message=str(exc),
             )
-        _safe_finish_run(db, run_id, status="failed",
-                         error_message=str(exc),
+        _safe_finalize_run(db, run_id, error=str(exc),
                          duration_ms=int((time.monotonic() - run_started_at) * 1000))
         yield {
             "event": "step_error",
@@ -411,6 +575,34 @@ def run_chat_pipeline(
         }
         return
     generate_duration = int((time.monotonic() - generate_started) * 1000)
+
+    # Update the audit run with the actual provider/model and fallback
+    # metadata from the LLM call result. This does NOT touch status —
+    # status is set later by finalize_run.
+    #
+    # ``provider`` here is the *config source* ("user" / "real" / "mock")
+    # determined earlier from the active-config check — not the LLM
+    # backend type ("real" / "mock") that lives in ``result["provider"]``.
+    # Using the initial value keeps the audit accurate: an active user
+    # config records ``provider="user"`` even though the underlying HTTP
+    # call went to a "real" OpenAI-compatible endpoint.
+    try:
+        AgentAudit.update_run_meta(
+            db, run_id,
+            model_name=result.get("model_name") or model_name,
+            provider=provider,
+            meta={
+                "actual_provider": result.get("provider"),
+                "actual_model": result.get("model_name"),
+                "fallback_used": result.get("fallback_used", False),
+                "fallback_reason": result.get("fallback_reason"),
+                "fallback_chain": result.get("fallback_chain", []),
+            },
+        )
+        db.commit()
+    except Exception as exc:  # pragma: no cover
+        logger.warning("AgentAudit.update_run_meta failed: %s", exc)
+
     if _should_persist_steps("success"):
         _safe_add_step(
             db, run_id=run_id, step_name="generate", step_index=1,
@@ -438,6 +630,11 @@ def run_chat_pipeline(
     # never holds duplicate chunk_id rows for a single message. The
     # first occurrence wins (highest confidence is usually first).
     seen_chunk_ids: set = set()
+    # EVID-V3-01: only citations whose support_status is "verified" or
+    # "supported" may appear in the response or be persisted. Weak
+    # citations are silently dropped so the user is never presented with
+    # unverified claims as formal evidence.
+    _SUPPORTED_STATUSES = ("verified", "supported")
     for cite in result.get("citations", []):
         chunk_id = cite.get("chunk_id")
         if chunk_id is None:
@@ -453,7 +650,11 @@ def run_chat_pipeline(
         # A citation quote must be verifiable against the retrieved source;
         # do not persist model-invented quotes merely because the chunk id is
         # valid.
-        if not quote_text or quote_text not in (chunk.get("text") or ""):
+        chunk_text = chunk.get("text") or ""
+        if not quote_text or quote_text not in chunk_text:
+            continue
+        # EVID-V3-01: gate out weak citations.
+        if cite.get("support_status", "weak") not in _SUPPORTED_STATUSES:
             continue
         confidence = cite.get("confidence", 0.0)
         material_name = chunk.get("filename", "")
@@ -490,6 +691,26 @@ def run_chat_pipeline(
         )
     db.commit()
 
+    # EVID-V3-01: when ALL citations were weak and got filtered out,
+    # replace the model's answer with an evidence-insufficient message
+    # so the user is never shown an answer that lacks verifiable support.
+    original_citation_count = len(result.get("citations", []))
+    if not citations and original_citation_count > 0:
+        evidence_insufficient_msg = (
+            "本次回答未能提供可验证的原文引用，证据不足，请查看检索片段后重试。"
+        )
+        result["answer"] = evidence_insufficient_msg
+        result["not_found"] = True
+        result["key_points"] = []
+        result["follow_up_questions"] = []
+        result["citations"] = []
+        # Update the already-persisted assistant message so the stored
+        # content and answer_json reflect the evidence-insufficient state.
+        assistant_msg.content = evidence_insufficient_msg
+        assistant_msg.answer_json = json.dumps(result, ensure_ascii=False)
+        db.commit()
+        db.refresh(assistant_msg)
+
     retrieved_chunks = [
         RetrievedChunkItem(
             chunk_id=c["chunk_id"],
@@ -511,8 +732,11 @@ def run_chat_pipeline(
         )
 
     total_duration = int((time.monotonic() - run_started_at) * 1000)
-    _safe_finish_run(
-        db, run_id=run_id, status="success",
+    _safe_finalize_run(
+        db,
+        run_id=run_id,
+        fallback_used=result.get("fallback_used", False),
+        evidence_status=_compute_evidence_status(citations),
         output_summary={
             "answer": _summarise(result.get("answer", ""), 200),
             "citation_count": len(citations),
@@ -533,6 +757,9 @@ def run_chat_pipeline(
         provider=result.get("provider", "mock"),
         fallback_used=result.get("fallback_used", False),
         fallback_reason=result.get("fallback_reason"),
+        # CHAT-V3-01: expose original vs resolved query for audit.
+        original_query=original_query,
+        resolved_query=resolved_query,
     )
 
     yield {

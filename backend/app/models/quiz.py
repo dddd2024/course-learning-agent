@@ -85,6 +85,10 @@ class QuizItem(Base, TimestampMixin):
     difficulty = Column(Integer, nullable=True)
     source_evidence_ids = Column(Text, default="[]")
     evidence_snapshot = Column(Text)
+    # QUIZ-V3-01: JSON list of {chunk_id, quote_text} for grounding verification.
+    source_evidence = Column(Text, default="[]")
+    # QUIZ-V3-02: verification status (verified / invalid / skipped).
+    verification_status = Column(String(30), default="verified")
     rubric_json = Column(Text, default="[]")
     # Filled on submit.
     user_answer = Column(Text, nullable=True)

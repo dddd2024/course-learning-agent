@@ -42,6 +42,10 @@ class MaterialChunk(Base, TimestampMixin):
     embedding_id = Column(String(100))
     quality_score = Column(Float, nullable=True)  # AI quality score 0.0-1.0
     quality_reason = Column(String(500))  # AI quality assessment reason
+    # LEARN-V3-01: JSON dict of noise types detected (line_repetition,
+    # short_line_stacking, low_diversity) so the UI can show why a chunk
+    # was filtered out of retrieval.
+    noise_flags = Column(Text, nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (
