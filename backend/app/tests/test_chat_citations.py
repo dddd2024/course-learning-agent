@@ -71,7 +71,7 @@ def test_chat_deduplicates_citations_with_same_chunk_id(
 
     captured = {}
 
-    def fake_answer(db, course_id, question, ranked, course_name, user_config=None):
+    def fake_answer(db, course_id, question, ranked, course_name, user_config=None, **kwargs):
         captured["ranked"] = ranked
         return _make_duplicate_citations(ranked)
 
