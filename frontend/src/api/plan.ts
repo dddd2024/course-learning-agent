@@ -55,6 +55,7 @@ export interface PlanResult {
   goal: PlanGoal
   tasks: PlanTask[]
   todos: Todo[]
+  unscheduled_tasks?: Array<{ title: string; estimate_minutes: number; reason: string; suggestion: string }>
 }
 
 export interface PlanProgress {

@@ -526,6 +526,15 @@ onMounted(async () => {
 
     <div v-else v-loading="planLoading" class="plan-detail-loading">
       <template v-if="planResult">
+        <el-alert
+          v-if="planResult.unscheduled_tasks?.length"
+          type="warning"
+          :closable="false"
+          class="plan-unscheduled"
+          :title="`有 ${planResult.unscheduled_tasks.length} 项未排入计划`"
+          :description="planResult.unscheduled_tasks.map((t) => `${t.title}（${t.estimate_minutes} 分钟）：${t.suggestion}`).join('；')"
+          show-icon
+        />
       <el-card v-if="goal" class="section-card" shadow="never">
         <template #header>
           <div class="section-title-bar">

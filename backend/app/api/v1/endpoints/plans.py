@@ -59,7 +59,7 @@ from app.services.llm_config_service import (
     get_active_config,
 )
 from app.services.multi_scheduler import schedule_multi_courses
-from app.services.scheduler import schedule_tasks
+from app.services.scheduler import schedule_tasks_with_conflicts
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -610,7 +610,7 @@ def create_plan(
         }
         for t in task_rows
     ]
-    scheduled = schedule_tasks(
+    scheduled, unscheduled = schedule_tasks_with_conflicts(
         tasks=task_dicts,
         start_date=today,
         deadline=payload.deadline,
@@ -623,7 +623,7 @@ def create_plan(
         step_name="schedule",
         step_index=1,
         input_data={"task_count": len(task_rows), "deadline": str(payload.deadline)},
-        output_data={"todo_count": len(scheduled)},
+        output_data={"todo_count": len(scheduled), "unscheduled_count": len(unscheduled)},
         duration_ms=schedule_duration,
     )
 
@@ -675,6 +675,7 @@ def create_plan(
         goal=GoalResponse.model_validate(goal),
         tasks=tasks_resp,
         todos=todos_resp,
+        unscheduled_tasks=unscheduled,
     )
 
 

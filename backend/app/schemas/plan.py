@@ -89,6 +89,7 @@ class PlanResponse(BaseModel):
     goal: GoalResponse
     tasks: List[TaskResponse]
     todos: List[TodoResponse]
+    unscheduled_tasks: List[dict] = []
 
 
 class PlanProgressResponse(BaseModel):
