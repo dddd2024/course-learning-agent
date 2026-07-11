@@ -398,6 +398,16 @@ async function handleCompare() {
   }
 }
 
+async function handleForceRefresh() {
+  if (!selectedEdge.value) return
+  compareLoading.value = true
+  try {
+    const { data } = await compareNodes(selectedEdge.value.source_node_id, selectedEdge.value.target_node_id, selectedEdge.value.id, compareUserFocus.value, true)
+    compareReport.value = data
+  } catch (err) { ElMessage.error(parseApiError(err, '重新生成失败')) }
+  finally { compareLoading.value = false }
+}
+
 function fitGraph() {
   network?.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } })
 }
@@ -703,6 +713,7 @@ onBeforeUnmount(() => {
               {{ opt.label }}
             </el-radio-button>
           </el-radio-group>
+          <el-button size="small" @click="handleForceRefresh">重新生成</el-button>
         </div>
         <div v-if="compareReport" class="compare-report">
           <el-alert

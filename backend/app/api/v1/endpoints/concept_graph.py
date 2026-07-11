@@ -128,7 +128,7 @@ def compare(
     user_config = build_user_config(active_config) if active_config else None
     result = get_or_create_compare_report(
         db, current_user.id, req.source_node_id, req.target_node_id,
-        req.edge_id, req.user_focus, user_config=user_config,
+        req.edge_id, req.user_focus, user_config=user_config, force_refresh=req.force_refresh,
     )
     if result is None:
         raise NotFoundException(message="节点不存在")

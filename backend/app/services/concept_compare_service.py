@@ -102,6 +102,7 @@ def get_or_create_compare_report(
     edge_id: int | None = None,
     user_focus: str = "concept",
     user_config: dict | None = None,
+    force_refresh: bool = False,
 ) -> dict[str, Any] | None:
     """Get cached report or generate a new one.
 
@@ -192,7 +193,7 @@ def get_or_create_compare_report(
             user_focus=user_focus,
             evidence_hash=evidence_hash,
         ).first()
-    if cached is not None:
+    if cached is not None and not force_refresh:
         return _report_to_dict(cached)
 
     # Generate a fresh report via the compare agent.
