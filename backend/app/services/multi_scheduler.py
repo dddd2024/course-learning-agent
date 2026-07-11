@@ -55,14 +55,17 @@ def _compute_weak_point_weight(
     :data:`_WEAK_POINT_MAX_WRONG` so a course with many wrong answers
     gets a weight close to 1.0 (and thus a higher priority_score).
     """
-    total_wrong = (
-        db.query(func.sum(WeakPoint.wrong_count))
-        .filter(
-            WeakPoint.user_id == user_id,
-            WeakPoint.course_id == course_id,
-        )
-        .scalar()
-    ) or 0
+    rows = db.query(WeakPoint).filter(
+        WeakPoint.user_id == user_id,
+        WeakPoint.course_id == course_id,
+        WeakPoint.status != "resolved",
+    ).all()
+    # Prioritise current lack of mastery, not a lifetime mistake count.
+    total_wrong = sum(
+        max(0.0, 1.0 - (float(wp.mastery_score or 0) / 100.0))
+        * (1.0 + min(3, int(wp.wrong_count or 0)) / 3.0)
+        for wp in rows
+    )
     if _WEAK_POINT_MAX_WRONG <= 0:
         return 0.0
     return min(1.0, float(total_wrong) / _WEAK_POINT_MAX_WRONG)
