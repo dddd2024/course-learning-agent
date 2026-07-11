@@ -39,6 +39,13 @@ const userFocusOptions = [
   { label: '考试重点', value: 'exam' },
   { label: '迁移应用', value: 'transfer' },
 ]
+const compareTitle = computed(() => {
+  if (!selectedEdge.value) return '概念对比报告'
+  const source = nodes.value.find(n => n.id === selectedEdge.value?.source_node_id)
+  const target = nodes.value.find(n => n.id === selectedEdge.value?.target_node_id)
+  return source && target && source.course_id !== target.course_id
+    ? '跨课程概念对比报告' : '同课程概念对比报告'
+})
 
 // Filters
 const filterCourseId = ref('')
@@ -680,7 +687,7 @@ onBeforeUnmount(() => {
     <!-- Compare drawer -->
     <el-drawer
       v-model="compareDrawerVisible"
-      title="跨课程概念对比报告"
+      :title="compareTitle"
       size="50%"
       direction="rtl"
     >
