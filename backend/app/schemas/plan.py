@@ -185,8 +185,16 @@ class TaskUpdate(BaseModel):
 class TaskVerifyRequest(BaseModel):
     """Payload for POST /plans/tasks/{task_id}/verify."""
 
-    score: Optional[int] = None
-    threshold: int = 60
+    confirmation: Optional[bool] = None
+    note: Optional[str] = Field(default=None, max_length=1000)
+    model_config = ConfigDict(extra="forbid")
+
+
+class TaskEventRequest(BaseModel):
+    """A user-confirmed task action recorded as server-side evidence."""
+
+    event_type: str = Field(..., pattern="^(material_opened|knowledge_point_viewed|user_confirmed|review_confirmed)$")
+    note: Optional[str] = Field(default=None, max_length=1000)
 
 
 class TaskOverrideRequest(BaseModel):

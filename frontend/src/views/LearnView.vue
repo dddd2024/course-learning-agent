@@ -15,6 +15,7 @@
         <el-icon><ArrowLeft /></el-icon>
         返回计划
       </el-button>
+      <el-button v-if="fromTaskId" type="success" size="small" @click="confirmTaskLearning">完成本次学习</el-button>
       <h2 class="learn-title">{{ courseName || '课程学习' }}</h2>
       <el-button
         type="primary"
@@ -350,6 +351,7 @@ import { listKnowledgePoints } from '../api/knowledge'
 import { parseApiError } from '../utils/error'
 import { renderMarkdown } from '../utils/markdown'
 import request from '../api'
+import { verifyTask } from '../api/plan'
 
 const route = useRoute()
 const router = useRouter()
@@ -919,7 +921,22 @@ function goBack() {
 
 // PLAN-V3-03: Navigate back to the plans page
 function goBackToPlan() {
-  router.push('/plans')
+  router.push({ name: 'plans', query: route.query.plan_id ? { plan_id: String(route.query.plan_id) } : {} })
+}
+
+async function confirmTaskLearning() {
+  if (!fromTaskId.value) return
+  try {
+    const { data } = await verifyTask(fromTaskId.value, true)
+    if (!data.verified) {
+      ElMessage.warning('尚未满足学习完成条件，请确认已打开并阅读指定资料')
+      return
+    }
+    ElMessage.success('学习任务已完成')
+    goBackToPlan()
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '完成学习失败'))
+  }
 }
 </script>
 

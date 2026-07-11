@@ -339,9 +339,9 @@ def create_quiz(
         question_count=payload.question_count,
         user_config=user_config,
     )
-    # QUIZ-V3-01: when no valid evidence exists, return a quiz with 0 items
-    # instead of raising a 400 error. The frontend can show an empty state.
     insufficient_evidence = quiz_output.get("insufficient_evidence", False)
+    if not quiz_output.get("items"):
+        raise BusinessException(message="资料证据不足，未创建空测验；请补充资料或重新解析", status_code=422)
 
     quiz = Quiz(
         user_id=current_user.id,
@@ -562,23 +562,6 @@ def submit_quiz(
 
     quiz.score = score
     quiz.status = "submitted"
-
-    # A quiz task is objectively complete only after a submitted score meets
-    # its threshold. Bind the first pending quiz task to this real quiz.
-    if items_by_id and score / len(items_by_id) >= 0.8:
-        task = db.query(StudyTask).filter(
-            StudyTask.course_id == quiz.course_id,
-            StudyTask.task_type == "quiz",
-            StudyTask.status == "pending",
-        ).order_by(StudyTask.id.asc()).first()
-        if task is not None:
-            now = datetime.now()
-            task.target_type, task.target_id = "quiz", quiz.id
-            task.status, task.execution_status = "done", "completed"
-            task.verification_method, task.auto_completed_at = "quiz_score", now
-            db.query(Todo).filter(Todo.task_id == task.id).update(
-                {Todo.status: "completed", Todo.completed_at: now}, synchronize_session=False
-            )
 
     db.commit()
     db.refresh(quiz)

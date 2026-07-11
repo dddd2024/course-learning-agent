@@ -37,6 +37,7 @@ MIGRATION_MODULES = [
     "006_agent_status",
     "007_plan_targets",
     "008_orphan_goals",
+    "009_task_execution_events",
 ]
 
 

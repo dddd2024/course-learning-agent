@@ -91,7 +91,7 @@ test.describe('Agent Status', () => {
         expect(drawerText.length).toBeGreaterThan(0)
 
         // If the run used fallback, the fallback chain should be visible
-        if (drawerText.includes('Fallback')) {
+        if (drawerText.includes('Fallback 是')) {
           expect(drawerText).toContain('Fallback Chain')
         }
       }

@@ -80,6 +80,21 @@ class StudyTask(Base, TimestampMixin):
         )
 
 
+class TaskExecutionEvent(Base, TimestampMixin):
+    """Immutable server-side evidence for a task execution action."""
+
+    __tablename__ = "task_execution_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(Integer, ForeignKey("study_tasks.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    event_type = Column(String(50), nullable=False, index=True)
+    target_type = Column(String(30), nullable=True)
+    target_id = Column(Integer, nullable=True)
+    payload_json = Column(Text, nullable=True)
+    occurred_at = Column(DateTime, nullable=False)
+
+
 class Todo(Base, TimestampMixin):
     """A single day's scheduled work item derived from a ``StudyTask``."""
 

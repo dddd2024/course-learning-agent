@@ -276,6 +276,10 @@ async function fetchGraph() {
     edges.value = data.edges
     await nextTick()
     buildVisData()
+    if (!nodes.value.length) {
+      destroyNetwork()
+      return
+    }
     if (!network) {
       // Wait one animation frame to guarantee the browser has performed
       // layout so the container has real, non-zero dimensions before
@@ -437,13 +441,14 @@ watch([filterCourseId, filterRelationType, filterStatus], () => {
 })
 
 onMounted(async () => {
+  const graphLoad = fetchGraph()
   try {
     const { data } = await listCourses({ page: 1, page_size: 100 })
     allCourses.value = data.items
   } catch {
     // 静默失败
   }
-  await fetchGraph()
+  await graphLoad
 })
 
 onBeforeUnmount(() => {

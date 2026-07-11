@@ -185,18 +185,7 @@ def test_quiz_with_no_valid_evidence_returns_empty(
         json={"course_id": course_id, "question_count": 3},
         headers=headers,
     )
-    # The V3 plan expects the endpoint to return 200 with zero items
-    # rather than raising a 400 error or creating a quiz with
-    # fabricated / borrowed questions.
-    assert resp.status_code == 200, (
-        f"Expected 200 with empty items for no-evidence quiz, got "
-        f"{resp.status_code}: {resp.text}"
-    )
-    body = resp.json()
-    assert len(body.get("items", [])) == 0, (
-        f"Expected 0 items when no valid evidence, got "
-        f"{len(body.get('items', []))}"
-    )
+    assert resp.status_code == 422, resp.text
 
 
 def test_fake_chunk_ids_do_not_borrow_evidence(

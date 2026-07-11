@@ -123,21 +123,17 @@ def _verify_choice_item(
     if not correct_text:
         return False, f"无法找到答案 {answer} 对应的选项文本"
 
-    # The correct option text should appear in the source quote, or at
-    # least share significant overlap with it.
-    if correct_text in combined_quote:
-        return True, "verified"
-
-    # Check for partial overlap (at least 4 consecutive characters).
-    min_overlap = 4
-    for i in range(len(correct_text) - min_overlap + 1):
-        substr = correct_text[i : i + min_overlap]
-        if substr in combined_quote:
-            return True, "verified"
-
-    return False, (
-        f"正确选项「{correct_text[:40]}」未在来源引用中出现"
-    )
+    option_texts = []
+    for opt in options:
+        option_texts.append(str(opt.get("text", "")).strip() if isinstance(opt, dict) else str(opt)[2:].strip())
+    if len(option_texts) < 3 or len(set(option_texts)) != len(option_texts):
+        return False, "单选题选项数量不足或存在重复"
+    exact_matches = [text for text in option_texts if text and text in combined_quote]
+    if len(exact_matches) != 1:
+        return False, "单选题必须恰有一个选项与来源引用精确匹配"
+    if correct_text != exact_matches[0]:
+        return False, "正确答案不是唯一的来源精确匹配选项"
+    return True, "verified"
 
 
 def _verify_true_false_item(
@@ -162,7 +158,21 @@ def _verify_true_false_item(
     if not statement:
         statement = stem
 
-    # Check that the statement shares at least some overlap with the quote.
+    answer = str(item.get("answer", "")).strip().lower()
+    corrected = str(item.get("corrected_statement", "")).strip()
+    if answer in {"true", "正确", "是"}:
+        if statement not in combined_quote:
+            return False, "true 判断题陈述必须是来源引用的精确子串"
+        if any(token in statement for token in ("不是", "不能", "从不", "必然", "全部")):
+            return False, "true 判断题含未被证据支持的极性词"
+        return True, "verified"
+    if answer in {"false", "错误", "否"}:
+        if not corrected or corrected not in combined_quote or statement == combined_quote:
+            return False, "false 判断题必须提供来源支持的 corrected_statement"
+        return True, "verified"
+    return False, "判断题答案必须为 true 或 false"
+
+    # Kept unreachable for compatibility with older source maps.
     min_overlap = 4
     for i in range(len(statement) - min_overlap + 1):
         substr = statement[i : i + min_overlap]

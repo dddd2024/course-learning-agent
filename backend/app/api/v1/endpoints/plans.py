@@ -17,6 +17,7 @@ All queries are scoped by ``current_user.id`` so a todo owned by
 another user is invisible (returned as 404) so existence is never
 leaked.
 """
+import json
 import logging
 import time
 from datetime import date, datetime
@@ -50,6 +51,7 @@ from app.schemas.plan import (
     PlanResponse,
     PlanSummaryResponse,
     TaskOverrideRequest,
+    TaskEventRequest,
     TaskResponse,
     TaskUpdate,
     TaskVerifyRequest,
@@ -67,8 +69,11 @@ from app.services.task_execution_service import (
     get_execution_info,
     override_task as override_task_service,
     start_task as start_task_service,
+    retry_task as retry_task_service,
+    record_task_event as record_task_event_service,
     verify_task as verify_task_service,
 )
+from app.services.task_target_resolver import resolve_target
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -78,16 +83,6 @@ todos_router = APIRouter()
 def _normalise_task_type(value: str | None) -> str:
     value = (value or "review").strip().lower()
     return "quiz" if value in {"practice", "exercise", "test"} else value if value in {"learn", "review", "quiz"} else "review"
-
-
-def _resolve_task_target(db: Session, course_id: int, task_type: str) -> tuple[str | None, int | None]:
-    if task_type == "learn":
-        row = db.query(Material.id).filter(Material.course_id == course_id, Material.status == "ready").order_by(Material.id.desc()).first()
-        return ("material", row[0]) if row else (None, None)
-    if task_type == "review":
-        row = db.query(KnowledgePoint.id).filter(KnowledgePoint.course_id == course_id, KnowledgePoint.status == "active").order_by(KnowledgePoint.importance.desc()).first()
-        return ("knowledge_point", row[0]) if row else (None, None)
-    return ("quiz", None)
 
 
 def _load_course_names(
@@ -476,18 +471,33 @@ def verify_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    """Verify task completion (PLAN-V3-02).
-
-    For quiz tasks: checks if ``score >= threshold`` (default 60). On
-    pass, auto-completes the task + Todo + recalculates Goal progress.
-    """
+    """Verify from server-side quiz or task-event evidence only."""
     return verify_task_service(
         db,
         task_id,
         current_user.id,
-        score=payload.score,
-        threshold=payload.threshold,
+        confirmation=payload.confirmation,
+        note=payload.note,
     )
+
+
+@router.post("/tasks/{task_id}/events")
+def record_task_event(
+    task_id: int,
+    payload: TaskEventRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    return record_task_event_service(db, task_id, current_user.id, payload.event_type, payload.note)
+
+
+@router.post("/tasks/{task_id}/retry")
+def retry_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    return retry_task_service(db, task_id, current_user.id)
 
 
 @router.get("/tasks/{task_id}/execution")
@@ -627,6 +637,7 @@ def create_plan(
     # 4. Persist StudyTask rows (preserve LLM order so scheduler indices
     #    line up with the persisted list).
     task_rows: list[StudyTask] = []
+    used_target_ids: dict[tuple[int, str], set[int]] = {}
     for task_data in plan_output.get("tasks", []):
         course_name = task_data.get("course_name", "")
         course_id = course_map.get(course_name)
@@ -635,7 +646,12 @@ def create_plan(
             # rather than failing the whole plan creation.
             continue
         task_type = _normalise_task_type(task_data.get("task_type"))
-        target_type, target_id = _resolve_task_target(db, course_id, task_type)
+        key = (course_id, task_type)
+        target_type, target_id, target_spec = resolve_target(
+            db, course_id, task_type, task_data.get("title", ""), used_target_ids.setdefault(key, set())
+        )
+        if target_id is not None:
+            used_target_ids[key].add(target_id)
         task = StudyTask(
             goal_id=goal.id,
             course_id=course_id,
@@ -647,6 +663,7 @@ def create_plan(
             status="pending",
             target_type=target_type,
             target_id=target_id,
+            target_spec_json=json.dumps(target_spec, ensure_ascii=False),
             execution_status="pending",
         )
         db.add(task)
@@ -784,6 +801,7 @@ def create_multi_plan(
     goal_by_course: dict[int, StudyGoal] = {}
     items: list[MultiScheduleItem] = []
 
+    used_target_ids: dict[tuple[int, str], set[int]] = {}
     for item in schedule_items_raw:
         course_id = item["course_id"]
         course_name = item.get("course_name") or course_name_by_id.get(course_id, "")
@@ -807,7 +825,12 @@ def create_multi_plan(
             goal_by_course[course_id] = goal
 
         task_type = _normalise_task_type(item.get("task_type"))
-        target_type, target_id = _resolve_task_target(db, course_id, task_type)
+        key = (course_id, task_type)
+        target_type, target_id, target_spec = resolve_target(
+            db, course_id, task_type, item["title"], used_target_ids.setdefault(key, set())
+        )
+        if target_id is not None:
+            used_target_ids[key].add(target_id)
         task = StudyTask(
             goal_id=goal_by_course[course_id].id,
             course_id=course_id,
@@ -819,6 +842,7 @@ def create_multi_plan(
             status="pending",
             target_type=target_type,
             target_id=target_id,
+            target_spec_json=json.dumps(target_spec, ensure_ascii=False),
             execution_status="pending",
         )
         db.add(task)

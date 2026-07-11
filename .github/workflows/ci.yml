@@ -260,13 +260,11 @@ jobs:
           name: e2e-test-result
           path: artifacts/e2e
 
-      - name: Run V3 quality closure verification
+      - name: Run V4 functional closure verification
         run: |
           mkdir -p artifacts
-          python scripts/verify_quality_closure_v3.py --json > artifacts/verification-result.json 2>&1 || true
-          cat artifacts/verification-result.json
-          # Re-run for console output
-          python scripts/verify_quality_closure_v3.py || echo "::warning::Verification script returned non-zero"
+          python scripts/verify_function_closure_v4.py
+          cp artifacts/verification/v4-baseline.json artifacts/verification-result.json
 
       - name: Check for skipped tests
         run: |
@@ -284,7 +282,8 @@ jobs:
           # Check vitest output for "skipped" in summary
           if [ -f artifacts/frontend/frontend-test-result.txt ]; then
             if grep -qE "[0-9]+ skipped" artifacts/frontend/frontend-test-result.txt; then
-              echo "::warning::Some frontend tests were skipped"
+              echo "::error::Some frontend tests were skipped"
+              exit 1
             fi
           fi
 
@@ -292,20 +291,17 @@ jobs:
         run: |
           echo "Validating verification-result.json is a proper JSON report..."
           if [ -f artifacts/verification-result.json ]; then
-            # The file must be valid JSON with checks array
-            python -c "
+          # The file must be a passed V4 report with one real result per check.
+          python -c "
           import json, sys
           with open('artifacts/verification-result.json') as f:
               data = json.load(f)
-          assert 'checks' in data, 'Missing checks array in verification result'
-          assert 'total_checks' in data, 'Missing total_checks field'
-          assert data['total_checks'] > 0, 'No checks were run'
-          failed = [c for c in data['checks'] if c.get('status') == 'fail']
-          if failed:
-              print(f'FAILED checks: {len(failed)}')
-              for c in failed:
-                  print(f'  - {c[\"check\"]}: {c[\"message\"]}')
-              sys.exit(1)
+          assert data['version'] == 'v4', 'Unexpected verification version'
+          assert isinstance(data['results'], list), 'results must be a list'
+          assert isinstance(data['checks'], list), 'checks must be a list'
+          assert data['total_checks'] == len(data['checks']), 'check count mismatch'
+          assert data['passed'] is True, 'acceptance report is not passed'
+          assert all(item['status'] == 'pass' for item in data['checks']), 'a check failed'
           print(f'All {data[\"total_checks\"]} checks passed')
           "
           else

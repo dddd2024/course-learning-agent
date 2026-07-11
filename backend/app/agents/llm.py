@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -619,53 +620,44 @@ def _mock_planner(prompt: str = "") -> dict[str, Any]:
 
 
 def _mock_task_decompose(prompt: str = "") -> dict[str, Any]:
+    goal = _extract_prompt_field(prompt, "学习目标:") or _extract_prompt_field(prompt, "目标:") or "学习目标"
+    course = _extract_prompt_field(prompt, "课程:") or _extract_prompt_field(prompt, "课程名称:") or "当前课程"
+    keyword = (goal or course).strip()[:24]
     return {
-        "parent_task": "复习第一章 绪论",
+        "parent_task": f"完成{keyword}",
         "subtasks": [
             {
-                "title": "阅读 1.1-1.3 节",
+                "title": f"理解{course}相关资料：{keyword}",
                 "task_type": "learn",
                 "estimate_minutes": 40,
                 "priority": 5,
-                "acceptance": "能复述每节核心概念。",
+                "acceptance": "能复述资料中的核心概念。",
                 "depends_on": [],
             },
             {
-                "title": "整理思维导图",
+                "title": f"整理{keyword}知识点并完成自测",
                 "task_type": "review",
                 "estimate_minutes": 30,
                 "priority": 3,
-                "acceptance": "导图覆盖全部小节标题。",
-                "depends_on": ["阅读 1.1-1.3 节"],
+                "acceptance": "能说明关键知识点及其关系。",
+                "depends_on": [f"理解{course}相关资料：{keyword}"],
             },
         ],
     }
 
 
 def _mock_multi_course_schedule(prompt: str = "") -> dict[str, Any]:
+    courses_match = re.search(r"课程(?:列表)?[：:]\s*(.+)", prompt)
+    courses = [x.strip() for x in re.split(r"[、,，]", courses_match.group(1)) if x.strip()] if courses_match else []
+    courses = courses or ["当前课程"]
+    deadline_match = re.search(r"截止(?:日期)?[：:]\s*(\d{4}-\d{2}-\d{2})", prompt)
+    day = deadline_match.group(1) if deadline_match else datetime.now().strftime("%Y-%m-%d")
+    budget_match = re.search(r"(?:每日|可用).*?(\d+)\s*分钟", prompt)
+    budget = int(budget_match.group(1)) if budget_match else 60
+    per_course = max(15, budget // len(courses))
     return {
-        "schedule": [
-            {
-                "date": "2026-07-07",
-                "course_name": "机器学习",
-                "title": "复习绪论",
-                "task_type": "review",
-                "estimate_minutes": 60,
-                "priority": 5,
-                "acceptance": "能口述三大流派。",
-            },
-            {
-                "date": "2026-07-07",
-                "course_name": "数据结构",
-                "title": "练习链表题",
-                "task_type": "quiz",
-                "estimate_minutes": 60,
-                "priority": 4,
-                "acceptance": "完成 5 道链表题。",
-            },
-        ],
-        "total_days": 14,
-        "total_minutes": 1680,
+        "schedule": [{"date": day, "course_name": course, "title": f"复习{course}资料并练习验证", "task_type": "review", "estimate_minutes": per_course, "priority": 4, "acceptance": "完成资料复习与自测。"} for course in courses],
+        "unscheduled_tasks": [], "total_days": 1, "total_minutes": per_course * len(courses),
     }
 
 
@@ -779,14 +771,12 @@ def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
         if len(lines) >= 2:
             # Build a choice question: which statement matches the source?
             correct_option = lines[0][:60]
-            # Distractors: take fragments from other lines or modify the correct one.
-            distractors: list[str] = []
-            for d_line in lines[1:]:
-                if d_line[:60] != correct_option:
-                    distractors.append(d_line[:60])
-            # If not enough distractors, create generic wrong answers
-            while len(distractors) < 3:
-                distractors.append(f"以上说法均不正确（选项{len(distractors) + 1}）")
+            # Distractors are deterministic transformations, never another source line.
+            distractors = [
+                correct_option.replace("是", "不是", 1) if "是" in correct_option else f"并非：{correct_option}",
+                f"该结论仅适用于不存在的前提：{correct_option}",
+                f"与原文相反：{correct_option[::-1]}",
+            ]
 
             options = [correct_option] + distractors[:3]
             # Shuffle deterministically (keep correct at known position)

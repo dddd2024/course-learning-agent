@@ -208,15 +208,15 @@ class AgentAudit:
         # Compute the new status based on the outcome.
         if error is not None:
             new_status = STATUS_FAILED
-        elif fallback_used:
-            new_status = STATUS_DEGRADED
         elif evidence_status in ("insufficient", "not_required"):
             new_status = STATUS_INSUFFICIENT_EVIDENCE
+        elif fallback_used or run.provider == "mock":
+            new_status = STATUS_DEGRADED
         else:
             new_status = STATUS_SUCCESS
 
-        # Never downgrade a terminal status to success.
-        if new_status == STATUS_SUCCESS and run.status in _TERMINAL_STATUSES:
+        rank = {STATUS_SUCCESS: 0, STATUS_DEGRADED: 1, STATUS_INSUFFICIENT_EVIDENCE: 2, STATUS_CANCELLED: 3, STATUS_FAILED: 4}
+        if rank.get(run.status, 0) > rank.get(new_status, 0):
             new_status = run.status
 
         run.status = new_status

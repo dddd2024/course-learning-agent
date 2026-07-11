@@ -382,7 +382,7 @@ async function handleSubmit() {
       if (Number.isInteger(taskId) && data.total > 0) {
         const pct = Math.round((data.score / data.total) * 100)
         try {
-          const { data: verifyData } = await verifyTask(taskId, pct, 60)
+          const { data: verifyData } = await verifyTask(taskId)
           if (verifyData.verified) {
             ElMessage.success('任务验证通过，已自动完成')
           } else {
