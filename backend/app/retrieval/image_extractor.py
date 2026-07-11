@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -18,6 +19,9 @@ class ImageInfo:
     height: Optional[int] = None
     format: str = "png"
     xref: Optional[int] = None
+    is_decorative: bool = False
+    decorative_reason: Optional[str] = None
+    perceptual_hash: Optional[str] = None
 
 
 def extract_images_from_pdf(file_path: str, *, min_size: int = 50) -> List[ImageInfo]:
@@ -74,6 +78,9 @@ def extract_images_from_pdf(file_path: str, *, min_size: int = 50) -> List[Image
                     else:
                         img_format = "png"
 
+                    ratio = max(width, height) / max(1, min(width, height))
+                    reason = "extreme_aspect_ratio" if ratio > 8 else None
+                    digest = hashlib.sha256(img_bytes).hexdigest()[:32]
                     images.append(ImageInfo(
                         page_no=page_no,
                         image_bytes=img_bytes,
@@ -81,6 +88,9 @@ def extract_images_from_pdf(file_path: str, *, min_size: int = 50) -> List[Image
                         height=height,
                         format=img_format,
                         xref=xref,
+                        is_decorative=reason is not None,
+                        decorative_reason=reason,
+                        perceptual_hash=digest,
                     ))
                 except Exception as e:
                     logger.debug("Failed to extract image xref=%s on page %d: %s", xref, page_no, e)

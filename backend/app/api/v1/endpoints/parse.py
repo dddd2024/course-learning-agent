@@ -240,6 +240,7 @@ def list_chunks(
         imgs = db.query(MaterialImage).filter(
             MaterialImage.material_id == material_id,
             MaterialImage.page_no.in_(page_nos),
+            MaterialImage.is_decorative == 0,
         ).all()
         for img in imgs:
             if img.chunk_id:

@@ -90,6 +90,11 @@ _FIRST_ROUND_COLUMNS = {
         "verification_method": "VARCHAR(50)",
         "auto_completed_at": "DATETIME",
     },
+    "material_images": {
+        "is_decorative": "INTEGER DEFAULT 0 NOT NULL",
+        "decorative_reason": "VARCHAR(255)",
+        "perceptual_hash": "VARCHAR(64)",
+    },
     "agent_runs": {
         "requested_provider": "VARCHAR(50)",
         "requested_model": "VARCHAR(100)",

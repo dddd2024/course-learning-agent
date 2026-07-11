@@ -218,7 +218,11 @@ def parse_with_retry(
                     ) / "images"
                     img_dir.mkdir(parents=True, exist_ok=True)
 
+                    seen_image_hashes: set[str] = set()
                     for idx, img in enumerate(extracted):
+                        if img.perceptual_hash in seen_image_hashes:
+                            continue
+                        seen_image_hashes.add(img.perceptual_hash or "")
                         img_filename = f"page{img.page_no}_{idx}.{img.format}"
                         img_full_path = img_dir / img_filename
                         img_full_path.write_bytes(img.image_bytes)
@@ -235,6 +239,9 @@ def parse_with_retry(
                             width=img.width,
                             height=img.height,
                             format=img.format,
+                            is_decorative=1 if img.is_decorative else 0,
+                            decorative_reason=img.decorative_reason,
+                            perceptual_hash=img.perceptual_hash,
                         ))
                     db.flush()
                     logger.info("Saved %d images for material %s", len(extracted), material_id)

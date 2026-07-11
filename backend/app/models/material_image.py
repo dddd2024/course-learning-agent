@@ -14,3 +14,6 @@ class MaterialImage(Base, TimestampMixin):
     width = Column(Integer, nullable=True)
     height = Column(Integer, nullable=True)
     format = Column(String(10), default="png")
+    is_decorative = Column(Integer, nullable=False, default=0)
+    decorative_reason = Column(String(255))
+    perceptual_hash = Column(String(64), index=True)
