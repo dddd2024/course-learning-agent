@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import hashlib
+import io
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -22,6 +23,24 @@ class ImageInfo:
     is_decorative: bool = False
     decorative_reason: Optional[str] = None
     perceptual_hash: Optional[str] = None
+    color_variance: Optional[float] = None
+    coverage_ratio: Optional[float] = None
+
+
+def _image_characteristics(image_bytes: bytes) -> tuple[str, float]:
+    """Return a compact perceptual hash and RGB variance without OCR."""
+    try:
+        from PIL import Image, ImageStat
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            rgb = image.convert("RGB")
+            variance = sum(ImageStat.Stat(rgb).var) / 3
+            small = rgb.convert("L").resize((8, 8))
+            values = list(small.getdata())
+            average = sum(values) / len(values)
+            bits = "".join("1" if value >= average else "0" for value in values)
+            return f"{int(bits, 2):016x}", float(variance)
+    except Exception:
+        return hashlib.sha256(image_bytes).hexdigest()[:32], 0.0
 
 
 def extract_images_from_pdf(file_path: str, *, min_size: int = 50) -> List[ImageInfo]:
@@ -79,8 +98,20 @@ def extract_images_from_pdf(file_path: str, *, min_size: int = 50) -> List[Image
                         img_format = "png"
 
                     ratio = max(width, height) / max(1, min(width, height))
-                    reason = "extreme_aspect_ratio" if ratio > 8 else None
-                    digest = hashlib.sha256(img_bytes).hexdigest()[:32]
+                    digest, color_variance = _image_characteristics(img_bytes)
+                    rects = page.get_image_rects(xref)
+                    page_area = max(float(page.rect.width * page.rect.height), 1.0)
+                    coverage_ratio = max(
+                        (float(rect.width * rect.height) / page_area for rect in rects),
+                        default=0.0,
+                    )
+                    reason = None
+                    if ratio > 8:
+                        reason = "extreme_aspect_ratio"
+                    elif color_variance < 4:
+                        reason = "low_color_variance"
+                    elif coverage_ratio > 0.8 and color_variance < 30:
+                        reason = "background_coverage"
                     images.append(ImageInfo(
                         page_no=page_no,
                         image_bytes=img_bytes,
@@ -91,6 +122,8 @@ def extract_images_from_pdf(file_path: str, *, min_size: int = 50) -> List[Image
                         is_decorative=reason is not None,
                         decorative_reason=reason,
                         perceptual_hash=digest,
+                        color_variance=color_variance,
+                        coverage_ratio=coverage_ratio,
                     ))
                 except Exception as e:
                     logger.debug("Failed to extract image xref=%s on page %d: %s", xref, page_no, e)

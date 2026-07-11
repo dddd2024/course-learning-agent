@@ -156,6 +156,7 @@ class WeakPointOut(BaseModel):
     consecutive_correct: int = 0
     mastery_score: int = 0
     status: str = "active"
+    last_mastery_decay_at: Optional[datetime] = None
 
 
 class WeakPointListResponse(BaseModel):

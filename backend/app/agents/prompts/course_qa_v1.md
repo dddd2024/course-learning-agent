@@ -23,6 +23,7 @@
     {{
       "chunk_id": "资料片段ID",
       "quote_text": "引用原文片段",
+      "claim_text": "回答中被此引用支撑的一句具体结论",
       "reason": "为何此片段支撑该回答",
       "confidence": 0.86
     }}
@@ -35,7 +36,7 @@
 ## 字段约束
 - `answer`：字符串。若 `not_found` 为 true，此字段可为空字符串或简短说明。
 - `key_points`：字符串数组，3-5 条核心要点。
-- `citations`：数组，每项必须包含 `chunk_id`/`quote_text`/`reason`/`confidence`（0.0-1.0）。
+- `citations`：数组，每项必须包含 `chunk_id`/`quote_text`/`claim_text`/`reason`/`confidence`（0.0-1.0）。`quote_text` 必须逐字复制资料片段；`claim_text` 必须逐字摘自 `answer`。
 - `not_found`：布尔。资料中确实无相关信息时为 true。
 - `follow_up_questions`：字符串数组，2-3 条建议学生继续探索的问题。
 

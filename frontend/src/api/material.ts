@@ -43,6 +43,10 @@ export interface ChunkImage {
   width?: number
   height?: number
   format: string
+  is_decorative?: boolean
+  decorative_reason?: string | null
+  color_variance?: number | null
+  coverage_ratio?: number | null
 }
 
 export interface Chunk {
@@ -67,6 +71,7 @@ export interface ChunkListResult {
 export interface ChunkListParams {
   page?: number
   page_size?: number
+  include_decorative?: boolean
 }
 
 export interface SearchItem {
@@ -149,6 +154,24 @@ export function getMaterialOverview(
   materialId: number,
 ): AxiosPromise<MaterialOverview> {
   return request.get(`/materials/${materialId}/overview`)
+}
+
+export interface MaterialStudyGuide {
+  material_id: number
+  answer: string
+  evidence_ids: number[]
+  sampled_pages: number[]
+  coverage_note: string
+  provider: string
+  fallback_used: boolean
+  fallback_reason?: string | null
+  agent_run_id?: number | null
+}
+
+export function generateMaterialStudyGuide(
+  materialId: number,
+): AxiosPromise<MaterialStudyGuide> {
+  return request.post(`/materials/${materialId}/study-guide`)
 }
 
 // Phase 2 bugfix P0-2: fetch a single chunk's full text for citation

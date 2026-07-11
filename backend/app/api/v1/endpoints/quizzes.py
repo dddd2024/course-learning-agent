@@ -55,6 +55,7 @@ from app.services.llm_config_service import (
     build_user_config,
     get_active_config,
 )
+from app.services.weak_point_progress import apply_mastery_decay
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -272,6 +273,8 @@ def create_quiz(
         question_count=payload.question_count,
         user_config=user_config,
     )
+    if not quiz_output.get("items"):
+        raise BusinessException(message="课程资料缺少可追溯证据，暂不能生成测验")
 
     quiz = Quiz(
         user_id=current_user.id,
@@ -435,7 +438,7 @@ def submit_quiz(
         item.is_correct = 1 if is_correct else 0
         if is_correct:
             score += 1
-        else:
+        elif not needs_review:
             # Record each knowledge point once per submitted quiz. A generated
             # quiz may contain multiple questions for the same point; counting
             # each duplicate made severity depend on generator composition
@@ -544,8 +547,18 @@ def list_weak_points(
             WeakPoint.user_id == current_user.id,
             WeakPoint.course_id == course_id,
         )
-        .order_by(WeakPoint.wrong_count.desc(), WeakPoint.id.asc())
+        .order_by(WeakPoint.id.asc())
         .all()
+    )
+    if any(apply_mastery_decay(wp) for wp, _ in rows):
+        db.commit()
+    rows.sort(
+        key=lambda row: (
+            row[0].status == "resolved",
+            row[0].mastery_score,
+            -(row[0].wrong_count or 0),
+            row[0].last_wrong_at or datetime.min,
+        )
     )
     items = [
         WeakPointOut(
@@ -559,6 +572,7 @@ def list_weak_points(
             consecutive_correct=wp.consecutive_correct,
             mastery_score=wp.mastery_score,
             status=wp.status,
+            last_mastery_decay_at=wp.last_mastery_decay_at,
         )
         for wp, kp in rows
     ]

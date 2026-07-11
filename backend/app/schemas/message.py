@@ -14,6 +14,9 @@ class CitationBrief(BaseModel):
     page_no: Optional[int] = None
     material_name: Optional[str] = None
     display_label: Optional[str] = None
+    claim_text: Optional[str] = None
+    support_status: str = "weak"
+    verification_reason: Optional[str] = None
 
 
 class MessageResponse(BaseModel):

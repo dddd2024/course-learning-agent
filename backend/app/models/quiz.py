@@ -129,6 +129,7 @@ class WeakPoint(Base, TimestampMixin):
     status = Column(String(20), nullable=False, default="active")
     resolved_at = Column(DateTime, nullable=True)
     last_wrong_at = Column(DateTime, nullable=True)
+    last_mastery_decay_at = Column(DateTime, nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (

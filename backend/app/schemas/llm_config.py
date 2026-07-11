@@ -12,6 +12,17 @@ from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic import field_validator
+from urllib.parse import urlsplit
+
+
+def _validate_url_shape(value: str) -> str:
+    parsed = urlsplit(value.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Base URL 必须是包含主机名的 http 或 https 地址")
+    if parsed.username or parsed.password:
+        raise ValueError("Base URL 不允许包含用户名或密码")
+    return value.rstrip("/")
 
 
 class LLMConfigCreate(BaseModel):
@@ -28,8 +39,13 @@ class LLMConfigCreate(BaseModel):
     model: str = Field(..., min_length=1, max_length=100)
     api_key: str = Field(..., min_length=1)
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
-    max_tokens: int = Field(default=2000, ge=1)
-    timeout_seconds: int = Field(default=60, ge=1)
+    max_tokens: int = Field(default=2000, ge=1, le=16000)
+    timeout_seconds: int = Field(default=60, ge=1, le=300)
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base_url(cls, value: str) -> str:
+        return _validate_url_shape(value)
 
 
 class LLMConfigUpdate(BaseModel):
@@ -43,8 +59,13 @@ class LLMConfigUpdate(BaseModel):
     model: Optional[str] = Field(default=None, min_length=1, max_length=100)
     api_key: Optional[str] = Field(default=None, min_length=1)
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
-    max_tokens: Optional[int] = Field(default=None, ge=1)
-    timeout_seconds: Optional[int] = Field(default=None, ge=1)
+    max_tokens: Optional[int] = Field(default=None, ge=1, le=16000)
+    timeout_seconds: Optional[int] = Field(default=None, ge=1, le=300)
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base_url(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_url_shape(value) if value is not None else value
 
 
 class LLMConfigResponse(BaseModel):

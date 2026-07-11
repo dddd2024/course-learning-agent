@@ -2,7 +2,11 @@
 import pytest
 from pathlib import Path
 
-from app.retrieval.image_extractor import extract_images_from_pdf, ImageInfo
+from app.retrieval.image_extractor import (
+    _image_characteristics,
+    extract_images_from_pdf,
+    ImageInfo,
+)
 
 
 class TestImageInfo:
@@ -12,6 +16,12 @@ class TestImageInfo:
         assert info.width == 100
         assert info.height == 200
         assert info.format == "png"
+
+    def test_image_characteristics_has_stable_fallback_for_invalid_bytes(self):
+        """Unreadable images still get a deterministic diagnostic fingerprint."""
+        fingerprint, variance = _image_characteristics(b"not an image")
+        assert len(fingerprint) == 32
+        assert variance == 0.0
 
 
 class TestExtractImagesFromPdf:

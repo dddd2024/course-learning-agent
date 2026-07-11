@@ -141,6 +141,8 @@ def keyword_search(
         .join(Material, Material.id == MaterialChunk.material_id)
         .filter(
             MaterialChunk.course_id == course_id,
+            MaterialChunk.is_indexable == 1,
+            MaterialChunk.is_active == 1,
             Material.status == "ready",
             or_(*like_conditions),
         )

@@ -1,5 +1,6 @@
 """MaterialImage model."""
 from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy import Float
 from app.models.base import Base, TimestampMixin
 
 class MaterialImage(Base, TimestampMixin):
@@ -17,3 +18,5 @@ class MaterialImage(Base, TimestampMixin):
     is_decorative = Column(Integer, nullable=False, default=0)
     decorative_reason = Column(String(255))
     perceptual_hash = Column(String(64), index=True)
+    color_variance = Column(Float, nullable=True)
+    coverage_ratio = Column(Float, nullable=True)

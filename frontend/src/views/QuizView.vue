@@ -21,6 +21,7 @@ import {
 } from '../api/quiz'
 import { parseApiError } from '../utils/error'
 import EmptyState from '../components/common/EmptyState.vue'
+import QuizAnswerControl from '../components/quiz/QuizAnswerControl.vue'
 
 const route = useRoute()
 
@@ -637,42 +638,10 @@ onUnmounted(() => {
           <div class="question-text">{{ currentQuestion.question_text }}</div>
 
           <div class="question-answer">
-            <el-radio-group
-              v-if="currentQuestion.question_type === 'choice'"
-              v-model="answers[currentQuestion.id]"
-              class="answer-radio-group"
-            >
-              <el-radio
-                v-for="(opt, i) in currentQuestion.options"
-                :key="i"
-                :value="opt.value"
-                class="answer-option"
-              >
-                {{ opt.label }}. {{ opt.text }}
-              </el-radio>
-            </el-radio-group>
-            <el-checkbox-group
-              v-else-if="currentQuestion.question_type === 'multiple_choice'"
-              v-model="answers[currentQuestion.id]"
-              class="answer-radio-group"
-            >
-              <el-checkbox v-for="opt in currentQuestion.options" :key="opt.value" :value="opt.value" class="answer-option">
-                {{ opt.label }}. {{ opt.text }}
-              </el-checkbox>
-            </el-checkbox-group>
-            <el-radio-group
-              v-else-if="currentQuestion.question_type === 'true_false'"
-              v-model="answers[currentQuestion.id]"
-            >
-              <el-radio value="true">是</el-radio>
-              <el-radio value="false">否</el-radio>
-            </el-radio-group>
-            <el-input
-              v-else
-              v-model="answers[currentQuestion.id]"
-              type="textarea"
-              :rows="3"
-              placeholder="请输入答案"
+            <QuizAnswerControl
+              :item="currentQuestion"
+              :model-value="answers[currentQuestion.id]"
+              @update:model-value="answers[currentQuestion.id] = $event"
             />
           </div>
         </el-card>

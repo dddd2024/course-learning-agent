@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import BusinessException, NotFoundException
 from app.models.user import User
 from app.schemas.llm_config import (
     LLMConfigActiveResponse,
@@ -77,7 +77,10 @@ def create(
     The plaintext ``api_key`` is encrypted by the service layer before
     persistence; only the masked form is returned.
     """
-    config = create_config(db, current_user.id, payload.model_dump())
+    try:
+        config = create_config(db, current_user.id, payload.model_dump())
+    except ValueError as exc:
+        raise BusinessException(message=str(exc)) from exc
     return LLMConfigResponse.model_validate(config)
 
 
@@ -104,7 +107,10 @@ def update(
 ) -> LLMConfigResponse:
     """Update a config owned by the current user (404 otherwise)."""
     config = _get_owned_config(db, config_id, current_user.id)
-    updated = update_config(db, config, payload.model_dump(exclude_unset=True))
+    try:
+        updated = update_config(db, config, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise BusinessException(message=str(exc)) from exc
     return LLMConfigResponse.model_validate(updated)
 
 

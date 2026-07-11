@@ -68,3 +68,21 @@ def test_overview_unauthenticated(client) -> None:
     """Unauthenticated request returns 401."""
     resp = client.get("/api/v1/materials/1/overview")
     assert resp.status_code == 401
+
+
+def test_study_guide_uses_material_evidence_and_reports_coverage(
+    client, tmp_path, monkeypatch
+) -> None:
+    """Study guides are a dedicated, evidence-bounded agent flow."""
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr("app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed"))
+    headers = auth_headers(client, username="alice")
+    _, material_id = setup_course_with_material(client, headers, content=TLB_TEXT)
+    response = client.post(f"/api/v1/materials/{material_id}/study-guide", headers=headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["material_id"] == material_id
+    assert body["evidence_ids"]
+    assert "抽样" in body["coverage_note"]
+    assert body["answer"]
+    assert "provider" in body

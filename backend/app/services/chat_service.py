@@ -75,6 +75,27 @@ def _summarise(text: str, limit: int = 200) -> str:
     return text if len(text) <= limit else text[:limit] + "..."
 
 
+def _build_conversation_context(db: Session, conversation_id: int) -> str:
+    """Build a bounded, role-labelled context for resolution and retrieval.
+
+    Historical assistant text is deliberately labelled as unverified context;
+    the course chunks retrieved afterwards remain the only factual source.
+    """
+    messages = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.id.desc())
+        .limit(6)
+        .all()
+    )
+    return "\n".join(
+        f"{'学生' if message.role == 'user' else '助手（未验证上下文）'}："
+        f"{_summarise(message.content or '', 600)}"
+        for message in reversed(messages)
+        if message.content
+    )
+
+
 def _safe_add_step(db, run_id, **kw) -> None:
     if run_id is None:
         return
@@ -235,6 +256,11 @@ def run_chat_pipeline(
         except Exception:
             pass
 
+    # Preserve recent turns before the current question is persisted. The
+    # bounded context is used for pronoun resolution in both retrieval and
+    # generation, never as an evidence source.
+    conversation_context = _build_conversation_context(db, conversation.id)
+
     # 1. Persist the user's question.
     user_msg = Message(
         conversation_id=conversation.id,
@@ -249,8 +275,11 @@ def run_chat_pipeline(
     yield {"event": "step_started", "step": "retrieve", "message": "正在检索课程资料"}
     retrieve_started = time.monotonic()
     try:
-        candidates = keyword_search(db, course_id, question, top_k=12)
-        ranked = rerank(question, candidates, top_k=6)
+        retrieval_query = question
+        if conversation_context:
+            retrieval_query = f"{question}\n\n近期上下文：\n{conversation_context}"
+        candidates = keyword_search(db, course_id, retrieval_query, top_k=12)
+        ranked = rerank(retrieval_query, candidates, top_k=6)
     except Exception as exc:
         _log_error(db, current_user.id, conversation_id, "retrieve",
                    provider, model_name, config_id, exc,
@@ -279,7 +308,7 @@ def run_chat_pipeline(
         _safe_add_step(
             db, run_id=run_id, step_name="retrieve", step_index=0,
             input_data={
-                "query": _summarise(question, 200),
+                "query": _summarise(retrieval_query, 800),
                 "top_k": 12,
             },
             output_data={
@@ -353,16 +382,9 @@ def run_chat_pipeline(
     course_name = course.name if course else ""
     generate_started = time.monotonic()
     try:
-        recent = db.query(Message).filter(
-            Message.conversation_id == conversation.id
-        ).order_by(Message.id.desc()).limit(6).all()
-        context = "\n".join(
-            f"{'学生' if m.role == 'user' else '助手'}：{(m.content or '')[:600]}"
-            for m in reversed(recent) if m.content
-        )
         result = answer_question(
             db, course_id, question, ranked, course_name,
-            user_config=user_config, conversation_context=context,
+            user_config=user_config, conversation_context=conversation_context,
         )
     except Exception as exc:
         generate_duration = int((time.monotonic() - generate_started) * 1000)
@@ -447,6 +469,10 @@ def run_chat_pipeline(
                 quote_text=quote_text,
                 confidence=confidence,
                 display_label=display_label,
+                claim_text=cite.get("claim_text", ""),
+                support_status=cite.get("support_status", "weak"),
+                verification_reason=cite.get("verification_reason", ""),
+                verifier_version=cite.get("verifier_version", ""),
             )
         )
         db.add(
@@ -454,6 +480,10 @@ def run_chat_pipeline(
                 message_id=assistant_msg.id,
                 chunk_id=cite["chunk_id"],
                 quote_text=quote_text,
+                claim_text=cite.get("claim_text", ""),
+                support_status=cite.get("support_status", "weak"),
+                verification_reason=cite.get("verification_reason", ""),
+                verifier_version=cite.get("verifier_version", ""),
                 confidence=confidence,
                 page_no=page_no,
             )

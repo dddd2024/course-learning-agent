@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.crypto import decrypt, encrypt
 from app.models.llm_config import UserLLMConfig
+from app.services.llm_config_security import validate_llm_base_url
 
 
 def get_user_configs(db: Session, user_id: int) -> list[UserLLMConfig]:
@@ -71,6 +72,8 @@ def build_user_config(config: UserLLMConfig) -> dict:
 
 def create_config(db: Session, user_id: int, data: dict) -> UserLLMConfig:
     """Create a config, encrypting the plaintext ``api_key`` before persist."""
+    data = dict(data)
+    data["base_url"] = validate_llm_base_url(data["base_url"])
     config = UserLLMConfig(
         user_id=user_id,
         provider=data["provider"],
@@ -92,6 +95,9 @@ def update_config(
     db: Session, config: UserLLMConfig, data: dict
 ) -> UserLLMConfig:
     """Patch a config in place. Re-encrypts ``api_key`` when supplied."""
+    data = dict(data)
+    if data.get("base_url") is not None:
+        data["base_url"] = validate_llm_base_url(data["base_url"])
     for field in [
         "provider",
         "name",
@@ -165,7 +171,7 @@ def test_connection(config: UserLLMConfig) -> dict:
         "max_tokens": 16,
     }
     try:
-        with httpx.Client(timeout=config.timeout_seconds) as client:
+        with httpx.Client(timeout=config.timeout_seconds, follow_redirects=False) as client:
             resp = client.post(url, headers=headers, json=body)
         resp.raise_for_status()
     except httpx.HTTPStatusError as exc:

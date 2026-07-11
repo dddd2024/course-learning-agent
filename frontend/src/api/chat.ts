@@ -25,6 +25,9 @@ export interface Citation {
   page_no: number
   quote_text: string
   confidence: number
+  claim_text?: string
+  support_status?: 'verified' | 'weak' | 'rejected'
+  verification_reason?: string
   material_id?: number
   // Phase 2 Task A: backend-assembled label for capsule display,
   // e.g. "操作系统讲义.pdf · 第 12 页".
@@ -74,6 +77,9 @@ export interface CitationBrief {
   page_no?: number | null
   material_name?: string | null
   display_label?: string | null
+  claim_text?: string | null
+  support_status?: 'verified' | 'weak' | 'rejected'
+  verification_reason?: string | null
 }
 
 export interface HistoryMessage {

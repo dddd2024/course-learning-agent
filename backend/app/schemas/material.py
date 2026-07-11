@@ -76,6 +76,10 @@ class ImageResponse(BaseModel):
     width: Optional[int] = None
     height: Optional[int] = None
     format: str = "png"
+    is_decorative: bool = False
+    decorative_reason: Optional[str] = None
+    color_variance: Optional[float] = None
+    coverage_ratio: Optional[float] = None
 
 
 class ChunkResponse(BaseModel):
@@ -87,6 +91,10 @@ class ChunkResponse(BaseModel):
     material_id: int
     chunk_index: int
     text: str
+    raw_text: Optional[str] = None
+    cleaner_version: Optional[str] = None
+    noise_score: Optional[float] = None
+    is_indexable: bool = True
     title: Optional[str] = None
     page_no: Optional[int] = None
     token_count: Optional[int] = None

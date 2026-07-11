@@ -33,7 +33,7 @@ from app.core.timezone import utc_now
 from app.models.material import Material, MaterialVersion
 from app.models.material_chunk import MaterialChunk
 from app.models.security_finding import MaterialSecurityFinding
-from app.retrieval.chunker import build_chunks, clean_keyword_text, _is_low_quality_chunk
+from app.retrieval.chunker import build_chunks, clean_keyword_text, clean_material_text
 from app.retrieval.parsers import parse_file
 from app.services import security_scanner
 from app.services.chunk_quality import evaluate_chunks_quality
@@ -152,12 +152,7 @@ def parse_with_retry(
 
             saved_chunks: list[MaterialChunk] = []
             # Step 1: Rule-based pre-filter (fast, no API calls)
-            candidate_chunks = []
-            for chunk in chunks:
-                text = chunk["text"]
-                if _is_low_quality_chunk(text):
-                    continue
-                candidate_chunks.append(chunk)
+            candidate_chunks = chunks
 
             # Step 2: AI quality evaluation (batch LLM call)
             eval_input = [
@@ -168,7 +163,10 @@ def parse_with_retry(
 
             # Step 3: Store with quality scores
             for i, chunk in enumerate(candidate_chunks):
-                text = chunk["text"]
+                raw_text = chunk["text"]
+                text = clean_material_text(raw_text) or clean_material_text(raw_text.replace("\n", " "))
+                if not text:
+                    text = raw_text.strip()
                 qr = quality_results[i] if i < len(quality_results) else {"quality": 0.5, "reason": ""}
                 mc = MaterialChunk(
                     material_id=material_id,
@@ -178,6 +176,10 @@ def parse_with_retry(
                     title=chunk.get("title"),
                     page_no=chunk.get("page_no"),
                     text=text,
+                    raw_text=raw_text,
+                    cleaner_version="v1",
+                    noise_score=0.0 if chunk.get("is_indexable", True) else 1.0,
+                    is_indexable=1 if chunk.get("is_indexable", True) else 0,
                     stable_key=f"{material_id}:{chunk.get('page_no') or 0}:{hashlib.sha256(' '.join(text.split()).encode('utf-8')).hexdigest()[:24]}",
                     content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
                     is_active=1,
@@ -242,6 +244,8 @@ def parse_with_retry(
                             is_decorative=1 if img.is_decorative else 0,
                             decorative_reason=img.decorative_reason,
                             perceptual_hash=img.perceptual_hash,
+                            color_variance=img.color_variance,
+                            coverage_ratio=img.coverage_ratio,
                         ))
                     db.flush()
                     logger.info("Saved %d images for material %s", len(extracted), material_id)

@@ -47,7 +47,11 @@ def get_dashboard_summary(
     )
     todo_today_count = (
         db.query(Todo)
-        .filter(Todo.user_id == uid, Todo.scheduled_date == today)
+        .filter(
+            Todo.user_id == uid,
+            Todo.scheduled_date == today,
+            Todo.status != "completed",
+        )
         .count()
     )
     todo_completed_count = (

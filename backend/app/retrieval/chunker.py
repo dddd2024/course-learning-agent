@@ -37,6 +37,12 @@ _HEADING_PATTERNS = [
 # Headings should be short; anything longer is almost certainly a body
 # sentence that happens to start with a digit.
 _MAX_HEADING_LEN = 80
+_CLEANER_VERSION = "v1"
+_NOISE_LINE_PATTERNS = (
+    re.compile(r"^(?:主讲教师|教师)[:：]"),
+    re.compile(r"^(?:第\s*\d+\s*页|page\s*\d+)\s*$", re.IGNORECASE),
+    re.compile(r"^(?:课程学院|教材版本)[:：]"),
+)
 
 
 def _is_heading(line: str) -> bool:
@@ -152,8 +158,8 @@ def chunk_text(
     are sliced with a sliding window of step ``chunk_size - overlap``
     so consecutive chunks overlap by ``overlap`` characters.
 
-    Chunks detected as low-quality (diagram text, repetitive labels)
-    are skipped so they never enter the retrieval store.
+    Low-quality chunks are retained with ``is_indexable=False`` so raw
+    material remains inspectable while retrieval can safely ignore noise.
     """
     if not text or not text.strip():
         return []
@@ -168,14 +174,13 @@ def chunk_text(
         if not content:
             continue
         if len(content) <= chunk_size:
-            if _is_low_quality_chunk(content):
-                continue  # Skip low-quality chunks (diagram text, repetitive labels)
             chunks.append(
                 {
                     "text": content,
                     "chunk_index": chunk_index,
                     "title": title,
                     "page_no": None,
+                    "is_indexable": not _is_low_quality_chunk(content),
                 }
             )
             chunk_index += 1
@@ -186,14 +191,13 @@ def chunk_text(
         while start < content_len:
             piece = content[start : start + chunk_size]
             start += step
-            if _is_low_quality_chunk(piece):
-                continue  # Skip low-quality chunks (diagram text, repetitive labels)
             chunks.append(
                 {
                     "text": piece,
                     "chunk_index": chunk_index,
                     "title": title,
                     "page_no": None,
+                    "is_indexable": not _is_low_quality_chunk(piece),
                 }
             )
             chunk_index += 1
@@ -241,3 +245,19 @@ def clean_keyword_text(text: str) -> str:
     if not text:
         return ""
     return re.sub(r"\s+", " ", text).strip()
+
+
+def clean_material_text(text: str) -> str:
+    """Return the shared reader/RAG text while retaining raw text elsewhere."""
+    if not text:
+        return ""
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if any(pattern.match(stripped) for pattern in _NOISE_LINE_PATTERNS):
+            continue
+        lines.append(stripped)
+    # Preserve semantic line boundaries for headings, reading and downstream
+    # outline extraction. Keyword indexing applies its own whitespace
+    # normalisation via ``clean_keyword_text``.
+    return "\n".join(lines).strip()

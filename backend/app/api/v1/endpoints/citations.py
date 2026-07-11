@@ -78,6 +78,9 @@ def list_citations(
                 material_name=material.filename,
                 page_no=page,
                 quote_text=cite.quote_text or "",
+                claim_text=cite.claim_text or "",
+                support_status=cite.support_status or "weak",
+                verification_reason=cite.verification_reason or "",
                 confidence=cite.confidence or 0.0,
                 display_label=label,
             )

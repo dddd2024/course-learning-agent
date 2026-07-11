@@ -272,6 +272,15 @@ def generate_quiz(
 
     items: list[dict[str, Any]] = []
     for i, q in enumerate(output.get("questions", [])):
+        evidence_ids = _valid_evidence_ids(
+            db, course_id, q.get("source_chunk_ids", []), knowledge_points
+        )
+        # A quiz item without a course-material anchor cannot be reviewed or
+        # safely used to update weak points. Drop it instead of persisting an
+        # apparently authoritative but untraceable question.
+        if not evidence_ids:
+            logger.warning("Skipping quiz item %s because it has no valid evidence", i)
+            continue
         items.append(
             {
                 "question_type": _normalise_question_type(
@@ -283,9 +292,7 @@ def generate_quiz(
                 "rubric": _normalise_rubric(q.get("rubric")),
                 "explanation": q.get("explanation", ""),
                 "difficulty": q.get("difficulty"),
-                "source_evidence_ids": _valid_evidence_ids(
-                    db, course_id, q.get("source_chunk_ids", []), knowledge_points
-                ),
+                "source_evidence_ids": evidence_ids,
                 "knowledge_point_id": _map_knowledge_point_id(
                     q.get("knowledge_point_ids", []), i, knowledge_points
                 ),
