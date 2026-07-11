@@ -113,7 +113,7 @@ class QuizResultItemOut(BaseModel):
     options: List[QuizOption] = []
     correct_answer: str = ""
     user_answer: Optional[str] = None
-    is_correct: Optional[int] = None
+    is_correct: Optional[bool] = None
     explanation: Optional[str] = None
     knowledge_point_id: Optional[int] = None
     rubric_feedback: List[dict] = []

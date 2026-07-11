@@ -112,37 +112,67 @@ def _normalise_option_answer(value) -> str:
     return text[0] if text and text[0].isalpha() else text
 
 
-def _grade_item(item: QuizItem, user_answer) -> bool:
-    """Grade a single item.
+def _legacy_rubric(answer: str) -> list[dict]:
+    """Build an explainable fallback rubric for quizzes created before this feature."""
+    terms = list(dict.fromkeys(
+        term.lower()
+        for term in re.findall(r"[A-Za-z]{2,}|[\u4e00-\u9fff]{2,}", answer)
+    ))[:8]
+    return [{"criterion": f"说明“{term}”", "keywords": [term]} for term in terms]
 
-    - ``choice`` / ``true_false``: case-insensitive exact match on the
-      option letter.
-    - ``short_answer``: case-insensitive contains match (the reference
-      answer must appear in the user's answer).
-    """
+
+def _short_answer_feedback(item: QuizItem, user_answer) -> tuple[bool, list[dict], bool]:
+    """Return deterministic scoring details for a short answer."""
+    try:
+        rubric = json.loads(item.rubric_json or "[]")
+    except (TypeError, json.JSONDecodeError):
+        rubric = []
+    if not isinstance(rubric, list) or not rubric:
+        rubric = _legacy_rubric(item.answer or "")
+    text = str(user_answer or "").strip().lower()
+    feedback: list[dict] = []
+    for criterion in rubric:
+        if not isinstance(criterion, dict):
+            continue
+        keywords = [str(value).strip().lower() for value in criterion.get("keywords", []) if str(value).strip()]
+        if not keywords:
+            continue
+        met = any(keyword in text for keyword in keywords)
+        feedback.append({
+            "criterion": str(criterion.get("criterion") or "关键要点"),
+            "met": met,
+            "keywords": keywords,
+            "message": "已覆盖该要点" if met else "尚未说明该要点",
+        })
+    if not feedback:
+        return False, [], True
+    ratio = sum(entry["met"] for entry in feedback) / len(feedback)
+    return ratio >= 0.5, feedback, 0.4 <= ratio < 0.6
+
+
+def _grade_item_details(item: QuizItem, user_answer) -> tuple[bool, list[dict], bool]:
+    """Grade an item and return (correct, feedback, needs_human_review)."""
     answer = (item.answer or "").strip()
     user_answer = _normalise_option_answer(user_answer) if item.question_type in ("choice", "multiple_choice", "true_false") else str(user_answer or "").strip()
     if not user_answer:
-        return False
+        return False, [], item.question_type == "short_answer"
     if item.question_type in ("choice", "true_false"):
-        return user_answer == _normalise_option_answer(answer)
+        return user_answer == _normalise_option_answer(answer), [], False
     if item.question_type == "multiple_choice":
         try:
             correct = json.loads(answer) if answer.startswith("[") else answer.split(",")
         except json.JSONDecodeError:
             correct = answer.split(",")
-        return set(filter(None, user_answer.split(","))) == set(filter(None, _normalise_option_answer(correct).split(",")))
+        return set(filter(None, user_answer.split(","))) == set(filter(None, _normalise_option_answer(correct).split(","))), [], False
     if item.question_type == "short_answer":
-        # Explainable fallback rubric for legacy questions: require several
-        # meaningful terms from the reference rather than one substring.
-        terms = [t.lower() for t in re.findall(r"[A-Za-z]{2,}|[\u4e00-\u9fff]{2,}", answer)]
-        terms = list(dict.fromkeys(terms))[:8]
-        if not terms:
-            return user_answer.strip().lower() == answer.lower()
-        matched = [t for t in terms if t in user_answer.lower()]
-        return len(matched) / len(terms) >= 0.5
+        return _short_answer_feedback(item, user_answer)
     # Unknown type: fall back to exact match.
-    return user_answer == answer
+    return user_answer == answer, [], False
+
+
+def _grade_item(item: QuizItem, user_answer) -> bool:
+    """Compatibility wrapper for callers that only need the score flag."""
+    return _grade_item_details(item, user_answer)[0]
 
 
 def _upsert_weak_point(
@@ -267,6 +297,7 @@ def create_quiz(
             difficulty=item_data.get("difficulty"),
             source_evidence_ids=json.dumps(item_data.get("source_evidence_ids", [])),
             evidence_snapshot=json.dumps(item_data.get("source_evidence_ids", [])),
+            rubric_json=json.dumps(item_data.get("rubric", []), ensure_ascii=False),
             order_index=item_data.get("order_index", 0),
         )
         db.add(item)
@@ -313,8 +344,10 @@ def get_quiz_result(
     if quiz.status != "submitted":
         raise BusinessException(message="该测验尚未提交，暂无结果")
 
-    items = [
-        QuizResultItemOut(
+    items = []
+    for item in sorted(quiz.items, key=lambda i: i.order_index):
+        _, rubric_feedback, needs_review = _grade_item_details(item, item.user_answer)
+        items.append(QuizResultItemOut(
             id=item.id,
             question_type=item.question_type,
             question_text=item.question_text,
@@ -324,9 +357,9 @@ def get_quiz_result(
             is_correct=item.is_correct,
             explanation=item.explanation,
             knowledge_point_id=item.knowledge_point_id,
-        )
-        for item in sorted(quiz.items, key=lambda i: i.order_index)
-    ]
+            rubric_feedback=rubric_feedback,
+            needs_review=needs_review,
+        ))
     return QuizResultOut(
         id=quiz.id,
         score=quiz.score or 0,
@@ -397,7 +430,7 @@ def submit_quiz(
     practiced: dict[int, bool] = {}
     for item in sorted(quiz.items, key=lambda i: i.order_index):
         user_answer = answer_map.get(item.id, "")
-        is_correct = _grade_item(item, user_answer) if user_answer else False
+        is_correct, rubric_feedback, needs_review = _grade_item_details(item, user_answer)
         item.user_answer = json.dumps(user_answer, ensure_ascii=False) if isinstance(user_answer, list) else user_answer
         item.is_correct = 1 if is_correct else 0
         if is_correct:
@@ -422,6 +455,8 @@ def submit_quiz(
                 is_correct=item.is_correct,
                 explanation=item.explanation,
                 knowledge_point_id=item.knowledge_point_id,
+                rubric_feedback=rubric_feedback,
+                needs_review=needs_review,
             )
         )
 

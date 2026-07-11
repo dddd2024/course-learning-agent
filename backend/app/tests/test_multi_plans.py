@@ -213,9 +213,12 @@ def test_overflow_returns_warning(client) -> None:
     body = resp.json()
     assert "overflow_warnings" in body
     assert isinstance(body["overflow_warnings"], list)
+    assert "unscheduled_tasks" in body
+    assert isinstance(body["unscheduled_tasks"], list)
     # mock planner 生成 90+60 分钟任务，10 分钟预算必然触发溢出
-    if len(body["schedule"]) > 0:
-        assert len(body["overflow_warnings"]) >= 1
+    assert len(body["overflow_warnings"]) >= 1
+    assert len(body["unscheduled_tasks"]) >= 1
+    assert all(item["estimate_minutes"] <= 10 for item in body["schedule"])
 
 
 def test_no_overflow_when_budget_sufficient(client) -> None:

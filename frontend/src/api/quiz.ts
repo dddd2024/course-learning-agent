@@ -49,6 +49,8 @@ export interface QuizResultItem {
   is_correct: boolean
   explanation: string
   knowledge_point_id: number | null
+  rubric_feedback: Array<{ criterion: string; met: boolean; keywords: string[]; message: string }>
+  needs_review: boolean
 }
 
 export interface QuizResult {

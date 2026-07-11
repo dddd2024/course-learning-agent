@@ -397,13 +397,13 @@ onMounted(() => {
     </el-card>
 
     <template v-if="result">
-      <el-card v-if="schedule.length === 0" class="section-card" shadow="never">
+      <el-card v-if="schedule.length === 0 && !(result.unscheduled_tasks && result.unscheduled_tasks.length > 0)" class="section-card" shadow="never">
         <el-empty description="生成的日程为空，请调整课程或截止日期后重试" />
       </el-card>
 
       <template v-else>
         <el-card
-          v-if="overloadDays.length > 0 || courseRisks.length > 0 || (result.overflow_warnings && result.overflow_warnings.length > 0)"
+          v-if="overloadDays.length > 0 || courseRisks.length > 0 || (result.overflow_warnings && result.overflow_warnings.length > 0) || (result.unscheduled_tasks && result.unscheduled_tasks.length > 0)"
           class="section-card risk-card"
           shadow="never"
         >
@@ -445,6 +445,16 @@ onMounted(() => {
               {{ r.deadline }}，累计安排 {{ r.scheduledMinutes }} 分钟
             </template>
           </el-alert>
+          <el-alert
+            v-for="task in (result.unscheduled_tasks || [])"
+            :key="`unscheduled-${task.course_name}-${task.title}`"
+            type="warning"
+            show-icon
+            :closable="false"
+            class="risk-alert"
+            :title="`未排期：${task.course_name} · ${task.title}（${task.estimate_minutes} 分钟）`"
+            :description="`${task.suggestion}；截止日期：${task.deadline}`"
+          />
         </el-card>
 
         <el-card class="section-card" shadow="never">

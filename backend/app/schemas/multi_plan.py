@@ -73,8 +73,21 @@ class MultiScheduleItem(BaseModel):
     end_time: Optional[time] = None
 
 
+class MultiUnscheduledTask(BaseModel):
+    """A task that was deliberately not persisted because it cannot fit."""
+
+    course_name: str = ""
+    title: str
+    estimate_minutes: int
+    deadline: date
+    remaining_budget: int = 0
+    reason: str
+    suggestion: str
+
+
 class MultiPlanResponse(BaseModel):
     """Result of POST /plans/multi."""
 
     schedule: List[MultiScheduleItem]
     overflow_warnings: List[str] = Field(default_factory=list)
+    unscheduled_tasks: List[MultiUnscheduledTask] = Field(default_factory=list)

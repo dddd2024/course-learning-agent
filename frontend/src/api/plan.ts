@@ -137,6 +137,15 @@ export interface MultiPlanScheduleItem {
 export interface MultiPlanResult {
   schedule: MultiPlanScheduleItem[]
   overflow_warnings: string[]
+  unscheduled_tasks: Array<{
+    course_name: string
+    title: string
+    estimate_minutes: number
+    deadline: string
+    remaining_budget: number
+    reason: string
+    suggestion: string
+  }>
 }
 
 export function createMultiPlan(payload: MultiPlanPayload): AxiosPromise<MultiPlanResult> {

@@ -561,6 +561,26 @@ onUnmounted(() => {
                 {{ resultMap[item.id]?.explanation || '无' }}
               </span>
             </div>
+            <div v-if="resultMap[item.id]?.rubric_feedback?.length" class="rubric-feedback">
+              <span class="result-label">评分要点：</span>
+              <el-tag
+                v-for="feedback in resultMap[item.id].rubric_feedback"
+                :key="feedback.criterion"
+                :type="feedback.met ? 'success' : 'warning'"
+                size="small"
+                class="rubric-tag"
+              >
+                {{ feedback.criterion }}：{{ feedback.message }}
+              </el-tag>
+              <el-alert
+                v-if="resultMap[item.id].needs_review"
+                title="该答案接近自动评分边界，建议教师或助教复核。"
+                type="info"
+                :closable="false"
+                show-icon
+                class="rubric-review-alert"
+              />
+            </div>
           </div>
         </el-card>
       </template>
@@ -1174,6 +1194,25 @@ onUnmounted(() => {
   font-weight: 600;
   color: #303133;
   overflow-wrap: anywhere;
+}
+
+.rubric-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.rubric-tag {
+  white-space: normal;
+  height: auto;
+  line-height: 1.5;
+}
+
+.rubric-review-alert {
+  width: 100%;
+  margin-top: 2px;
 }
 
 .weak-point-meta {

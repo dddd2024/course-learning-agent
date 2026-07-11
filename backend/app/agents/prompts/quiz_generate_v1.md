@@ -29,6 +29,7 @@
       "options": ["选项A", "选项B", "选项C", "选项D"],
       "answer": "B",
       "explanation": "答案解析",
+      "rubric": [],
       "knowledge_point_ids": ["kp_1"],
       "source_chunk_ids": ["chunk_id_1"]
     }}
@@ -43,6 +44,7 @@
 - `options`：选择题选项数组；简答题可为空数组。
 - `answer`：正确答案。选择题填选项字母，简答题填参考答案文本。
 - `explanation`：解析，说明为何此答案正确。
+- `rubric`：仅简答题填写 2-4 个评分要点，每项为 `{{"criterion":"要点说明","keywords":["可匹配关键词"]}}`；选择题和判断题填空数组。关键词必须来自参考答案或资料，不得凭空扩展。
 - `knowledge_point_ids`：关联知识点 ID 数组。
 - `source_chunk_ids`：来源片段 ID 数组，不得伪造。
 

@@ -15,9 +15,8 @@ Given a list of courses (each with its own ``deadline`` and optional
      cap; tasks that would exceed it roll forward to the next day).
 
 When a task cannot fit within the daily budget on any day before its
-deadline, it is placed on the last available day (so it is never
-dropped) and an entry is appended to ``overflow_warnings`` so the caller
-can surface the issue to the user.
+deadline, it is returned as structured unscheduled work. It is never
+persisted as a misleading, over-budget todo.
 
 The return value is a dict with ``schedule`` (a flat list of schedule
 items sorted by ``scheduled_date``) and ``overflow_warnings`` (a list of
@@ -209,6 +208,7 @@ def schedule_multi_courses(
     per_course_day_remaining: dict[tuple[int, date], int] = {}
 
     schedule: list[dict[str, Any]] = []
+    unscheduled_tasks: list[dict[str, Any]] = []
     overflow_warnings: list[str] = []
 
     for cp in course_plans:
@@ -238,20 +238,27 @@ def schedule_multi_courses(
                     chosen = d
                     break
 
-            # Fallback: place on the last day within the deadline (or the
-            # last available day overall) so the task is never dropped.
-            # Record an overflow warning so the caller can surface it.
+            # Do not create a todo that violates its declared constraints.
+            # Return enough context for the UI to offer a concrete remedy.
             if chosen is None:
-                valid = [d for d in days if d <= cp["deadline"]]
-                chosen = valid[-1] if valid else days[-1]
-                cap_key = (cp["course_id"], chosen)
-                if cap_key not in per_course_day_remaining:
-                    per_course_day_remaining[cap_key] = _PER_COURSE_DAILY_CAP_MIN
-                overflow_warnings.append(
+                available = [d for d in days if d <= cp["deadline"]]
+                remaining_budget = max((daily_remaining[d] for d in available), default=0)
+                message = (
                     f"课程「{cp['course_name']}」的任务「{task.get('title', '')}」"
-                    f"（{estimate} 分钟）无法在每日预算（{daily_minutes} 分钟）内安排，"
-                    f"已放到 {chosen.isoformat()}，可能超出当日预算。"
+                    f"（{estimate} 分钟）无法在截止日 {cp['deadline'].isoformat()} 前安排。"
                 )
+                overflow_warnings.append(message)
+                unscheduled_tasks.append({
+                    "course_id": cp["course_id"],
+                    "course_name": cp["course_name"],
+                    "title": task.get("title", ""),
+                    "estimate_minutes": estimate,
+                    "deadline": cp["deadline"],
+                    "remaining_budget": remaining_budget,
+                    "reason": "daily_or_course_budget_exceeded",
+                    "suggestion": "提高每日学习时长、拆分该任务或延长截止日期",
+                })
+                continue
 
             daily_remaining[chosen] -= estimate
             per_course_day_remaining[(cp["course_id"], chosen)] -= estimate
@@ -272,7 +279,7 @@ def schedule_multi_courses(
             )
 
     schedule.sort(key=lambda item: item["scheduled_date"])
-    return {"schedule": schedule, "overflow_warnings": overflow_warnings}
+    return {"schedule": schedule, "overflow_warnings": overflow_warnings, "unscheduled_tasks": unscheduled_tasks}
 
 
 __all__ = ["compute_priority_score", "schedule_multi_courses"]

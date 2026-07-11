@@ -78,6 +78,20 @@ def _normalise_question_type(raw: str) -> str:
     return _TYPE_MAP.get(raw, raw)
 
 
+def _normalise_rubric(raw: Any) -> list[dict[str, Any]]:
+    """Keep only machine-checkable criteria supplied for short answers."""
+    if not isinstance(raw, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for criterion in raw[:6]:
+        if not isinstance(criterion, dict):
+            continue
+        keywords = [str(value).strip() for value in criterion.get("keywords", []) if str(value).strip()]
+        if keywords:
+            result.append({"criterion": str(criterion.get("criterion") or "关键要点"), "keywords": keywords[:5]})
+    return result
+
+
 def _prefix_options(options: list[str]) -> list[dict[str, str]]:
     """Add ``A. `` / ``B. `` prefixes to options if not already present."""
     if not options:
@@ -266,6 +280,7 @@ def generate_quiz(
                 "question_text": q.get("stem", ""),
                 "options": _prefix_options(q.get("options", [])),
                 "answer": str(q.get("answer", "")),
+                "rubric": _normalise_rubric(q.get("rubric")),
                 "explanation": q.get("explanation", ""),
                 "difficulty": q.get("difficulty"),
                 "source_evidence_ids": _valid_evidence_ids(

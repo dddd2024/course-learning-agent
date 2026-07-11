@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db
 from app.main import app
 from app.models.quiz import QuizItem, WeakPoint
+from app.api.v1.endpoints.quizzes import _grade_item_details
 from app.tests.conftest import (
     auth_headers,
     create_course,
@@ -33,6 +34,28 @@ TLB_TEXT = (
     "页表存储虚拟页到物理页的映射关系。\n"
     "TLB 命中时无需访问内存中的页表，提升了地址转换速度。\n"
 ).encode("utf-8")
+
+
+def test_short_answer_rubric_returns_per_point_feedback() -> None:
+    """Short answers explain which scoring points were and were not covered."""
+    item = QuizItem(
+        question_type="short_answer",
+        answer="TLB 缓存页表项并加速地址转换",
+        rubric_json='[{"criterion":"说明缓存页表项","keywords":["缓存","页表"]},{"criterion":"说明加速地址转换","keywords":["加速","地址转换"]}]',
+    )
+    correct, feedback, needs_review = _grade_item_details(item, "TLB 会缓存页表项")
+    assert correct is True
+    assert [entry["met"] for entry in feedback] == [True, False]
+    assert needs_review is True
+
+
+def test_short_answer_without_usable_rubric_requests_review() -> None:
+    """Malformed legacy data is never claimed to be automatically assessed."""
+    item = QuizItem(question_type="short_answer", answer="", rubric_json="[]")
+    correct, feedback, needs_review = _grade_item_details(item, "任意回答")
+    assert correct is False
+    assert feedback == []
+    assert needs_review is True
 
 
 def _setup_course_with_kps(
