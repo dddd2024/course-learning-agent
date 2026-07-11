@@ -32,6 +32,7 @@ from app.core.database import get_db
 from app.core.exceptions import NotFoundException
 from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
+from app.models.material import Material
 from app.models.plan import StudyGoal, StudyTask, Todo
 from app.models.quiz import WeakPoint
 from app.models.user import User
@@ -71,6 +72,16 @@ _PROMPT_VERSION = "planner_v1"
 def _normalise_task_type(value: str | None) -> str:
     value = (value or "review").strip().lower()
     return "quiz" if value in {"practice", "exercise", "test"} else value if value in {"learn", "review", "quiz"} else "review"
+
+
+def _resolve_task_target(db: Session, course_id: int, task_type: str) -> tuple[str | None, int | None]:
+    if task_type == "learn":
+        row = db.query(Material.id).filter(Material.course_id == course_id, Material.status == "ready").order_by(Material.id.desc()).first()
+        return ("material", row[0]) if row else (None, None)
+    if task_type == "review":
+        row = db.query(KnowledgePoint.id).filter(KnowledgePoint.course_id == course_id, KnowledgePoint.status == "active").order_by(KnowledgePoint.importance.desc()).first()
+        return ("knowledge_point", row[0]) if row else (None, None)
+    return ("quiz", None)
 
 
 def _load_course_names(
@@ -581,15 +592,20 @@ def create_plan(
             # Defensive: skip any task whose course couldn't be resolved
             # rather than failing the whole plan creation.
             continue
+        task_type = _normalise_task_type(task_data.get("task_type"))
+        target_type, target_id = _resolve_task_target(db, course_id, task_type)
         task = StudyTask(
             goal_id=goal.id,
             course_id=course_id,
             title=task_data.get("title", ""),
-            task_type=_normalise_task_type(task_data.get("task_type")),
+            task_type=task_type,
             estimate_minutes=int(task_data.get("estimate_minutes", 60) or 60),
             priority=int(task_data.get("priority", 3) or 3),
             acceptance=task_data.get("acceptance", ""),
             status="pending",
+            target_type=target_type,
+            target_id=target_id,
+            execution_status="pending",
         )
         db.add(task)
         db.flush()
@@ -770,15 +786,20 @@ def create_multi_plan(
             db.flush()
             goal_by_course[course_id] = goal
 
+        task_type = _normalise_task_type(item.get("task_type"))
+        target_type, target_id = _resolve_task_target(db, course_id, task_type)
         task = StudyTask(
             goal_id=goal_by_course[course_id].id,
             course_id=course_id,
             title=item["title"],
-            task_type=_normalise_task_type(item.get("task_type")),
+            task_type=task_type,
             estimate_minutes=item["estimate_minutes"],
             priority=int(item.get("priority", 3) or 3),
             acceptance=item.get("acceptance", ""),
             status="pending",
+            target_type=target_type,
+            target_id=target_id,
+            execution_status="pending",
         )
         db.add(task)
         db.flush()

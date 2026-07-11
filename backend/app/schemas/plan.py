@@ -36,6 +36,11 @@ class GoalResponse(BaseModel):
     deadline: date
     daily_minutes: int
     status: str
+    target_type: Optional[str] = None
+    target_id: Optional[int] = None
+    execution_status: str = "pending"
+    verification_method: Optional[str] = None
+    auto_completed_at: Optional[datetime] = None
 
 
 class TaskResponse(BaseModel):

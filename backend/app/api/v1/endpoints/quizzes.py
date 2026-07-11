@@ -38,6 +38,7 @@ from app.core.exceptions import BusinessException, NotFoundException
 from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
 from app.models.quiz import Quiz, QuizItem, WeakPoint
+from app.models.plan import StudyTask, Todo
 from app.models.user import User
 from app.schemas.quiz import (
     QuizCreate,
@@ -441,6 +442,23 @@ def submit_quiz(
 
     quiz.score = score
     quiz.status = "submitted"
+
+    # A quiz task is objectively complete only after a submitted score meets
+    # its threshold. Bind the first pending quiz task to this real quiz.
+    if items_by_id and score / len(items_by_id) >= 0.8:
+        task = db.query(StudyTask).filter(
+            StudyTask.course_id == quiz.course_id,
+            StudyTask.task_type == "quiz",
+            StudyTask.status == "pending",
+        ).order_by(StudyTask.id.asc()).first()
+        if task is not None:
+            now = datetime.now()
+            task.target_type, task.target_id = "quiz", quiz.id
+            task.status, task.execution_status = "done", "completed"
+            task.verification_method, task.auto_completed_at = "quiz_score", now
+            db.query(Todo).filter(Todo.task_id == task.id).update(
+                {Todo.status: "completed", Todo.completed_at: now}, synchronize_session=False
+            )
 
     db.commit()
     db.refresh(quiz)

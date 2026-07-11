@@ -81,6 +81,13 @@ _FIRST_ROUND_COLUMNS = {
         "status": "VARCHAR(20) DEFAULT 'active' NOT NULL",
         "resolved_at": "DATETIME",
     },
+    "study_tasks": {
+        "target_type": "VARCHAR(30)",
+        "target_id": "INTEGER",
+        "execution_status": "VARCHAR(30) DEFAULT 'pending' NOT NULL",
+        "verification_method": "VARCHAR(50)",
+        "auto_completed_at": "DATETIME",
+    },
     "agent_runs": {
         "requested_provider": "VARCHAR(50)",
         "requested_model": "VARCHAR(100)",
