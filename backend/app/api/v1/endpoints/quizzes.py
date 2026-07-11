@@ -149,6 +149,7 @@ def _upsert_weak_point(
     user_id: int,
     course_id: int,
     knowledge_point_id: int,
+    correct: bool,
 ) -> None:
     """Insert or increment a ``WeakPoint`` row."""
     wp = (
@@ -166,13 +167,30 @@ def _upsert_weak_point(
             user_id=user_id,
             course_id=course_id,
             knowledge_point_id=knowledge_point_id,
-            wrong_count=1,
-            last_wrong_at=now,
+            wrong_count=0 if correct else 1,
+            correct_count=1 if correct else 0,
+            consecutive_correct=1 if correct else 0,
+            mastery_score=15 if correct else 0,
+            last_wrong_at=None if correct else now,
+            last_practiced_at=now,
+            status="improving" if correct else "active",
         )
         db.add(wp)
     else:
-        wp.wrong_count += 1
-        wp.last_wrong_at = now
+        wp.last_practiced_at = now
+        if correct:
+            wp.correct_count += 1
+            wp.consecutive_correct += 1
+            wp.mastery_score = min(100, wp.mastery_score + 20)
+            if wp.consecutive_correct >= 3 and wp.mastery_score >= 70:
+                wp.status, wp.resolved_at = "resolved", now
+            else:
+                wp.status = "improving"
+        else:
+            wp.wrong_count += 1
+            wp.consecutive_correct = 0
+            wp.mastery_score = max(0, wp.mastery_score - 25)
+            wp.status, wp.resolved_at, wp.last_wrong_at = "active", None, now
     db.flush()
 
 
@@ -375,7 +393,7 @@ def submit_quiz(
 
     score = 0
     result_items: list[QuizResultItemOut] = []
-    wrong_knowledge_point_ids: set[int] = set()
+    practiced: dict[int, bool] = {}
     for item in sorted(quiz.items, key=lambda i: i.order_index):
         user_answer = answer_map.get(item.id, "")
         is_correct = _grade_item(item, user_answer) if user_answer else False
@@ -389,7 +407,9 @@ def submit_quiz(
             # each duplicate made severity depend on generator composition
             # instead of the learner's number of failed review attempts.
             if item.knowledge_point_id is not None:
-                wrong_knowledge_point_ids.add(item.knowledge_point_id)
+                practiced[item.knowledge_point_id] = False
+        if is_correct and item.knowledge_point_id is not None and item.knowledge_point_id not in practiced:
+            practiced[item.knowledge_point_id] = True
         result_items.append(
             QuizResultItemOut(
                 id=item.id,
@@ -404,12 +424,19 @@ def submit_quiz(
             )
         )
 
-    for knowledge_point_id in wrong_knowledge_point_ids:
+    for knowledge_point_id, correct in practiced.items():
+        if correct and not db.query(WeakPoint.id).filter(
+            WeakPoint.user_id == current_user.id,
+            WeakPoint.course_id == quiz.course_id,
+            WeakPoint.knowledge_point_id == knowledge_point_id,
+        ).first():
+            continue
         _upsert_weak_point(
             db,
             user_id=current_user.id,
             course_id=quiz.course_id,
             knowledge_point_id=knowledge_point_id,
+            correct=correct,
         )
 
     quiz.score = score
@@ -475,6 +502,10 @@ def list_weak_points(
             knowledge_point_title=kp.title if kp is not None else "",
             wrong_count=wp.wrong_count,
             last_wrong_at=wp.last_wrong_at,
+            correct_count=wp.correct_count,
+            consecutive_correct=wp.consecutive_correct,
+            mastery_score=wp.mastery_score,
+            status=wp.status,
         )
         for wp, kp in rows
     ]

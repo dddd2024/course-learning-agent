@@ -71,6 +71,15 @@ _FIRST_ROUND_COLUMNS = {
         "difficulty": "INTEGER",
         "source_evidence_ids": "TEXT DEFAULT '[]'",
         "evidence_snapshot": "TEXT",
+        "rubric_json": "TEXT DEFAULT '[]'",
+    },
+    "weak_points": {
+        "correct_count": "INTEGER DEFAULT 0 NOT NULL",
+        "consecutive_correct": "INTEGER DEFAULT 0 NOT NULL",
+        "last_practiced_at": "DATETIME",
+        "mastery_score": "INTEGER DEFAULT 0 NOT NULL",
+        "status": "VARCHAR(20) DEFAULT 'active' NOT NULL",
+        "resolved_at": "DATETIME",
     },
     "agent_runs": {
         "requested_provider": "VARCHAR(50)",

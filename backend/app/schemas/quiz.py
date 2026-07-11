@@ -116,6 +116,8 @@ class QuizResultItemOut(BaseModel):
     is_correct: Optional[int] = None
     explanation: Optional[str] = None
     knowledge_point_id: Optional[int] = None
+    rubric_feedback: List[dict] = []
+    needs_review: bool = False
 
     @field_validator("options", mode="before")
     @classmethod
@@ -150,6 +152,10 @@ class WeakPointOut(BaseModel):
     knowledge_point_title: str = ""
     wrong_count: int
     last_wrong_at: Optional[datetime] = None
+    correct_count: int = 0
+    consecutive_correct: int = 0
+    mastery_score: int = 0
+    status: str = "active"
 
 
 class WeakPointListResponse(BaseModel):
