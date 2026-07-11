@@ -24,6 +24,7 @@ leaked.
 """
 import json
 import logging
+import re
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
@@ -131,7 +132,14 @@ def _grade_item(item: QuizItem, user_answer) -> bool:
             correct = answer.split(",")
         return set(filter(None, user_answer.split(","))) == set(filter(None, _normalise_option_answer(correct).split(",")))
     if item.question_type == "short_answer":
-        return answer.lower() in user_answer.lower()
+        # Explainable fallback rubric for legacy questions: require several
+        # meaningful terms from the reference rather than one substring.
+        terms = [t.lower() for t in re.findall(r"[A-Za-z]{2,}|[\u4e00-\u9fff]{2,}", answer)]
+        terms = list(dict.fromkeys(terms))[:8]
+        if not terms:
+            return user_answer.strip().lower() == answer.lower()
+        matched = [t for t in terms if t in user_answer.lower()]
+        return len(matched) / len(terms) >= 0.5
     # Unknown type: fall back to exact match.
     return user_answer == answer
 
