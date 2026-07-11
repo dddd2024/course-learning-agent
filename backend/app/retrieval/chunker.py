@@ -48,31 +48,93 @@ def _is_heading(line: str) -> bool:
 
 
 def _split_by_headings(text: str) -> List[Tuple[Optional[str], str]]:
-    """Split ``text`` into ``(title, content)`` sections by heading lines.
+    """Split text into (title, content) sections by heading lines.
 
-    A heading line becomes the ``title`` of the section that follows it
-    (the heading text itself is also kept at the top of the section's
-    content so the chunk retains the heading).
+    A heading line becomes the title of the section that follows it.
+    Title-only sections (heading immediately followed by another heading)
+    are merged into the next section to avoid empty/title-only chunks.
     """
     lines = text.splitlines(keepends=True)
-    sections: List[Tuple[Optional[str], str]] = []
+    raw_sections: List[Tuple[Optional[str], str]] = []
     current_title: Optional[str] = None
     current_lines: List[str] = []
 
     for line in lines:
         if _is_heading(line):
             if current_lines:
-                sections.append((current_title, "".join(current_lines)))
+                raw_sections.append((current_title, "".join(current_lines)))
             current_title = line.strip()
             current_lines = [line]
         else:
             current_lines.append(line)
     if current_lines:
-        sections.append((current_title, "".join(current_lines)))
+        raw_sections.append((current_title, "".join(current_lines)))
 
-    if not sections:
-        sections = [(None, text)]
-    return sections
+    if not raw_sections:
+        return [(None, text)]
+
+    # Merge title-only sections into the next section.
+    # A section is "title-only" when its content (minus the heading line
+    # itself) is empty or whitespace — meaning the heading was immediately
+    # followed by another heading.
+    merged: List[Tuple[Optional[str], str]] = []
+    pending_title: Optional[str] = None
+    for title, content in raw_sections:
+        body = content.strip()
+        # Check if content is just the heading line itself
+        if title and body == title:
+            # Title-only section — defer to next section
+            pending_title = title
+            continue
+        if pending_title is not None:
+            # Prepend the deferred title to this section's content
+            content = pending_title + "\n" + content
+            title = pending_title
+            pending_title = None
+        merged.append((title, content))
+    # If a title-only section was last, append it (shouldn't normally happen)
+    if pending_title is not None:
+        merged.append((pending_title, pending_title))
+
+    return merged if merged else [(None, text)]
+
+
+def _is_low_quality_chunk(text: str) -> bool:
+    """Detect chunks that are likely extracted from diagrams/images.
+
+    These chunks typically have:
+    - High line repetition (same labels repeated)
+    - Many very short lines (diagram labels like "R1", "H2")
+    - Low vocabulary diversity
+    """
+    text = text.strip()
+    if not text:
+        return True
+
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if not lines:
+        return True
+
+    # Check line repetition: unique lines / total lines
+    unique_ratio = len(set(lines)) / len(lines)
+    if unique_ratio < 0.5:
+        return True
+
+    # Check short-line stacking: > 60% of lines are < 4 chars
+    short_lines = sum(1 for l in lines if len(l) < 4)
+    if len(lines) > 3 and short_lines / len(lines) > 0.6:
+        return True
+
+    # Check vocabulary diversity for longer chunks
+    if len(text) > 50:
+        # Simple CJK character-level diversity
+        chars = [c for c in text if "\u4e00" <= c <= "\u9fff" or c.isalpha()]
+        if chars:
+            unique_chars = len(set(chars))
+            if unique_chars / len(chars) < 0.3:
+                return True
+
+    return False
 
 
 def chunk_text(
@@ -89,6 +151,9 @@ def chunk_text(
     shorter than ``chunk_size`` become a single chunk; longer sections
     are sliced with a sliding window of step ``chunk_size - overlap``
     so consecutive chunks overlap by ``overlap`` characters.
+
+    Chunks detected as low-quality (diagram text, repetitive labels)
+    are skipped so they never enter the retrieval store.
     """
     if not text or not text.strip():
         return []
@@ -103,6 +168,8 @@ def chunk_text(
         if not content:
             continue
         if len(content) <= chunk_size:
+            if _is_low_quality_chunk(content):
+                continue  # Skip low-quality chunks (diagram text, repetitive labels)
             chunks.append(
                 {
                     "text": content,
@@ -118,6 +185,9 @@ def chunk_text(
         content_len = len(content)
         while start < content_len:
             piece = content[start : start + chunk_size]
+            start += step
+            if _is_low_quality_chunk(piece):
+                continue  # Skip low-quality chunks (diagram text, repetitive labels)
             chunks.append(
                 {
                     "text": piece,
@@ -126,7 +196,6 @@ def chunk_text(
                     "page_no": None,
                 }
             )
-            start += step
             chunk_index += 1
     return chunks
 

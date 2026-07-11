@@ -5,6 +5,7 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'
 import pinia from './stores'
+import { useAuthStore } from './stores/auth'
 import './styles/main.css'
 
 const app = createApp(App)
@@ -21,22 +22,18 @@ app.use(ElementPlus)
 // validated. Flushing before login would hit 401 and (previously) drop the
 // queue. The router guard triggers ensureAuthReady; we additionally flush
 // here once auth resolves so reports land even on pages that don't guard.
-import('./stores/auth')
-  .then(({ useAuthStore }) => {
-    const auth = useAuthStore()
-    // If auth already resolved (e.g. token absent), flush immediately or
-    // skip when unauthenticated (reports need a valid user).
-    auth.ensureAuthReady().then((ok) => {
-      if (!ok) return // not logged in — keep the queue for next login
-      import('./utils/errorReport')
-        .then(({ flushPendingErrorReports }) => flushPendingErrorReports())
-        .catch(() => {
-          // best-effort
-        })
+const auth = useAuthStore()
+// If auth already resolved (e.g. token absent), flush immediately or skip
+// when unauthenticated (reports need a valid user).
+auth.ensureAuthReady().then((ok) => {
+  if (!ok) return // not logged in — keep the queue for next login
+  import('./utils/errorReport')
+    .then(({ flushPendingErrorReports }) => flushPendingErrorReports())
+    .catch(() => {
+      // best-effort
     })
-  })
-  .catch(() => {
-    // best-effort
-  })
+}).catch(() => {
+  // best-effort
+})
 
 app.mount('#app')

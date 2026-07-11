@@ -47,6 +47,7 @@ const registerFormRef = ref<FormInstance>()
 const registerForm = reactive({
   username: '',
   password: '',
+  confirmPassword: '',
   email: '',
 })
 
@@ -55,6 +56,16 @@ const registerRules: FormRules<typeof registerForm> = {
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
     { min: 6, message: '密码至少 6 位', trigger: 'blur' },
+  ],
+  confirmPassword: [
+    { required: true, message: '请再次输入密码', trigger: 'blur' },
+    {
+      validator: (_rule, value, callback) => {
+        if (value !== registerForm.password) callback(new Error('两次输入的密码不一致'))
+        else callback()
+      },
+      trigger: ['blur', 'change'],
+    },
   ],
   email: [{ type: 'email', message: '邮箱格式不正确', trigger: 'blur' }],
 }
@@ -205,6 +216,15 @@ function switchTab(tab: string) {
                 show-password
               />
             </el-form-item>
+            <el-form-item label="确认密码" prop="confirmPassword">
+              <el-input
+                v-model="registerForm.confirmPassword"
+                type="password"
+                placeholder="再次输入密码"
+                show-password
+                @keyup.enter="handleRegister"
+              />
+            </el-form-item>
             <el-form-item label="邮箱（选填）" prop="email">
               <el-input
                 v-model="registerForm.email"
@@ -238,6 +258,7 @@ function switchTab(tab: string) {
 
 .login-card {
   width: 400px;
+  max-width: calc(100vw - 24px);
   padding: 24px 16px 8px;
 }
 

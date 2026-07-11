@@ -826,7 +826,6 @@ onUnmounted(() => {
             <span class="search-item-name">{{ item.filename }}</span>
             <el-tag size="small" type="info">第 {{ item.page_no }} 页</el-tag>
             <span v-if="item.title" class="search-item-title">{{ item.title }}</span>
-            <span class="search-item-score" v-if="item.score > 0">相关度 {{ Math.min(100, Math.round(item.score * 100)) }}%</span>
           </div>
           <div
             class="search-item-text"

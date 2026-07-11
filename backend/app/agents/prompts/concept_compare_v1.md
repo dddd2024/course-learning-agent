@@ -23,3 +23,8 @@
 - 只能基于给定的证据片段生成，不得引入未给出的资料事实。
 - 如果证据不足，添加 "insufficient_evidence": true。
 - 输出必须是合法 JSON。
+- **所有字段都必须非空**：similarities、differences、transfer_learning、confusions、exam_questions
+  每个数组至少包含 1 条内容。即使证据不足，也要基于已有信息生成初步对比。
+- transfer_learning 必须包含至少 1 条关于两个概念之间方法论迁移的内容。
+- exam_questions 必须包含至少 1 道关于两个概念对比的考题。
+- differences 数组中的每一项必须包含 dimension、a、b 三个字段。

@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = ""
     LLM_MODEL: str = ""
     LLM_TIMEOUT_SECONDS: int = 60
+    # Task 9: concept compare can take longer than the default 60s
+    # timeout on first call, so give it a dedicated, longer window.
+    LLM_CONCEPT_COMPARE_TIMEOUT_SECONDS: int = 120
     LLM_TEMPERATURE: float = 0.2
     LLM_MAX_TOKENS: int = 2000
     LLM_CONFIG_SECRET_KEY: str = _DEFAULT_LLM_CONFIG_SECRET

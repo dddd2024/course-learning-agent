@@ -56,11 +56,16 @@ class StudyTask(Base, TimestampMixin):
         Integer, ForeignKey("courses.id"), nullable=False, index=True
     )
     title = Column(String(255), nullable=False)
-    task_type = Column(String(30), nullable=False)  # review/learn/practice/quiz
+    task_type = Column(String(30), nullable=False)  # review/learn/quiz
     estimate_minutes = Column(Integer, nullable=False, default=60)
     priority = Column(Integer, nullable=False, default=3)  # 1-5, 5 highest
     acceptance = Column(Text)
     status = Column(String(30), default="pending")  # pending/done
+    target_type = Column(String(30), nullable=True)  # material/knowledge_point/quiz
+    target_id = Column(Integer, nullable=True)
+    execution_status = Column(String(30), nullable=False, default="pending")
+    verification_method = Column(String(50), nullable=True)
+    auto_completed_at = Column(DateTime, nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (

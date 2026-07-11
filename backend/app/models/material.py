@@ -18,6 +18,7 @@ class Material(Base, TimestampMixin):
     file_path = Column(String(500), nullable=False)  # 存储相对路径
     status = Column(String(30), default="uploaded")  # uploaded/processing/ready/failed
     version = Column(Integer, default=1)
+    active_version_id = Column(Integer, ForeignKey("material_versions.id"), nullable=True)
     error_message = Column(Text)
     # timezone-aware upload time (replaces the old naive datetime.utcnow).
     uploaded_at = Column(DateTime(timezone=True), default=utc_now)
@@ -36,3 +37,20 @@ class Material(Base, TimestampMixin):
             f"<Material id={self.id} filename={self.filename!r} "
             f"course_id={self.course_id} status={self.status!r}>"
         )
+
+
+class MaterialVersion(Base, TimestampMixin):
+    """Immutable parsed representation of a material.
+
+    A reparse creates a new version and only switches ``Material`` to it once
+    parsing succeeds, keeping historical citations and quiz evidence valid.
+    """
+
+    __tablename__ = "material_versions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    material_id = Column(Integer, ForeignKey("materials.id"), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    status = Column(String(30), nullable=False, default="processing")
+    content_hash = Column(String(64), nullable=True, index=True)
+    parsed_at = Column(DateTime(timezone=True), nullable=True)

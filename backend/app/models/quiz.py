@@ -82,6 +82,10 @@ class QuizItem(Base, TimestampMixin):
     # for short_answer). Never returned to the client before submit.
     answer = Column(Text, nullable=False)
     explanation = Column(Text)
+    difficulty = Column(Integer, nullable=True)
+    source_evidence_ids = Column(Text, default="[]")
+    evidence_snapshot = Column(Text)
+    rubric_json = Column(Text, default="[]")
     # Filled on submit.
     user_answer = Column(Text, nullable=True)
     is_correct = Column(Integer, nullable=True)  # 0/1 after submit
@@ -118,6 +122,12 @@ class WeakPoint(Base, TimestampMixin):
         Integer, ForeignKey("knowledge_points.id"), nullable=False, index=True
     )
     wrong_count = Column(Integer, nullable=False, default=1)
+    correct_count = Column(Integer, nullable=False, default=0)
+    consecutive_correct = Column(Integer, nullable=False, default=0)
+    last_practiced_at = Column(DateTime, nullable=True)
+    mastery_score = Column(Integer, nullable=False, default=0)  # 0-100
+    status = Column(String(20), nullable=False, default="active")
+    resolved_at = Column(DateTime, nullable=True)
     last_wrong_at = Column(DateTime, nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid

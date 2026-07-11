@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { onBeforeRouteLeave } from 'vue-router'
+import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listCourses, type Course } from '../api/course'
 import { MAX_PAGE_SIZE } from '../constants/pagination'
@@ -21,6 +21,8 @@ import {
 } from '../api/quiz'
 import { parseApiError } from '../utils/error'
 import EmptyState from '../components/common/EmptyState.vue'
+
+const route = useRoute()
 
 const courses = ref<Course[]>([])
 const coursesLoading = ref(false)
@@ -43,7 +45,7 @@ const genForm = reactive({
 
 const activeQuiz = ref<Quiz | null>(null)
 const activeQuizLoading = ref(false)
-const answers = ref<Record<number, string>>({})
+const answers = ref<Record<number, string | string[]>>({})
 const submitting = ref(false)
 const quizResult = ref<QuizResult | null>(null)
 const deletingQuizId = ref<number | null>(null)
@@ -68,7 +70,7 @@ const quizInProgress = computed(
 
 function isAnswered(itemId: number): boolean {
   const ans = answers.value[itemId]
-  return ans !== undefined && ans !== ''
+  return ans !== undefined && ans !== '' && (!Array.isArray(ans) || ans.length > 0)
 }
 
 const answeredCount = computed(() => {
@@ -153,7 +155,10 @@ async function fetchCourses() {
     const { data } = await listCourses({ page: 1, page_size: MAX_PAGE_SIZE })
     courses.value = data.items
     if (courses.value.length > 0 && selectedCourseId.value === undefined) {
-      selectedCourseId.value = courses.value[0].id
+      const requestedCourseId = Number(route.query.course_id)
+      selectedCourseId.value = courses.value.some((course) => course.id === requestedCourseId)
+        ? requestedCourseId
+        : courses.value[0].id
       fetchQuizzes()
       fetchWeakPoints()
     }
@@ -266,7 +271,7 @@ async function openQuiz(quiz: Quiz) {
       )
     } else {
       activeQuiz.value = data
-      answers.value = Object.fromEntries(data.items.map((item) => [item.id, '']))
+      answers.value = Object.fromEntries(data.items.map((item) => [item.id, item.question_type === 'multiple_choice' ? [] : '']))
       quizResult.value = null
     }
     currentIndex.value = 0
@@ -316,7 +321,7 @@ async function handleSubmit() {
   if (!activeQuiz.value) return
   const unanswered = activeQuiz.value.items.filter((item) => {
     const ans = answers.value[item.id]
-    return ans === undefined || ans === ''
+    return ans === undefined || ans === '' || (Array.isArray(ans) && ans.length === 0)
   })
   if (unanswered.length > 0) {
     ElMessage.warning(`还有 ${unanswered.length} 道题未作答`)
@@ -412,7 +417,7 @@ function handleKeydown(e: KeyboardEvent) {
   } else if (q.question_type === 'choice') {
     const num = parseInt(e.key)
     if (num >= 1 && num <= (q.options?.length || 0)) {
-      answers.value[q.id] = q.options[num - 1]
+      answers.value[q.id] = q.options[num - 1].value
     }
   }
 
@@ -556,6 +561,26 @@ onUnmounted(() => {
                 {{ resultMap[item.id]?.explanation || '无' }}
               </span>
             </div>
+            <div v-if="resultMap[item.id]?.rubric_feedback?.length" class="rubric-feedback">
+              <span class="result-label">评分要点：</span>
+              <el-tag
+                v-for="feedback in resultMap[item.id].rubric_feedback"
+                :key="feedback.criterion"
+                :type="feedback.met ? 'success' : 'warning'"
+                size="small"
+                class="rubric-tag"
+              >
+                {{ feedback.criterion }}：{{ feedback.message }}
+              </el-tag>
+              <el-alert
+                v-if="resultMap[item.id].needs_review"
+                title="该答案接近自动评分边界，建议教师或助教复核。"
+                type="info"
+                :closable="false"
+                show-icon
+                class="rubric-review-alert"
+              />
+            </div>
           </div>
         </el-card>
       </template>
@@ -620,12 +645,21 @@ onUnmounted(() => {
               <el-radio
                 v-for="(opt, i) in currentQuestion.options"
                 :key="i"
-                :value="opt"
+                :value="opt.value"
                 class="answer-option"
               >
-                {{ opt }}
+                {{ opt.label }}. {{ opt.text }}
               </el-radio>
             </el-radio-group>
+            <el-checkbox-group
+              v-else-if="currentQuestion.question_type === 'multiple_choice'"
+              v-model="answers[currentQuestion.id]"
+              class="answer-radio-group"
+            >
+              <el-checkbox v-for="opt in currentQuestion.options" :key="opt.value" :value="opt.value" class="answer-option">
+                {{ opt.label }}. {{ opt.text }}
+              </el-checkbox>
+            </el-checkbox-group>
             <el-radio-group
               v-else-if="currentQuestion.question_type === 'true_false'"
               v-model="answers[currentQuestion.id]"
@@ -808,10 +842,12 @@ onUnmounted(() => {
           <div class="section-title">薄弱知识点</div>
         </template>
         <div v-loading="weakPointsLoading">
-          <el-empty
+          <div
             v-if="!weakPointsLoading && weakPoints.length === 0"
-            description="暂无薄弱点数据"
-          />
+            class="empty-weak-points"
+          >
+            暂无薄弱知识点数据
+          </div>
           <div class="weak-points">
             <div
               v-for="wp in weakPoints"
@@ -1122,6 +1158,13 @@ onUnmounted(() => {
   background: #fff;
 }
 
+.empty-weak-points {
+  text-align: center;
+  color: #909399;
+  padding: 40px 0;
+  font-size: 14px;
+}
+
 .weak-points {
   display: flex;
   flex-direction: column;
@@ -1151,6 +1194,25 @@ onUnmounted(() => {
   font-weight: 600;
   color: #303133;
   overflow-wrap: anywhere;
+}
+
+.rubric-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.rubric-tag {
+  white-space: normal;
+  height: auto;
+  line-height: 1.5;
+}
+
+.rubric-review-alert {
+  width: 100%;
+  margin-top: 2px;
 }
 
 .weak-point-meta {

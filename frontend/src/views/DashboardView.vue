@@ -33,6 +33,8 @@ const recentCourses = ref<Course[]>([])
 const recentRuns = ref<AgentRun[]>([])
 // null = unknown / still checking, true = a real LLM is configured, false = Mock mode
 const llmConfigured = ref<boolean | null>(null)
+const quickCourseDialogVisible = ref(false)
+const quickCourseAction = ref<'materials' | 'chat'>('materials')
 
 const greeting = computed(() => {
   const h = new Date().getHours()
@@ -99,22 +101,27 @@ function formatDateTime(dt: string | null | undefined): string {
 
 async function fetchAll() {
   loading.value = true
-  try {
-    const [sumResp, todosResp, coursesResp, runsResp] = await Promise.all([
+  const results = await Promise.allSettled([
       getDashboardSummary(),
       listTodos({ date: todayString.value }),
       listCourses({ page: 1, page_size: MAX_PAGE_SIZE }),
       getAgentRuns({ limit: 5, offset: 0 }),
-    ])
-    summary.value = sumResp.data
-    todayTodos.value = todosResp.data.items.slice(0, 5)
-    recentCourses.value = coursesResp.data.items.slice(0, 4)
-    recentRuns.value = runsResp.data.items
-  } catch (err) {
-    ElMessage.error(parseApiError(err, '获取仪表盘数据失败'))
-  } finally {
-    loading.value = false
+  ])
+
+  if (results[0].status === 'fulfilled') summary.value = results[0].value.data
+  if (results[1].status === 'fulfilled') todayTodos.value = results[1].value.data.items.slice(0, 5)
+  if (results[2].status === 'fulfilled') recentCourses.value = results[2].value.data.items.slice(0, 4)
+  if (results[3].status === 'fulfilled') recentRuns.value = results[3].value.data.items
+
+  const failedCount = results.filter((result) => result.status === 'rejected').length
+  if (failedCount > 0) {
+    const firstFailure = results.find((result) => result.status === 'rejected')
+    const reason = firstFailure?.status === 'rejected'
+      ? parseApiError(firstFailure.reason, '部分数据暂时不可用')
+      : '部分数据暂时不可用'
+    ElMessage.warning(`${reason}（${failedCount} 个区块），其他内容已正常显示`)
   }
+  loading.value = false
 }
 
 function go(path: string) {
@@ -128,18 +135,28 @@ function goCourseMaterials(id: number) {
 }
 
 function goQuickUpload() {
-  if (recentCourses.value.length > 0) {
-    router.push(`/courses/${recentCourses.value[0].id}/materials`)
-  } else {
-    router.push('/courses')
-  }
+  openQuickCourse('materials')
 }
 function goQuickChat() {
-  if (recentCourses.value.length > 0) {
-    router.push(`/courses/${recentCourses.value[0].id}/chat`)
-  } else {
+  openQuickCourse('chat')
+}
+
+function openQuickCourse(action: 'materials' | 'chat') {
+  if (recentCourses.value.length === 0) {
     router.push('/courses')
+    return
   }
+  if (recentCourses.value.length === 1) {
+    chooseQuickCourse(recentCourses.value[0], action)
+    return
+  }
+  quickCourseAction.value = action
+  quickCourseDialogVisible.value = true
+}
+
+function chooseQuickCourse(course: Course, action = quickCourseAction.value) {
+  quickCourseDialogVisible.value = false
+  router.push(`/courses/${course.id}/${action}`)
 }
 
 async function handleCompleteTodo(todo: Todo) {
@@ -214,7 +231,16 @@ onMounted(() => {
     <!-- 统计卡片 -->
     <el-row :gutter="16" class="stat-row">
       <el-col v-for="s in stats" :key="s.key" :xs="12" :sm="8" :md="4">
-        <el-card class="stat-card" shadow="hover" @click="go(s.route)">
+        <el-card
+          class="stat-card"
+          shadow="hover"
+          role="button"
+          tabindex="0"
+          :aria-label="`${s.label} ${s.value}`"
+          @click="go(s.route)"
+          @keydown.enter="go(s.route)"
+          @keydown.space.prevent="go(s.route)"
+        >
           <div class="stat-body">
             <el-icon class="stat-icon" :style="{ color: s.color }">
               <component :is="s.icon" />
@@ -232,7 +258,7 @@ onMounted(() => {
     <el-card class="section-card" shadow="never">
       <div class="section-title">快捷入口</div>
       <div class="quick-actions">
-        <div class="action-card" @click="goQuickUpload">
+        <button type="button" class="action-card" @click="goQuickUpload">
           <div class="action-icon-wrap" style="background: rgba(64, 158, 255, 0.12); color: #409EFF;">
             <el-icon><Tickets /></el-icon>
           </div>
@@ -240,8 +266,8 @@ onMounted(() => {
             <span class="action-label">上传资料</span>
             <span class="action-desc">添加课程学习材料</span>
           </div>
-        </div>
-        <div class="action-card" @click="goQuickChat">
+        </button>
+        <button type="button" class="action-card" @click="goQuickChat">
           <div class="action-icon-wrap" style="background: rgba(103, 194, 58, 0.12); color: #67C23A;">
             <el-icon><ChatDotRound /></el-icon>
           </div>
@@ -249,8 +275,8 @@ onMounted(() => {
             <span class="action-label">课程问答</span>
             <span class="action-desc">与 AI 助手对话</span>
           </div>
-        </div>
-        <div class="action-card" @click="go('/plans')">
+        </button>
+        <button type="button" class="action-card" @click="go('/plans')">
           <div class="action-icon-wrap" style="background: rgba(230, 162, 60, 0.12); color: #E6A23C;">
             <el-icon><Calendar /></el-icon>
           </div>
@@ -258,8 +284,8 @@ onMounted(() => {
             <span class="action-label">生成计划</span>
             <span class="action-desc">创建学习计划</span>
           </div>
-        </div>
-        <div class="action-card" @click="go('/quizzes')">
+        </button>
+        <button type="button" class="action-card" @click="go('/quizzes')">
           <div class="action-icon-wrap" style="background: rgba(245, 108, 108, 0.12); color: #F56C6C;">
             <el-icon><EditPen /></el-icon>
           </div>
@@ -267,7 +293,7 @@ onMounted(() => {
             <span class="action-label">生成测验</span>
             <span class="action-desc">检验学习成果</span>
           </div>
-        </div>
+        </button>
       </div>
     </el-card>
 
@@ -316,7 +342,7 @@ onMounted(() => {
       <el-col :xs="24" :md="12">
         <el-card class="section-card" shadow="never">
           <div class="section-head">
-            <span class="section-title">最近课程</span>
+            <span class="section-title">我的课程</span>
             <el-button link type="primary" @click="go('/courses')">更多</el-button>
           </div>
           <el-empty
@@ -405,6 +431,29 @@ onMounted(() => {
         </el-table-column>
       </el-table>
     </el-card>
+
+    <el-dialog
+      v-model="quickCourseDialogVisible"
+      :title="quickCourseAction === 'materials' ? '选择要上传资料的课程' : '选择要提问的课程'"
+      width="460px"
+    >
+      <div class="quick-course-list">
+        <button
+          v-for="course in recentCourses"
+          :key="course.id"
+          type="button"
+          class="quick-course-option"
+          @click="chooseQuickCourse(course)"
+        >
+          <span class="course-dot" :style="{ background: course.color || '#2563eb' }" />
+          <span>
+            <strong>{{ course.name }}</strong>
+            <small>{{ course.semester || '未设置学期' }}</small>
+          </span>
+          <el-icon><ArrowRight /></el-icon>
+        </button>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -516,6 +565,7 @@ onMounted(() => {
 }
 
 .action-card {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -523,8 +573,48 @@ onMounted(() => {
   border: 1px solid #ebeef5;
   border-radius: 8px;
   background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   transition: all 0.2s ease;
+}
+
+.quick-course-list {
+  display: grid;
+  gap: 10px;
+}
+
+.quick-course-option {
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  background: #fff;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.quick-course-option:hover {
+  border-color: var(--color-primary);
+  background: #f7f9ff;
+}
+
+.quick-course-option > span:nth-child(2) {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.quick-course-option small {
+  color: var(--text-secondary);
 }
 
 .action-card:hover {

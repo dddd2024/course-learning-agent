@@ -128,7 +128,7 @@ def _build_retrieved_chunks(
 def verify_citations(
     output: dict[str, Any], retrieved_chunks: list[dict]
 ) -> list[dict]:
-    """Drop citations whose ``chunk_id`` is not in ``retrieved_chunks``.
+    """Keep only citations whose id *and quote* are verifiable.
 
     Returns the filtered citation list. This is the CitationVerifier:
     it prevents the LLM from referencing chunks that were never
@@ -138,10 +138,10 @@ def verify_citations(
     (e.g. ``"5"``) even though the database stores integers. We coerce
     both sides to ``int`` so valid citations are not mistakenly dropped.
     """
-    valid_ids: set[int] = set()
+    chunks_by_id: dict[int, dict] = {}
     for chunk in retrieved_chunks:
         try:
-            valid_ids.add(int(chunk["chunk_id"]))
+            chunks_by_id[int(chunk["chunk_id"])] = chunk
         except (TypeError, ValueError):
             continue
 
@@ -154,7 +154,9 @@ def verify_citations(
     result: list[dict] = []
     for cite in output.get("citations", []):
         cid = _to_int(cite.get("chunk_id"))
-        if cid is not None and cid in valid_ids:
+        chunk = chunks_by_id.get(cid) if cid is not None else None
+        quote = str(cite.get("quote_text") or "").strip()
+        if chunk is not None and quote and quote in (chunk.get("text") or ""):
             cite["chunk_id"] = cid  # normalise to int
             result.append(cite)
     return result
@@ -167,6 +169,7 @@ def answer_question(
     retrieved_chunks: list[dict],
     course_name: str,
     user_config: dict | None = None,
+    conversation_context: str = "",
 ) -> dict[str, Any]:
     """Generate a structured, citation-grounded answer for ``question``.
 
@@ -193,6 +196,8 @@ def answer_question(
         course_name=course_name,
         retrieved_chunks=_format_chunks(retrieved_chunks),
     )
+    if conversation_context:
+        prompt += "\n\n近期对话（仅用于消解指代；事实仍必须由资料支撑）：\n" + conversation_context
     # Phase 2 Task D: prepend guard so uploaded material content is
     # never treated as a system instruction by the model.
     prompt = f"{PROMPT_GUARD}\n\n{prompt}"

@@ -349,7 +349,7 @@ onMounted(() => {
                 {{ statusLabel[todo.status] }}
               </el-tag>
             </div>
-            <div
+            <el-button
               class="today-card-title-link"
               link
               type="primary"
@@ -660,19 +660,20 @@ onMounted(() => {
   gap: 8px;
 }
 
-.today-card-title {
+.today-card-title,
+.today-card-title-link {
   font-size: 15px;
   font-weight: 600;
-  color: #303133;
   line-height: 1.4;
 }
 
 .today-card-title-link {
-  cursor: pointer;
-}
-
-.today-card-title-link:hover {
-  color: #409eff;
+  width: fit-content;
+  max-width: 100%;
+  height: auto;
+  padding: 0;
+  text-align: left;
+  white-space: normal;
 }
 
 .today-card-meta {
@@ -703,6 +704,10 @@ onMounted(() => {
   justify-content: flex-end;
 }
 
+.todos-mobile-list {
+  display: none;
+}
+
 .record-info {
   margin-bottom: 16px;
 }
@@ -725,5 +730,101 @@ onMounted(() => {
 
 :deep(.overdue-row td) {
   border-left: 3px solid #f56c6c;
+}
+
+@media (max-width: 768px) {
+  .page {
+    padding: 16px;
+  }
+
+  .section-title-bar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .today-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .today-card-actions,
+  .todo-mobile-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .today-card-actions :deep(.el-button),
+  .todo-mobile-actions :deep(.el-button) {
+    margin-left: 0;
+  }
+
+  .filter-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .filter-bar :deep(.el-date-editor),
+  .filter-bar :deep(.el-select),
+  .filter-bar :deep(.el-button) {
+    width: 100% !important;
+    margin-left: 0;
+  }
+
+  .todos-table {
+    display: none;
+  }
+
+  .todos-mobile-list {
+    display: grid;
+    gap: 12px;
+  }
+
+  .todo-mobile-card {
+    min-width: 0;
+    padding: 14px;
+    border: 1px solid var(--border-base);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+  }
+
+  .todo-mobile-card.overdue {
+    border-left: 4px solid var(--color-danger);
+    background: #fff8f7;
+  }
+
+  .todo-mobile-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .todo-mobile-title {
+    width: fit-content;
+    max-width: 100%;
+    height: auto;
+    margin: 10px 0 0;
+    padding: 0;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .todo-mobile-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    margin-top: 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+
+  .todo-mobile-actions {
+    margin-top: 12px;
+  }
+
+  .pagination {
+    justify-content: center;
+  }
 }
 </style>

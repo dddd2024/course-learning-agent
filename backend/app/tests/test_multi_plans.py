@@ -213,9 +213,12 @@ def test_overflow_returns_warning(client) -> None:
     body = resp.json()
     assert "overflow_warnings" in body
     assert isinstance(body["overflow_warnings"], list)
+    assert "unscheduled_tasks" in body
+    assert isinstance(body["unscheduled_tasks"], list)
     # mock planner 生成 90+60 分钟任务，10 分钟预算必然触发溢出
-    if len(body["schedule"]) > 0:
-        assert len(body["overflow_warnings"]) >= 1
+    assert len(body["overflow_warnings"]) >= 1
+    assert len(body["unscheduled_tasks"]) >= 1
+    assert all(item["estimate_minutes"] <= 10 for item in body["schedule"])
 
 
 def test_no_overflow_when_budget_sufficient(client) -> None:
@@ -238,7 +241,7 @@ def test_no_overflow_when_budget_sufficient(client) -> None:
 
 
 def test_weak_point_weight_computation(client) -> None:
-    """T08: _compute_weak_point_weight 根据 WeakPoint.wrong_count 计算权重。"""
+    """Unresolved weak points account for current mastery as well as mistakes."""
     from sqlalchemy.orm import Session
 
     from app.api.deps import get_db
@@ -288,8 +291,7 @@ def test_weak_point_weight_computation(client) -> None:
 
         weight = _compute_weak_point_weight(db, user.id, course_id)
         assert weight > 0.0
-        # 3 + 2 = 5 total wrong, normalised by max_wrong=5 → 1.0
-        assert weight == 1.0
+        assert 0.0 < weight <= 1.0
 
         # 无薄弱点的课程权重应为 0
         empty_course = create_course(client, headers, name="无薄弱点课程")

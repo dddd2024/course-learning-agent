@@ -55,6 +55,7 @@ export interface PlanResult {
   goal: PlanGoal
   tasks: PlanTask[]
   todos: Todo[]
+  unscheduled_tasks?: Array<{ title: string; estimate_minutes: number; reason: string; suggestion: string }>
 }
 
 export interface PlanProgress {
@@ -136,6 +137,15 @@ export interface MultiPlanScheduleItem {
 export interface MultiPlanResult {
   schedule: MultiPlanScheduleItem[]
   overflow_warnings: string[]
+  unscheduled_tasks: Array<{
+    course_name: string
+    title: string
+    estimate_minutes: number
+    deadline: string
+    remaining_budget: number
+    reason: string
+    suggestion: string
+  }>
 }
 
 export function createMultiPlan(payload: MultiPlanPayload): AxiosPromise<MultiPlanResult> {
@@ -148,4 +158,24 @@ export function listTodos(params?: TodoListParams): AxiosPromise<TodoListResult>
 
 export function updateTodo(id: number, payload: TodoUpdatePayload): AxiosPromise<Todo> {
   return request.patch(`/todos/${id}`, payload)
+}
+
+export interface TaskUpdatePayload {
+  status?: string
+}
+
+export function updateTask(id: number, payload: TaskUpdatePayload): AxiosPromise<PlanTask> {
+  return request.patch(`/plans/tasks/${id}`, payload)
+}
+
+export interface GoalUpdatePayload {
+  status?: string
+}
+
+export function updateGoal(id: number, payload: GoalUpdatePayload): AxiosPromise<PlanGoal> {
+  return request.patch(`/plans/${id}`, payload)
+}
+
+export function deletePlan(id: number): AxiosPromise<void> {
+  return request.delete(`/plans/${id}`)
 }

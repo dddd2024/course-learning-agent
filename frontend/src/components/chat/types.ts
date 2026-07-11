@@ -21,6 +21,10 @@ export interface ChatMessage {
   reliabilityLevel?: ReliabilityLevel
   retrievedChunks?: RetrievedChunk[]
   pending?: boolean
+  // Marks an agent message as an error/placeholder (e.g. the SSE stream
+  // ended without a final event). Used to distinguish interrupted answers
+  // from normal completions.
+  error?: boolean
   // T05: LLM fallback visibility (mock fallback marker).
   fallbackUsed?: boolean
   fallbackReason?: string | null

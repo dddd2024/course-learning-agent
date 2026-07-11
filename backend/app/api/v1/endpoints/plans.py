@@ -32,6 +32,7 @@ from app.core.database import get_db
 from app.core.exceptions import NotFoundException
 from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
+from app.models.material import Material
 from app.models.plan import StudyGoal, StudyTask, Todo
 from app.models.quiz import WeakPoint
 from app.models.user import User
@@ -42,12 +43,14 @@ from app.schemas.multi_plan import (
 )
 from app.schemas.plan import (
     GoalResponse,
+    GoalUpdate,
     PlanCreate,
     PlanListResponse,
     PlanProgressResponse,
     PlanResponse,
     PlanSummaryResponse,
     TaskResponse,
+    TaskUpdate,
     TodoListResponse,
     TodoResponse,
     TodoUpdate,
@@ -57,13 +60,28 @@ from app.services.llm_config_service import (
     get_active_config,
 )
 from app.services.multi_scheduler import schedule_multi_courses
-from app.services.scheduler import schedule_tasks
+from app.services.scheduler import schedule_tasks_with_conflicts
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 todos_router = APIRouter()
 
 _PROMPT_VERSION = "planner_v1"
+
+
+def _normalise_task_type(value: str | None) -> str:
+    value = (value or "review").strip().lower()
+    return "quiz" if value in {"practice", "exercise", "test"} else value if value in {"learn", "review", "quiz"} else "review"
+
+
+def _resolve_task_target(db: Session, course_id: int, task_type: str) -> tuple[str | None, int | None]:
+    if task_type == "learn":
+        row = db.query(Material.id).filter(Material.course_id == course_id, Material.status == "ready").order_by(Material.id.desc()).first()
+        return ("material", row[0]) if row else (None, None)
+    if task_type == "review":
+        row = db.query(KnowledgePoint.id).filter(KnowledgePoint.course_id == course_id, KnowledgePoint.status == "active").order_by(KnowledgePoint.importance.desc()).first()
+        return ("knowledge_point", row[0]) if row else (None, None)
+    return ("quiz", None)
 
 
 def _load_course_names(
@@ -359,6 +377,108 @@ def get_plan(
     return _load_plan_response(db, goal, current_user.id)
 
 
+@router.patch("/tasks/{task_id}", response_model=TaskResponse)
+def update_task(
+    task_id: int,
+    payload: TaskUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TaskResponse:
+    """Update a study task's status (404 if not owned)."""
+    task = (
+        db.query(StudyTask)
+        .join(StudyGoal, StudyGoal.id == StudyTask.goal_id)
+        .filter(
+            StudyTask.id == task_id,
+            StudyGoal.user_id == current_user.id,
+        )
+        .first()
+    )
+    if task is None:
+        raise NotFoundException(message="任务不存在")
+
+    if payload.status is not None:
+        task.status = payload.status
+
+    db.commit()
+    db.refresh(task)
+
+    course = db.query(Course).filter(Course.id == task.course_id).first()
+    course_name = course.name if course else ""
+    return TaskResponse(
+        id=task.id,
+        goal_id=task.goal_id,
+        course_id=task.course_id,
+        course_name=course_name,
+        title=task.title,
+        task_type=task.task_type,
+        estimate_minutes=task.estimate_minutes,
+        priority=task.priority,
+        acceptance=task.acceptance,
+        status=task.status,
+    )
+
+
+@router.patch("/{goal_id}", response_model=GoalResponse)
+def update_goal(
+    goal_id: int,
+    payload: GoalUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GoalResponse:
+    """Update a study goal's status (404 if not owned)."""
+    goal = (
+        db.query(StudyGoal)
+        .filter(
+            StudyGoal.id == goal_id,
+            StudyGoal.user_id == current_user.id,
+        )
+        .first()
+    )
+    if goal is None:
+        raise NotFoundException(message="学习计划不存在")
+
+    if payload.status is not None:
+        goal.status = payload.status
+
+    db.commit()
+    db.refresh(goal)
+    return GoalResponse(
+        id=goal.id,
+        title=goal.title,
+        deadline=goal.deadline,
+        daily_minutes=goal.daily_minutes,
+        status=goal.status,
+    )
+
+
+@router.delete("/{goal_id}", status_code=204)
+def delete_goal(
+    goal_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete a study goal and all its tasks and todos."""
+    goal = (
+        db.query(StudyGoal)
+        .filter(
+            StudyGoal.id == goal_id,
+            StudyGoal.user_id == current_user.id,
+        )
+        .first()
+    )
+    if goal is None:
+        raise NotFoundException(message="学习计划不存在")
+
+    # Delete associated todos and tasks first
+    task_ids = [t.id for t in db.query(StudyTask).filter(StudyTask.goal_id == goal_id).all()]
+    if task_ids:
+        db.query(Todo).filter(Todo.task_id.in_(task_ids)).delete(synchronize_session=False)
+        db.query(StudyTask).filter(StudyTask.goal_id == goal_id).delete(synchronize_session=False)
+    db.query(StudyGoal).filter(StudyGoal.id == goal_id).delete(synchronize_session=False)
+    db.commit()
+
+
 @router.post("", response_model=PlanResponse)
 def create_plan(
     payload: PlanCreate,
@@ -472,15 +592,20 @@ def create_plan(
             # Defensive: skip any task whose course couldn't be resolved
             # rather than failing the whole plan creation.
             continue
+        task_type = _normalise_task_type(task_data.get("task_type"))
+        target_type, target_id = _resolve_task_target(db, course_id, task_type)
         task = StudyTask(
             goal_id=goal.id,
             course_id=course_id,
             title=task_data.get("title", ""),
-            task_type=task_data.get("task_type", "review"),
+            task_type=task_type,
             estimate_minutes=int(task_data.get("estimate_minutes", 60) or 60),
             priority=int(task_data.get("priority", 3) or 3),
             acceptance=task_data.get("acceptance", ""),
             status="pending",
+            target_type=target_type,
+            target_id=target_id,
+            execution_status="pending",
         )
         db.add(task)
         db.flush()
@@ -501,7 +626,7 @@ def create_plan(
         }
         for t in task_rows
     ]
-    scheduled = schedule_tasks(
+    scheduled, unscheduled = schedule_tasks_with_conflicts(
         tasks=task_dicts,
         start_date=today,
         deadline=payload.deadline,
@@ -514,7 +639,7 @@ def create_plan(
         step_name="schedule",
         step_index=1,
         input_data={"task_count": len(task_rows), "deadline": str(payload.deadline)},
-        output_data={"todo_count": len(scheduled)},
+        output_data={"todo_count": len(scheduled), "unscheduled_count": len(unscheduled)},
         duration_ms=schedule_duration,
     )
 
@@ -566,6 +691,7 @@ def create_plan(
         goal=GoalResponse.model_validate(goal),
         tasks=tasks_resp,
         todos=todos_resp,
+        unscheduled_tasks=unscheduled,
     )
 
 
@@ -625,11 +751,10 @@ def create_multi_plan(
         daily_minutes=payload.daily_minutes,
         user_config=user_config,
     )
-    # T08: schedule_multi_courses now returns a dict with schedule +
-    # overflow_warnings (warnings are appended when a task cannot fit
-    # within the daily budget and is forced onto the last day).
+    # Infeasible tasks are returned separately and must not become todos.
     schedule_items_raw = schedule["schedule"]
     overflow_warnings = schedule.get("overflow_warnings", [])
+    unscheduled_tasks = schedule.get("unscheduled_tasks", [])
 
     # Persist: one StudyGoal per course so each course's plan can be
     # managed independently, then one StudyTask + one Todo per schedule
@@ -660,15 +785,20 @@ def create_multi_plan(
             db.flush()
             goal_by_course[course_id] = goal
 
+        task_type = _normalise_task_type(item.get("task_type"))
+        target_type, target_id = _resolve_task_target(db, course_id, task_type)
         task = StudyTask(
             goal_id=goal_by_course[course_id].id,
             course_id=course_id,
             title=item["title"],
-            task_type=item.get("task_type", "review"),
+            task_type=task_type,
             estimate_minutes=item["estimate_minutes"],
             priority=int(item.get("priority", 3) or 3),
             acceptance=item.get("acceptance", ""),
             status="pending",
+            target_type=target_type,
+            target_id=target_id,
+            execution_status="pending",
         )
         db.add(task)
         db.flush()
@@ -700,7 +830,11 @@ def create_multi_plan(
 
     db.commit()
 
-    return MultiPlanResponse(schedule=items, overflow_warnings=overflow_warnings)
+    return MultiPlanResponse(
+        schedule=items,
+        overflow_warnings=overflow_warnings,
+        unscheduled_tasks=unscheduled_tasks,
+    )
 
 
 @todos_router.get("", response_model=TodoListResponse)

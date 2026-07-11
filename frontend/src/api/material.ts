@@ -6,6 +6,7 @@ export type MaterialStatus = 'uploaded' | 'processing' | 'ready' | 'failed'
 export interface Material {
   id: number
   filename: string
+  file_url?: string | null
   file_type: string
   status: MaterialStatus
   version: number
@@ -38,7 +39,7 @@ export interface ParseResult {
 export interface ChunkImage {
   id: number
   page_no: number
-  image_path: string
+  file_url?: string | null
   width?: number
   height?: number
   format: string
@@ -52,6 +53,8 @@ export interface Chunk {
   text: string
   keyword_text?: string
   images?: ChunkImage[]
+  quality_score?: number | null
+  quality_reason?: string | null
 }
 
 export interface ChunkListResult {

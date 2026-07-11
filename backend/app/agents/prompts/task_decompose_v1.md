@@ -30,7 +30,7 @@
 
 ## 字段约束
 - `subtasks`：3-7 条子任务，按依赖顺序排列。
-- `task_type`：`learn`/`review`/`practice`/`quiz` 之一。
+- `task_type`：`learn`/`review`/`quiz` 之一。
 - `estimate_minutes`：整数，建议 15-60 分钟。
 - `priority`：1-5 整数。
 - `depends_on`：依赖的前置子任务标题数组，无依赖为空数组。

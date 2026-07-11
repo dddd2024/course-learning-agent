@@ -190,13 +190,22 @@ if (Test-Path $kgCompareAgent) { Write-Ok "backend concept_compare agent exists"
 if (Test-Path $kgCompareService) { Write-Ok "backend concept_compare_service exists" } else { Write-Bad "missing backend/app/services/concept_compare_service.py" }
 if (Test-Path $kgModels) { Write-Ok "backend concept_graph models exist" } else { Write-Bad "missing backend/app/models/concept_graph.py" }
 
-# Static-content checks: route registered, menu item added, SVG graph present
+# Static-content checks: route registered, menu item added, interactive graph
+# surface present, and a text alternative available for assistive technology.
 $routerContent = Get-Content $kgRouter -Raw
 if ($routerContent -match "knowledge-graph") { Write-Ok "router has /knowledge-graph route" } else { Write-Bad "router missing /knowledge-graph route" }
 $layoutContent = Get-Content $kgLayout -Raw
 if ($layoutContent -match '/knowledge-graph') { Write-Ok "MainLayout has knowledge-graph menu item" } else { Write-Bad "MainLayout missing knowledge-graph menu item" }
 $kgViewContent = Get-Content $kgView -Raw
-if ($kgViewContent -match '<svg') { Write-Ok "KnowledgeGraphView uses SVG graph" } else { Write-Bad "KnowledgeGraphView missing SVG graph" }
+if (
+  ($kgViewContent -match '<svg') -or
+  (($kgViewContent -match 'class="graph-canvas"') -and
+   ($kgViewContent -match 'aria-label="知识图谱文本摘要"'))
+) {
+  Write-Ok "KnowledgeGraphView has interactive graph with accessible text alternative"
+} else {
+  Write-Bad "KnowledgeGraphView missing supported graph surface or accessible text alternative"
+}
 if ($kgViewContent -match 'compareDrawerVisible') { Write-Ok "KnowledgeGraphView has compare drawer" } else { Write-Bad "KnowledgeGraphView missing compare drawer" }
 
 # 11. P3: Evidence binding and unified error checks (audit remediation)

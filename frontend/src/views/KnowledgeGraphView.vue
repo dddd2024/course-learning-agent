@@ -27,6 +27,8 @@ const allCourses = ref<Course[]>([])
 const selectedNode = ref<NodeDetail | null>(null)
 const selectedEdge = ref<GraphEdge | null>(null)
 const detailDrawerVisible = ref(false)
+const detailLoading = ref(false)
+let nodeDetailRequestId = 0
 const legendCollapsed = ref(false)
 const compareDrawerVisible = ref(false)
 const compareReport = ref<CompareReport | null>(null)
@@ -37,6 +39,13 @@ const userFocusOptions = [
   { label: '考试重点', value: 'exam' },
   { label: '迁移应用', value: 'transfer' },
 ]
+const compareTitle = computed(() => {
+  if (!selectedEdge.value) return '概念对比报告'
+  const source = nodes.value.find(n => n.id === selectedEdge.value?.source_node_id)
+  const target = nodes.value.find(n => n.id === selectedEdge.value?.target_node_id)
+  return source && target && source.course_id !== target.course_id
+    ? '跨课程概念对比报告' : '同课程概念对比报告'
+})
 
 // Filters
 const filterCourseId = ref('')
@@ -312,17 +321,27 @@ async function handleRebuild() {
 }
 
 async function handleNodeClick(node: GraphNode) {
+  const requestId = ++nodeDetailRequestId
+  selectedNode.value = null
   selectedEdge.value = null
   detailDrawerVisible.value = true
+  detailLoading.value = true
   try {
     const { data } = await getNodeDetail(node.id)
-    selectedNode.value = data
+    if (requestId === nodeDetailRequestId) selectedNode.value = data
   } catch (err) {
-    ElMessage.error(parseApiError(err, '获取节点详情失败'))
+    if (requestId === nodeDetailRequestId) {
+      detailDrawerVisible.value = false
+      ElMessage.error(parseApiError(err, '获取节点详情失败'))
+    }
+  } finally {
+    if (requestId === nodeDetailRequestId) detailLoading.value = false
   }
 }
 
 function handleEdgeClick(edge: GraphEdge) {
+  nodeDetailRequestId += 1
+  detailLoading.value = false
   selectedNode.value = null
   selectedEdge.value = edge
   detailDrawerVisible.value = true
@@ -333,6 +352,7 @@ async function handleConfirm() {
   try {
     await confirmEdge(selectedEdge.value.id)
     selectedEdge.value.status = 'confirmed'
+    await fetchGraph()
     ElMessage.success('已确认该关系')
   } catch (err) {
     ElMessage.error(parseApiError(err, '确认失败'))
@@ -344,6 +364,7 @@ async function handleReject() {
   try {
     await rejectEdge(selectedEdge.value.id)
     selectedEdge.value.status = 'rejected'
+    await fetchGraph()
     ElMessage.success('已拒绝该关系')
   } catch (err) {
     ElMessage.error(parseApiError(err, '拒绝失败'))
@@ -354,7 +375,12 @@ async function handleCompare() {
   if (!selectedEdge.value) return
   compareLoading.value = true
   compareDrawerVisible.value = true
-  compareReport.value = null
+  // The compare endpoint calls the user's LLM which can take 50-90s.
+  // Tell the user upfront so they don't think the UI is frozen.
+  ElMessage.info('正在生成对比报告，可能需要 1-2 分钟...')
+  // Don't clear compareReport here — keep the old one visible
+  // until the new one arrives, so the user sees loading state
+  // instead of "暂无对比报告".
   try {
     const { data } = await compareNodes(
       selectedEdge.value.source_node_id,
@@ -365,9 +391,21 @@ async function handleCompare() {
     compareReport.value = data
   } catch (err) {
     ElMessage.error(parseApiError(err, '生成对比报告失败'))
+    // Keep any prior report visible; if there was none, the
+    // "暂无对比报告" placeholder shows via the v-else-if branch.
   } finally {
     compareLoading.value = false
   }
+}
+
+async function handleForceRefresh() {
+  if (!selectedEdge.value) return
+  compareLoading.value = true
+  try {
+    const { data } = await compareNodes(selectedEdge.value.source_node_id, selectedEdge.value.target_node_id, selectedEdge.value.id, compareUserFocus.value, true)
+    compareReport.value = data
+  } catch (err) { ElMessage.error(parseApiError(err, '重新生成失败')) }
+  finally { compareLoading.value = false }
 }
 
 function fitGraph() {
@@ -480,7 +518,23 @@ onBeforeUnmount(() => {
       <div
         ref="graphContainer"
         class="graph-canvas"
+        role="img"
+        :aria-label="`知识图谱，共 ${nodes.length} 个节点、${edges.length} 条关系。可使用下方文本摘要了解内容。`"
       ></div>
+      <section class="sr-only" aria-label="知识图谱文本摘要">
+        <h2>知识图谱文本摘要</h2>
+        <ul>
+          <li v-for="node in nodes" :key="`node-summary-${node.id}`">
+            {{ node.title }}，课程 {{ allCourses.find((c) => c.id === node.course_id)?.name || node.course_id }}，重要度 {{ node.importance }}
+          </li>
+        </ul>
+        <h3>关系</h3>
+        <ul>
+          <li v-for="edge in edges" :key="`edge-summary-${edge.id}`">
+            {{ nodeTitle(edge.source_node_id) }} 与 {{ nodeTitle(edge.target_node_id) }}：{{ relationLabels[edge.relation_type] || edge.relation_type }}，{{ statusLabels[edge.status] || edge.status }}
+          </li>
+        </ul>
+      </section>
       <div v-if="!nodes.length && !loading" class="empty-tip-overlay">
         <el-empty description="暂无图谱数据">
           <el-button type="primary" @click="handleRebuild">重建图谱</el-button>
@@ -489,10 +543,15 @@ onBeforeUnmount(() => {
 
       <!-- Floating legend (collapsible) -->
       <div v-if="nodes.length > 0" class="kg-legend" :class="{ 'kg-legend--collapsed': legendCollapsed }">
-        <div class="legend-header" @click="legendCollapsed = !legendCollapsed">
+        <button
+          type="button"
+          class="legend-header"
+          :aria-expanded="!legendCollapsed"
+          @click="legendCollapsed = !legendCollapsed"
+        >
           <span>图例</span>
           <el-icon size="12"><ArrowDown v-if="!legendCollapsed" /><ArrowRight v-else /></el-icon>
-        </div>
+        </button>
         <div v-show="!legendCollapsed" class="legend-body">
           <div class="legend-section">
             <div class="legend-subtitle">课程</div>
@@ -527,6 +586,7 @@ onBeforeUnmount(() => {
       size="360px"
       direction="rtl"
     >
+      <div v-loading="detailLoading" class="drawer-content">
       <div v-if="selectedNode" class="detail-section">
         <div class="detail-row">
           <span class="detail-label">标题</span>
@@ -631,12 +691,13 @@ onBeforeUnmount(() => {
       <div v-else class="empty-detail-text">
         点击节点或边查看详情
       </div>
+      </div>
     </el-drawer>
 
     <!-- Compare drawer -->
     <el-drawer
       v-model="compareDrawerVisible"
-      title="跨课程概念对比报告"
+      :title="compareTitle"
       size="50%"
       direction="rtl"
     >
@@ -652,6 +713,7 @@ onBeforeUnmount(() => {
               {{ opt.label }}
             </el-radio-button>
           </el-radio-group>
+          <el-button size="small" @click="handleForceRefresh">重新生成</el-button>
         </div>
         <div v-if="compareReport" class="compare-report">
           <el-alert
@@ -850,6 +912,18 @@ onBeforeUnmount(() => {
   border-radius: 8px;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* --- Floating legend --- */
 .kg-legend {
   position: absolute;
@@ -867,6 +941,7 @@ onBeforeUnmount(() => {
 }
 
 .legend-header {
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -876,6 +951,14 @@ onBeforeUnmount(() => {
   cursor: pointer;
   user-select: none;
   margin-bottom: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+}
+
+.drawer-content {
+  min-height: 160px;
 }
 
 .legend-body {

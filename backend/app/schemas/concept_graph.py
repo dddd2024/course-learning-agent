@@ -54,6 +54,7 @@ class CompareRequest(BaseModel):
     target_node_id: int
     edge_id: int | None = None
     user_focus: Literal["concept", "exam", "transfer"] = "concept"
+    force_refresh: bool = False
 
 
 class CompareReportResponse(BaseModel):

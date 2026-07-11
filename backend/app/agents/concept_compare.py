@@ -17,6 +17,7 @@ from typing import Any
 from app.agents.audit import AgentAudit
 from app.agents.llm import call_llm_with_meta
 from app.agents.prompt_loader import load_prompt
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,14 @@ def generate_compare(
     """
     import json
 
+    # Determine provider/model_name before LLM call (best guess).
+    if user_config:
+        _provider = "user"
+        _model = user_config.get("model", "")
+    else:
+        _provider = "real" if settings.LLM_PROVIDER == "real" else "mock"
+        _model = settings.LLM_MODEL
+
     run = AgentAudit.create_run(
         db,
         user_id,
@@ -48,8 +57,8 @@ def generate_compare(
             "b": concept_b.get("title"),
         },
         prompt_version=_PROMPT_VERSION,
-        model_name="mock",
-        provider="mock",
+        model_name=_model,
+        provider=_provider,
     )
 
     try:
@@ -66,6 +75,14 @@ def generate_compare(
 
         result, meta = call_llm_with_meta(
             prompt, agent_type="concept_compare", user_config=user_config
+        )
+
+        # Update audit run with actual provider/model_name from meta
+        AgentAudit.update_run_meta(
+            db, run.id,
+            model_name=meta.get("model_name"),
+            provider=meta.get("provider"),
+            meta=meta,
         )
 
         if _is_valid_compare_report(result):
@@ -101,10 +118,26 @@ def generate_compare(
 
 
 def _is_valid_compare_report(result: Any) -> bool:
-    """Return True if ``result`` looks like a compare report dict."""
+    """Return True if ``result`` looks like a compare report dict.
+
+    Also fills in any missing required sections with empty arrays so the
+    frontend never crashes on a missing key (Task 9 Issue D).
+    """
     if not isinstance(result, dict):
         return False
-    return "concept_a" in result or "similarities" in result
+    if "concept_a" not in result and "similarities" not in result:
+        return False
+    # Ensure all required sections exist (can be empty arrays but must exist)
+    # so the frontend's optional-chaining access (e.g. report_json.similarities)
+    # never hits a missing key.
+    required_sections = (
+        "similarities", "differences",
+        "transfer_learning", "confusions", "exam_questions",
+    )
+    for section in required_sections:
+        if section not in result:
+            result[section] = []  # fill missing sections with empty arrays
+    return True
 
 
 def _extract_citation_ids(report: dict) -> list[int]:
@@ -123,6 +156,10 @@ def _mock_fallback(
 ) -> dict:
     """Generate a structured mock compare report when LLM is unavailable."""
     report = {
+        "status": "insufficient_evidence",
+        "reason": "真实模型未生成可验证的对比，且 mock 不会推断语义结论。",
+        "required_sources": ["概念 A 与概念 B 的原始资料证据"],
+        "next_action": "请检查资料解析结果后重新生成。",
         "concept_a": {
             "title": concept_a.get("title", ""),
             "explanation": concept_a.get("summary", ""),
@@ -131,17 +168,8 @@ def _mock_fallback(
             "title": concept_b.get("title", ""),
             "explanation": concept_b.get("summary", ""),
         },
-        "similarities": ["两者都是重要概念，需要理解其核心定义"],
-        "differences": [
-            {
-                "dimension": "所属领域",
-                "a": concept_a.get("summary", ""),
-                "b": concept_b.get("summary", ""),
-            }
-        ],
-        "transfer_learning": ["对比两者的核心思想，寻找可迁移的方法论"],
-        "confusions": ["注意两者的适用场景差异"],
-        "exam_questions": ["简述两者的联系与区别"],
+        "similarities": [], "differences": [], "transfer_learning": [],
+        "confusions": [], "exam_questions": [],
         "citations": [],
         "insufficient_evidence": True,
     }
@@ -150,7 +178,7 @@ def _mock_fallback(
         output_data={"fallback": True},
     )
     AgentAudit.finish_run(
-        db, run.id, status="success",
+        db, run.id, status="degraded",
         output_summary={"fallback": True},
     )
     return {

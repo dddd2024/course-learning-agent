@@ -20,6 +20,7 @@ implementation without changing call sites.
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import List
 
@@ -106,10 +107,11 @@ def keyword_search(
     ``status='ready'`` are considered so partially-parsed materials
     never surface in search results.
 
-    Scoring applies title/filename weighting: a keyword hit in the
-    chunk title counts 2x, in the material filename 2x, and in the
-    body text 1x. This prioritises chunks whose heading or source
-    filename directly matches the query.
+    Scoring uses absolute hit count (title 2x, filename 2x, body 1x)
+    combined with coverage (fraction of distinct keywords matched) and
+    a logarithmic length bonus. Title-only chunks -- where text is very
+    short and consists mostly of the heading -- are filtered out so
+    they do not crowd out chunks with actual explanatory content.
 
     Args:
         db: SQLAlchemy session.
@@ -161,11 +163,14 @@ def keyword_search(
         title_lower = (chunk.title or "").lower()
         filename_lower = (filename or "").lower()
 
-        # --- Density-based scoring ---
-        # Count how many distinct keywords match (coverage) and total hits.
-        # ASCII keywords use word-boundary matching; CJK uses substring.
+        # --- Scoring: absolute hits + coverage, demote title-only chunks ---
+        # Track hits by location so we can detect and filter title-only
+        # chunks that lack real body content.
         match_count = 0  # number of distinct keywords that matched
         raw_score = 0
+        total_title_hits = 0
+        total_fname_hits = 0
+        total_text_hits = 0
         for kw in keywords:
             if kw in ascii_patterns:
                 pat = ascii_patterns[kw]
@@ -181,6 +186,9 @@ def keyword_search(
             if total_hits > 0:
                 match_count += 1
             raw_score += title_hits * 2 + fname_hits * 2 + text_hits
+            total_title_hits += title_hits
+            total_fname_hits += fname_hits
+            total_text_hits += text_hits
 
         if raw_score <= 0:
             continue
@@ -197,39 +205,53 @@ def keyword_search(
             if not ascii_word_match:
                 continue
 
-        # Density: keyword hits per 100 characters of text.
-        # A chunk with 5 hits in 200 chars is far more relevant than
-        # 5 hits in 2000 chars (where "信道" may only appear tangentially).
+        # Text length for reference
         text_len = max(len(text), 1)
-        density = raw_score / (text_len / 100)
 
-        # Coverage bonus: matching more distinct keywords means the chunk
-        # is broadly about the topic, not just mentioning it once.
-        coverage_bonus = match_count / max(len(keywords), 1)
+        # Filter: chunks with no body text hits and short text are likely
+        # title/filename-only matches with no explanatory content.
+        if total_text_hits <= 0 and text_len < 50:
+            continue
 
-        # Title match bonus: a chunk whose title contains the keyword
-        # is more relevant than one where only the body matches.
-        has_title_match = any(
-            kw.lower() in title_lower for kw in keywords
-        )
-        title_bonus = 0.05 if has_title_match else 0.0
+        # Detect title-only chunks: text is very short and consists mostly
+        # of the title (very little content beyond the heading line).
+        # These chunks provide no explanatory value — skip them entirely.
+        # The threshold of 5 chars ensures we only filter chunks where the
+        # body is essentially empty, not chunks with short but real content.
+        if text_len < 50 and title_lower:
+            text_without_title = text_lower.replace(
+                title_lower, ""
+            ).strip()
+            if len(text_without_title) < 5:
+                continue
 
-        # Final normalized score (0-1 range for the API).
-        # density typically ranges 0.5-30 for relevant chunks.
-        # Coefficients are tuned so title_bonus (0.05) lightly favours
-        # title-matching chunks without letting title-only chunks (e.g.
-        # PPT slide titles like "第10章") crowd out chunks with actual
-        # knowledge content.
+        # Coverage: fraction of distinct keywords that matched
+        coverage = match_count / max(len(keywords), 1)
+
+        # Absolute hit score: total keyword hits weighted by location
+        # (title 2x, filename 2x, body 1x). This replaces density-based
+        # scoring which inflated short chunks: a 10-char title with 2 hits
+        # had density=60 (capped to 1.0), while a 600-char body with 3
+        # hits had density=0.5 and was barely retained.
+        hit_score = raw_score
+
+        # Length bonus: longer chunks tend to contain more useful context.
+        # Logarithmic scale so a 600-char chunk gets ~2x bonus over 10-char.
+        length_bonus = min(0.3, math.log10(max(text_len, 1)) * 0.1)
+
+        # Title match bonus (kept small to avoid title-only inflation)
+        title_bonus = 0.05 if total_title_hits > 0 else 0.0
+
+        # Final normalized score (0-1 range)
         normalized_score = min(
-            1.0, (density * 0.02) + (coverage_bonus * 0.2) + title_bonus
+            1.0,
+            (hit_score * 0.05)
+            + (coverage * 0.3)
+            + length_bonus
+            + title_bonus
         )
 
-        # Minimum relevance threshold: chunk must have density > 0.5
-        # (at least ~1 hit per 200 chars). Title matches no longer exempt
-        # chunks from this requirement, so title-only chunks without body
-        # content (e.g. PPT slide titles like "第10章") are filtered out
-        # and do not crowd out chunks with actual knowledge content.
-        if density < 0.5:
+        if normalized_score <= 0:
             continue
 
         results.append(
@@ -246,8 +268,8 @@ def keyword_search(
 
     results.sort(key=lambda item: item["score"], reverse=True)
 
-    # Deduplicate: same (filename, page_no) keeps the highest-scoring
-    # chunk; page_no is None and cross-page near-duplicates are merged
+    # Deduplicate only truly repeated source text; different chunks on the
+    # same page are separate evidence and must remain retrievable.
     # by text similarity (see _deduplicate_results).
     results = _deduplicate_results(results)
 
@@ -280,13 +302,8 @@ def _deduplicate_results(results: list[dict]) -> list[dict]:
 
     Three dedup strategies are applied in order:
 
-    1. **Same (filename, page_no)** — at most one chunk per page is kept.
-       Because ``results`` is pre-sorted by score descending, the first
-       chunk on a page that survives the text checks wins. The page slot
-       is claimed only on survival so a page is not emptied just because
-       its top chunk was a cross-page duplicate (e.g. a repeated header).
-       Uses filename instead of material_id so that the same PDF uploaded
-       as different material records is still deduplicated.
+    1. **Exact duplicate content** — only identical chunks from the same
+       material version are collapsed.
     2. **page_no is None (docx/txt/md)** — there is no page to key on,
        so dedup by text similarity: if the first 100 characters of two
        chunks overlap by >= 60%, treat them as duplicates and keep the
@@ -297,12 +314,9 @@ def _deduplicate_results(results: list[dict]) -> list[dict]:
        using an 80% text overlap threshold so only the highest-scoring
        copy is kept.
 
-    Strategies 2 and 3 are scoped to the same ``filename``: the same
-    document uploaded under different material records is still
-    deduplicated, while genuinely different source files remain distinct
-    so filename weighting stays observable.
+    Similarity checks are scoped by ``material_id`` rather than filenames;
+    two users can upload unrelated documents with the same filename.
     """
-    seen_keys: set[tuple] = set()
     # (filename, text_prefix, score, chunk_id) for every chunk currently
     # held in ``deduped``; used for the text-similarity strategies (2 & 3).
     seen_texts: list[tuple[str, str, float, int]] = []
@@ -310,19 +324,10 @@ def _deduplicate_results(results: list[dict]) -> list[dict]:
 
     for r in results:
         page_no = r.get("page_no")
-        filename = r.get("filename", "")
+        material_id = r.get("material_id")
         text = r.get("text", "")
         score = r.get("score", 0)
         chunk_id = r.get("chunk_id")
-
-        # Strategy 1: Same (filename, page_no) — at most one kept chunk
-        # per page. The page slot is claimed only when a chunk actually
-        # survives the text-similarity checks below, so a page is not
-        # left empty just because its top chunk was a cross-page
-        # duplicate (e.g. a repeated header that also matches on page 2).
-        key = (filename, page_no) if page_no is not None else None
-        if key is not None and key in seen_keys:
-            continue
 
         # Strategy 2 & 3: text-similarity dedup, scoped to the same file
         # (filename). This mirrors the original filename-based keying so
@@ -338,7 +343,7 @@ def _deduplicate_results(results: list[dict]) -> list[dict]:
         for i, (ex_filename, ex_prefix, ex_score, ex_id) in enumerate(
             seen_texts
         ):
-            if ex_filename != filename:
+            if ex_filename != material_id:
                 continue
             if not text_prefix or not ex_prefix:
                 continue
@@ -349,7 +354,7 @@ def _deduplicate_results(results: list[dict]) -> list[dict]:
                     # higher-scoring chunk (defensive: results is
                     # pre-sorted desc, so this branch rarely triggers).
                     action = "replace"
-                    seen_texts[i] = (filename, text_prefix, score, chunk_id)
+                    seen_texts[i] = (material_id, text_prefix, score, chunk_id)
                     deduped = [
                         d for d in deduped
                         if d.get("chunk_id") != ex_id
@@ -362,10 +367,8 @@ def _deduplicate_results(results: list[dict]) -> list[dict]:
             continue
 
         # r is retained — either as a new entry or as a replacement.
-        if key is not None:
-            seen_keys.add(key)
         if action == "keep":
-            seen_texts.append((filename, text_prefix, score, chunk_id))
+            seen_texts.append((material_id, text_prefix, score, chunk_id))
         deduped.append(r)
 
     return deduped

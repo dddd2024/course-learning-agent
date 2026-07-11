@@ -70,34 +70,71 @@ def call_llm_with_meta(
     Real-path failures (timeouts, HTTP errors, invalid JSON) are logged
     and swallowed so callers always receive a structurally-valid dict.
     """
+    # Task 9: allow certain agent types (e.g. concept_compare) to use a
+    # longer timeout than the global default. The override is only used
+    # when the caller did not supply their own ``timeout_seconds`` in
+    # ``user_config``.
+    timeout_override: int | None = None
+    if agent_type == "concept_compare":
+        timeout_override = getattr(
+            settings, "LLM_CONCEPT_COMPARE_TIMEOUT_SECONDS", 120
+        )
+
     # 1. Prefer the per-user config when supplied.
     if user_config is not None:
         try:
-            result = _real_response(prompt, agent_type, schema, user_config)
+            result = _real_response(
+                prompt, agent_type, schema, user_config, timeout_override
+            )
             return result, {
                 "provider": "real",
+                "model_name": user_config.get("model", ""),
+                "requested_provider": "user", "requested_model": user_config.get("model", ""),
+                "actual_provider": "user", "actual_model": user_config.get("model", ""),
                 "fallback_used": False,
                 "fallback_reason": None,
+                "fallback_chain": [{"provider": "user", "status": "success"}], "degraded": False,
             }
         except Exception as exc:  # noqa: BLE001 - demo must stay up
-            logger.warning(
-                "User LLM config failed, falling back to mock: %s", exc
-            )
+            user_reason = str(exc) or exc.__class__.__name__
+            logger.warning("User LLM config failed, trying system provider: %s", exc)
+            if (settings.LLM_PROVIDER or "mock").lower() == "real":
+                try:
+                    result = _real_response(prompt, agent_type, schema, None, timeout_override)
+                    return result, {
+                        "provider": "real", "model_name": settings.LLM_MODEL,
+                        "requested_provider": "user", "requested_model": user_config.get("model", ""),
+                        "actual_provider": "system", "actual_model": settings.LLM_MODEL,
+                        "fallback_used": True, "fallback_reason": user_reason,
+                        "fallback_chain": [{"provider":"user","status":"failed","reason":user_reason},{"provider":"system","status":"success"}],
+                        "degraded": False,
+                    }
+                except Exception as system_exc:  # noqa: BLE001
+                    user_reason = f"user: {user_reason}; system: {system_exc}"
             return _mock_response(agent_type, prompt), {
-                "provider": "mock",
-                "fallback_used": True,
-                "fallback_reason": str(exc) or exc.__class__.__name__,
+                "provider": "mock", "model_name": "mock",
+                "requested_provider": "user", "requested_model": user_config.get("model", ""),
+                "actual_provider": "mock", "actual_model": "mock",
+                "fallback_used": True, "fallback_reason": user_reason,
+                "fallback_chain": [{"provider":"user","status":"failed","reason":user_reason},{"provider":"mock","status":"success"}],
+                "degraded": True,
             }
 
     # 2. Otherwise defer to the system provider setting.
     provider = (settings.LLM_PROVIDER or "mock").lower()
     if provider == "real":
         try:
-            result = _real_response(prompt, agent_type, schema, None)
+            result = _real_response(
+                prompt, agent_type, schema, None, timeout_override
+            )
             return result, {
                 "provider": "real",
+                "model_name": settings.LLM_MODEL,
+                "requested_provider": "system", "requested_model": settings.LLM_MODEL,
+                "actual_provider": "system", "actual_model": settings.LLM_MODEL,
                 "fallback_used": False,
                 "fallback_reason": None,
+                "fallback_chain": [{"provider":"system","status":"success"}], "degraded": False,
             }
         except Exception as exc:  # noqa: BLE001 - demo must stay up
             logger.warning(
@@ -105,15 +142,23 @@ def call_llm_with_meta(
             )
             return _mock_response(agent_type, prompt), {
                 "provider": "mock",
+                "model_name": "mock",
+                "requested_provider": "system", "requested_model": settings.LLM_MODEL,
+                "actual_provider": "mock", "actual_model": "mock",
                 "fallback_used": True,
                 "fallback_reason": str(exc) or exc.__class__.__name__,
+                "fallback_chain": [{"provider":"system","status":"failed","reason":str(exc)},{"provider":"mock","status":"success"}], "degraded": True,
             }
 
     # 3. Mock provider (default, or unknown provider) keeps the demo alive.
     return _mock_response(agent_type, prompt), {
         "provider": "mock",
+        "model_name": "mock",
+        "requested_provider": "mock", "requested_model": "mock",
+        "actual_provider": "mock", "actual_model": "mock",
         "fallback_used": False,
         "fallback_reason": None,
+        "fallback_chain": [{"provider":"mock","status":"success"}], "degraded": True,
     }
 
 
@@ -150,13 +195,34 @@ def _mock_course_qa(prompt: str = "") -> dict[str, Any]:
     chunks = chunk_pattern.findall(prompt)
 
     if chunks:
-        # Use the first chunk's text as the basis for the answer.
-        first_cid, first_text = chunks[0]
-        first_text = first_text.strip()
-        # Build an answer from the first chunk content.
-        answer = first_text[:200]
-        if len(first_text) > 200:
+        # Select the chunk with the most content (longest text), not just
+        # the first one — the first chunk may be a short title chunk.
+        sorted_chunks = sorted(chunks, key=lambda c: len(c[1].strip()), reverse=True)
+        best_cid, best_text = sorted_chunks[0]
+        best_text = best_text.strip()
+
+        # Build answer from the best chunk, prioritising lines that contain
+        # keywords from the question.
+        question_lower = question.lower() if question else ""
+        q_keywords = [c for c in question_lower if '\u4e00' <= c <= '\u9fff']
+        lines = [l.strip() for l in best_text.split("\n") if l.strip() and len(l.strip()) >= 5]
+
+        if q_keywords and lines:
+            matching = [l for l in lines if any(kw in l.lower() for kw in q_keywords)]
+            if matching:
+                answer = matching[0][:200]
+                if len(matching) > 1:
+                    answer += " " + matching[1][:150]
+            else:
+                answer = best_text[:200]
+        else:
+            answer = best_text[:200]
+
+        if len(best_text) > 200 and len(answer) <= 200:
             answer += "…"
+
+        first_cid = best_cid
+        first_text = best_text
 
         key_points: list[str] = []
         for cid, text in chunks[:3]:
@@ -342,12 +408,16 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
         cleaned = re.sub(r"[ \t]+", " ", cleaned)
         return cleaned.strip()
 
-    # Extract chunk text from the prompt.
+    # Extract chunk text and chunk_id from the prompt.
+    # Capture chunk_id as group(1) and text as group(2) so we can use
+    # the real DB chunk_id in source_chunk_ids instead of position indices.
     chunk_pattern = re.compile(
-        r"\[片段\d+\]\s*chunk_id=\d+[^\n]*\n(.+?)(?=\n\n|\Z)",
+        r"\[片段\d+\]\s*chunk_id=(\d+)[^\n]*\n(.+?)(?=\n\n|\Z)",
         re.DOTALL,
     )
-    chunks = chunk_pattern.findall(prompt)
+    chunk_matches = chunk_pattern.findall(prompt)
+    chunks = [text for _cid, text in chunk_matches]
+    chunk_ids = [int(cid) for cid, _text in chunk_matches]
 
     # Extract titles from the prompt header lines (format: "，标题：xxx")
     title_pattern = re.compile(r"标题：(.+?)(?:，|\n)")
@@ -424,13 +494,24 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
 
         seen_titles.add(title)
 
-        summary = _clean_summary(chunk_text.strip()[:150])
+        # Generate a better summary: use first 2-3 meaningful lines instead
+        # of just truncating to 150 chars.
+        _lines = [l.strip() for l in chunk_text.strip().split("\n") if l.strip()]
+        _meaningful = [
+            l for l in _lines
+            if l != title and len(l) >= 5
+            and not re.match(r"^[\d\s\.\-:]+$", l)
+        ][:3]
+        if _meaningful:
+            summary = "。".join(_meaningful)[:200]
+        else:
+            summary = _clean_summary(chunk_text.strip()[:200])
 
         knowledge_points.append({
             "title": title,
             "summary": summary,
             "importance": 5 if i == 0 else 4,
-            "source_chunk_ids": [i + 1],
+            "source_chunk_ids": [chunk_ids[i]] if i < len(chunk_ids) else [],
             "exam_style": "简答题/选择题",
             "review_action": f"重读片段{i + 1}的相关内容。",
         })
@@ -450,17 +531,19 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
             knowledge_points = [
                 {
                     "title": t1,
-                    "summary": lines[0][:100],
+                    "summary": _clean_summary(text[:200]),
                     "importance": 5,
-                    "source_chunk_ids": [1],
+                    "source_chunk_ids": [chunk_ids[0]] if chunk_ids else [],
                     "exam_style": "简答题/选择题",
                     "review_action": "重读片段1的相关内容。",
                 },
                 {
                     "title": t2,
-                    "summary": lines[1][:100],
+                    "summary": _clean_summary(
+                        "\n".join(lines[1:])[:200] if len(lines) > 1 else text[:200]
+                    ),
                     "importance": 4,
-                    "source_chunk_ids": [1],
+                    "source_chunk_ids": [chunk_ids[0]] if chunk_ids else [],
                     "exam_style": "简答题/选择题",
                     "review_action": "重读片段1的相关内容。",
                 },
@@ -495,10 +578,10 @@ def _mock_planner(prompt: str = "") -> dict[str, Any]:
     # Build tasks spread across the available courses
     task_templates = [
         ("复习核心概念", "review", 60, 5, "能口述核心概念并举例。"),
-        ("完成配套练习", "practice", 45, 4, "习题正确率 ≥ 80%。"),
+        ("完成配套测验", "quiz", 45, 4, "测验正确率 ≥ 80%。"),
         ("梳理知识框架", "review", 90, 4, "能画出知识结构图。"),
-        ("重难点专项突破", "practice", 60, 5, "能独立解决典型难题。"),
-        ("阶段性自测", "practice", 45, 3, "自测得分 ≥ 70%。"),
+        ("重难点专项测验", "quiz", 60, 5, "测验正确率 ≥ 80%。"),
+        ("阶段性自测", "quiz", 45, 3, "自测得分 ≥ 70%。"),
     ]
 
     tasks = []
@@ -561,7 +644,7 @@ def _mock_multi_course_schedule(prompt: str = "") -> dict[str, Any]:
                 "date": "2026-07-07",
                 "course_name": "数据结构",
                 "title": "练习链表题",
-                "task_type": "practice",
+                "task_type": "quiz",
                 "estimate_minutes": 60,
                 "priority": 4,
                 "acceptance": "完成 5 道链表题。",
@@ -659,7 +742,8 @@ def _mock_concept_compare(prompt: str = "") -> dict[str, Any]:
         for cid in chunk_ids
     ]
 
-    # Generate meaningful similarities based on title/summary overlap
+    # Mock output is evidence-extractive only.  It must not infer semantic
+    # similarity from title characters or n-grams.
     from app.services.concept_graph_service import (
         _keyword_set, _jaccard, _cjk_chars,
     )
@@ -670,69 +754,21 @@ def _mock_concept_compare(prompt: str = "") -> dict[str, Any]:
     shared_chars = _cjk_chars(title_a) & _cjk_chars(title_b)
 
     similarities: list[str] = []
-    if shared_kws:
-        sample = list(shared_kws)[:5]
-        similarities.append(
-            f"两者都涉及关键词：{('、'.join(sample))}"
-        )
-    if shared_chars:
-        similarities.append(
-            f"标题中都包含字：{('、'.join(list(shared_chars)[:4]))}"
-        )
-    if not similarities:
-        similarities.append("两者都是课程中的重要概念，在各自的知识体系中占据关键位置")
 
     # Generate meaningful differences
     differences: list[dict] = []
-    differences.append({
-        "dimension": "概念定义",
-        "a": summary_a[:120] if summary_a else f"{title_a}的具体定义",
-        "b": summary_b[:120] if summary_b else f"{title_b}的具体定义",
-    })
 
     # Extract distinguishing keywords (in A but not B, and vice versa)
     only_a = list(kw_a - kw_b)[:3]
     only_b = list(kw_b - kw_a)[:3]
-    if only_a or only_b:
-        differences.append({
-            "dimension": "核心关注点",
-            "a": f"侧重：{('、'.join(only_a))}" if only_a else "无显著独有关键词",
-            "b": f"侧重：{('、'.join(only_b))}" if only_b else "无显著独有关键词",
-        })
+    _ = (shared_kws, shared_chars, only_a, only_b)
 
     # Focus-specific content
     transfer_learning: list[str] = []
     confusions: list[str] = []
     exam_questions: list[str] = []
 
-    if user_focus == "exam":
-        exam_questions = [
-            f"简述「{title_a}」与「{title_b}」的联系与区别",
-            f"在什么场景下应选择「{title_a}」而非「{title_b}」？反之呢？",
-        ]
-        confusions = [
-            f"注意「{title_a}」和「{title_b}」虽然看似相关，但适用场景不同",
-        ]
-        transfer_learning = [
-            f"理解「{title_a}」的核心思想是否可以迁移到「{title_b}」的理解中",
-        ]
-    elif user_focus == "transfer":
-        transfer_learning = [
-            f"「{title_a}」的思维方式可否迁移到「{title_b}」的学习中",
-            f"两者在方法论层面是否有可复用的模式",
-        ]
-        exam_questions = [f"分析「{title_a}」与「{title_b}」的异同"]
-        confusions = [f"避免将「{title_a}」的适用条件混淆到「{title_b}」"]
-    else:  # concept
-        transfer_learning = [
-            f"对比两者的核心思想，寻找可迁移的方法论",
-        ]
-        confusions = [
-            f"注意「{title_a}」和「{title_b}」的适用场景差异",
-        ]
-        exam_questions = [
-            f"简述「{title_a}」与「{title_b}」的联系与区别",
-        ]
+    # Intentionally leave all semantic-conclusion sections empty.
 
     return {
         "concept_a": {
@@ -765,6 +801,101 @@ def _extract_prompt_field(prompt: str, field_name: str) -> str:
     return ""
 
 
+def _heuristic_quality_score(text: str) -> tuple[float, str]:
+    """Return (score, reason) using enhanced heuristics for chunk quality.
+
+    Goes beyond _is_low_quality_chunk by also checking:
+    - Sentence structure (presence of periods, conjunctions)
+    - Information density (meaningful word ratio)
+    - Content coherence (transitions between ideas)
+    """
+    import re as _re
+
+    if not text or len(text.strip()) < 10:
+        return 0.1, "内容过短，无实质信息"
+
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if not lines:
+        return 0.1, "内容为空"
+
+    # 1. Line repetition check
+    unique_ratio = len(set(lines)) / len(lines)
+    if unique_ratio < 0.5:
+        return 0.15, "行重复率高，疑似图表标签文本"
+
+    # 2. Short-line stacking
+    short_lines = sum(1 for l in lines if len(l) < 4)
+    if len(lines) > 3 and short_lines / len(lines) > 0.6:
+        return 0.15, "短行堆叠，疑似图表或编号文本"
+
+    # 3. Vocabulary diversity
+    cjk_chars = [c for c in text if "\u4e00" <= c <= "\u9fff" or c.isalpha()]
+    if not cjk_chars:
+        return 0.2, "无有效文字字符"
+    unique_chars = len(set(cjk_chars))
+    diversity = unique_chars / len(cjk_chars)
+    if diversity < 0.3:
+        return 0.2, "词汇多样性低，疑似重复文本"
+
+    # 4. Sentence structure - look for sentence endings
+    sentence_endings = text.count("。") + text.count("；") + text.count(".") + text.count(";")
+    if sentence_endings == 0 and len(text) > 50:
+        return 0.3, "无句尾标点，缺乏完整句子结构"
+
+    # 5. Information density - meaningful CJK words (2+ consecutive CJK chars)
+    cjk_sequences = _re.findall(r"[\u4e00-\u9fff]{2,}", text)
+    meaningful_words = len(cjk_sequences)
+    if len(text) > 100 and meaningful_words < 5:
+        return 0.35, "有效词汇密度低"
+
+    # 6. Noise patterns - years, page numbers, teacher info
+    noise_patterns = [
+        r"\d{4}年(?:春|秋|夏|冬)",
+        r"第\d+页",
+        r"^(?:主讲教师|教师)[:：]",
+    ]
+    noise_count = sum(len(_re.findall(p, text)) for p in noise_patterns)
+    if noise_count > 2 and noise_count / max(len(lines), 1) > 0.3:
+        return 0.4, "噪声内容占比高"
+
+    # Passed all checks - assign score based on content quality
+    if len(text) > 80 and sentence_endings >= 2 and diversity > 0.5:
+        return 0.9, "内容完整，信息密度高"
+    if len(text) > 30 and sentence_endings >= 1:
+        return 0.7, "内容较为完整"
+    return 0.55, "内容基本可用"
+
+
+def _mock_chunk_quality(prompt: str = "") -> dict[str, Any]:
+    """Evaluate chunk quality using enhanced heuristics.
+
+    Parses chunks from the prompt and returns a quality score (0.0-1.0)
+    and reason for each. This mock uses sentence structure, information
+    density, and noise detection beyond the basic _is_low_quality_chunk rules.
+    """
+    chunk_pattern = re.compile(
+        r"\[片段(\d+)\]\s*\n(.+?)(?=\n\n|\[片段\d+\]|\Z)",
+        re.DOTALL,
+    )
+    matches = chunk_pattern.findall(prompt)
+
+    if not matches:
+        return {"evaluations": []}
+
+    evaluations = []
+    for idx_str, text in matches:
+        idx = int(idx_str)
+        text = text.strip()
+        score, reason = _heuristic_quality_score(text)
+        evaluations.append({
+            "index": idx,
+            "quality": round(score, 2),
+            "reason": reason,
+        })
+
+    return {"evaluations": evaluations}
+
+
 _MOCK_BUILDERS = {
     "course_qa": _mock_course_qa,
     "outline": _mock_outline,
@@ -774,6 +905,7 @@ _MOCK_BUILDERS = {
     "quiz_generate": _mock_quiz_generate,
     "citation_verify": _mock_citation_verify,
     "concept_compare": _mock_concept_compare,
+    "chunk_quality": _mock_chunk_quality,
 }
 
 
@@ -782,6 +914,7 @@ def _real_response(
     agent_type: str,
     schema: dict | None,
     user_config: dict | None,
+    timeout_override: int | None = None,
 ) -> dict[str, Any]:
     """Call an OpenAI-compatible ``/chat/completions`` API via httpx.
 
@@ -805,6 +938,12 @@ def _real_response(
         ``api_key``, ``temperature``, ``max_tokens``,
         ``timeout_seconds``). When ``None``, falls back to the system
         ``settings`` values.
+    timeout_override:
+        Optional agent-specific timeout (seconds). Used only when
+        ``user_config`` is ``None`` or does not contain its own
+        ``timeout_seconds``. Callers like ``concept_compare`` pass a
+        longer value here so first-call latency doesn't trip the global
+        60s default (Task 9).
 
     Returns
     -------
@@ -823,14 +962,18 @@ def _real_response(
         api_key = user_config["api_key"]
         temperature = user_config.get("temperature", settings.LLM_TEMPERATURE)
         max_tokens = user_config.get("max_tokens", settings.LLM_MAX_TOKENS)
-        timeout = user_config.get("timeout_seconds", settings.LLM_TIMEOUT_SECONDS)
+        # Task 9: use the agent-specific timeout override only when the
+        # user_config does not specify its own ``timeout_seconds``.
+        timeout = user_config.get(
+            "timeout_seconds", timeout_override or settings.LLM_TIMEOUT_SECONDS
+        )
     else:
         base_url = settings.LLM_BASE_URL
         model = settings.LLM_MODEL
         api_key = settings.LLM_API_KEY
         temperature = settings.LLM_TEMPERATURE
         max_tokens = settings.LLM_MAX_TOKENS
-        timeout = settings.LLM_TIMEOUT_SECONDS
+        timeout = timeout_override or settings.LLM_TIMEOUT_SECONDS
 
     url = f"{base_url.rstrip('/')}/chat/completions"
     headers = {

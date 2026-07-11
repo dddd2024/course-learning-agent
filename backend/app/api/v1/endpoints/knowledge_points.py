@@ -15,6 +15,7 @@ leaked.
 import json
 import logging
 import time
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -29,6 +30,7 @@ from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
 from app.models.material import Material
 from app.models.material_chunk import MaterialChunk
+from app.models.quiz import WeakPoint
 from app.models.user import User
 from app.schemas.knowledge_point import (
     GenerateKnowledgePointsResponse,
@@ -79,6 +81,7 @@ def generate_knowledge_points(
         .filter(
             Material.course_id == course_id,
             Material.status == "ready",
+            MaterialChunk.is_active == 1,
         )
         .count()
     )
@@ -145,27 +148,45 @@ def generate_knowledge_points(
         duration_ms=generate_duration,
     )
 
-    # Re-generating replaces previous points so the operation is idempotent.
-    db.query(KnowledgePoint).filter(
-        KnowledgePoint.course_id == course_id,
-        KnowledgePoint.user_id == current_user.id,
-    ).delete(synchronize_session=False)
-
+    # Merge by a stable course+normalised-title identity.  Historical quiz,
+    # weak-point and graph links therefore keep their original KP IDs.
+    existing = {
+        row.stable_key: row for row in db.query(KnowledgePoint).filter(
+            KnowledgePoint.course_id == course_id,
+            KnowledgePoint.user_id == current_user.id,
+        ) if row.stable_key
+    }
+    seen: set[str] = set()
     persisted: list[KnowledgePointResponse] = []
     for point in points:
-        row = KnowledgePoint(
-            course_id=course_id,
-            user_id=current_user.id,
-            title=point["title"],
-            summary=point["summary"],
-            importance=point["importance"],
-            source_chunk_ids=json.dumps(point["source_chunk_ids"]),
-            exam_style=point["exam_style"],
-            review_action=point["review_action"],
-        )
-        db.add(row)
+        normalized = re.sub(r"\s+", "", point["title"].strip().lower())
+        stable_key = f"{course_id}:{normalized}"
+        seen.add(stable_key)
+        row = existing.get(stable_key)
+        if row is None:
+            row = KnowledgePoint(
+                course_id=course_id, user_id=current_user.id,
+                stable_key=stable_key, title_normalized=normalized,
+            )
+            db.add(row)
+        row.title = point["title"]
+        row.summary = point["summary"]
+        row.importance = point["importance"]
+        row.source_chunk_ids = json.dumps(point["source_chunk_ids"])
+        row.source_version_ids = json.dumps(sorted({
+            c.material_version_id for c in db.query(MaterialChunk).filter(
+                MaterialChunk.id.in_(point["source_chunk_ids"])
+            ) if c.material_version_id
+        }))
+        row.exam_style = point["exam_style"]
+        row.review_action = point["review_action"]
+        row.status = "active"
         db.flush()
         persisted.append(KnowledgePointResponse.model_validate(row))
+
+    for key, row in existing.items():
+        if key not in seen:
+            row.status = "archived"
 
     db.commit()
 

@@ -148,7 +148,7 @@ def test_citation_verifier_removes_invalid() -> None:
 
 
 def test_citation_verifier_keeps_valid() -> None:
-    """verify_citations keeps every citation whose chunk_id is retrieved."""
+    """verify_citations keeps citations whose id and quote are retrieved."""
     output = {
         "citations": [
             {
@@ -164,14 +164,20 @@ def test_citation_verifier_keeps_valid() -> None:
         ]
     }
     retrieved = [
-        {"chunk_id": 1, "text": "first chunk"},
-        {"chunk_id": 2, "text": "second chunk"},
+        {"chunk_id": 1, "text": "first quote in a chunk"},
+        {"chunk_id": 2, "text": "second quote in a chunk"},
         {"chunk_id": 3, "text": "unused chunk"},
     ]
     kept = verify_citations(output, retrieved)
     assert len(kept) == 2
     kept_ids = {c["chunk_id"] for c in kept}
     assert kept_ids == {1, 2}
+
+
+def test_citation_verifier_removes_invalid_quote() -> None:
+    """A valid chunk id cannot make an invented quote appear trustworthy."""
+    output = {"citations": [{"chunk_id": 1, "quote_text": "invented quote"}]}
+    assert verify_citations(output, [{"chunk_id": 1, "text": "actual source"}]) == []
 
 
 def test_no_citations_when_not_found(

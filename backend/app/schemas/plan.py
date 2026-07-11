@@ -36,6 +36,11 @@ class GoalResponse(BaseModel):
     deadline: date
     daily_minutes: int
     status: str
+    target_type: Optional[str] = None
+    target_id: Optional[int] = None
+    execution_status: str = "pending"
+    verification_method: Optional[str] = None
+    auto_completed_at: Optional[datetime] = None
 
 
 class TaskResponse(BaseModel):
@@ -89,6 +94,7 @@ class PlanResponse(BaseModel):
     goal: GoalResponse
     tasks: List[TaskResponse]
     todos: List[TodoResponse]
+    unscheduled_tasks: List[dict] = []
 
 
 class PlanProgressResponse(BaseModel):
@@ -123,6 +129,18 @@ class TodoUpdate(BaseModel):
 
     status: Optional[str] = None
     actual_minutes: Optional[int] = Field(default=None, ge=0)
+
+
+class TaskUpdate(BaseModel):
+    """Payload for PATCH /plans/tasks/{task_id}. All fields optional."""
+
+    status: Optional[str] = None
+
+
+class GoalUpdate(BaseModel):
+    """Payload for PATCH /plans/{goal_id}. All fields optional."""
+
+    status: Optional[str] = None
 
 
 class TodoListResponse(BaseModel):

@@ -38,7 +38,7 @@
 
 ## 字段约束
 - `schedule`：按日期升序排列。
-- `task_type`：`learn`/`review`/`practice`/`quiz` 之一。
+- `task_type`：`learn`/`review`/`quiz` 之一。
 - `priority`：1-5 整数。
 - `total_days`：排课总天数。
 - `total_minutes`：所有任务耗时合计。

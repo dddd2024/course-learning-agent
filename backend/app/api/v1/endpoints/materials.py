@@ -53,6 +53,13 @@ def _get_owned_course(db: Session, course_id: int, user_id: int) -> Course:
     return course
 
 
+def _material_response(material: Material) -> MaterialResponse:
+    """Serialize without leaking the storage-relative file path."""
+    data = MaterialResponse.model_validate(material).model_dump()
+    data["file_url"] = f"/api/v1/materials/{material.id}/file"
+    return MaterialResponse(**data)
+
+
 def _recover_timed_out_materials(db: Session, user_id: int) -> None:
     """Flip processing materials past the timeout to ``failed`` + error_log.
 
@@ -224,7 +231,7 @@ async def upload_material(
     db.commit()
     db.refresh(material)
 
-    return MaterialResponse.model_validate(material)
+    return _material_response(material)
 
 
 @router.get(
@@ -261,6 +268,6 @@ def list_materials(
 
     items = query.order_by(Material.id.desc()).all()
     return MaterialListResponse(
-        items=[MaterialResponse.model_validate(m) for m in items],
+        items=[_material_response(m) for m in items],
         total=len(items),
     )

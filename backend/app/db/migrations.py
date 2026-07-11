@@ -53,6 +53,74 @@ _MATERIAL_PARSE_COLUMNS = {
     "last_parse_error": "TEXT",
 }
 
+_FIRST_ROUND_COLUMNS = {
+    "materials": {"active_version_id": "INTEGER"},
+    "material_chunks": {
+        "material_version_id": "INTEGER",
+        "stable_key": "VARCHAR(128)",
+        "content_hash": "VARCHAR(64)",
+        "is_active": "INTEGER DEFAULT 1 NOT NULL",
+        "char_count": "INTEGER",
+        "estimated_token_count": "INTEGER",
+    },
+    "knowledge_points": {
+        "stable_key": "VARCHAR(320)",
+        "title_normalized": "VARCHAR(255)",
+        "status": "VARCHAR(20) DEFAULT 'active' NOT NULL",
+        "source_version_ids": "TEXT DEFAULT '[]'",
+    },
+    "quiz_items": {
+        "difficulty": "INTEGER",
+        "source_evidence_ids": "TEXT DEFAULT '[]'",
+        "evidence_snapshot": "TEXT",
+        "rubric_json": "TEXT DEFAULT '[]'",
+    },
+    "weak_points": {
+        "correct_count": "INTEGER DEFAULT 0 NOT NULL",
+        "consecutive_correct": "INTEGER DEFAULT 0 NOT NULL",
+        "last_practiced_at": "DATETIME",
+        "mastery_score": "INTEGER DEFAULT 0 NOT NULL",
+        "status": "VARCHAR(20) DEFAULT 'active' NOT NULL",
+        "resolved_at": "DATETIME",
+    },
+    "study_tasks": {
+        "target_type": "VARCHAR(30)",
+        "target_id": "INTEGER",
+        "execution_status": "VARCHAR(30) DEFAULT 'pending' NOT NULL",
+        "verification_method": "VARCHAR(50)",
+        "auto_completed_at": "DATETIME",
+    },
+    "material_images": {
+        "is_decorative": "INTEGER DEFAULT 0 NOT NULL",
+        "decorative_reason": "VARCHAR(255)",
+        "perceptual_hash": "VARCHAR(64)",
+    },
+    "agent_runs": {
+        "requested_provider": "VARCHAR(50)",
+        "requested_model": "VARCHAR(100)",
+        "actual_provider": "VARCHAR(50)",
+        "actual_model": "VARCHAR(100)",
+        "fallback_used": "INTEGER DEFAULT 0 NOT NULL",
+        "fallback_reason": "TEXT",
+        "evidence_status": "VARCHAR(30)",
+    },
+}
+
+
+def ensure_first_round_columns(engine: Engine) -> None:
+    """Idempotently add first-round compatibility columns to SQLite DBs."""
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    with engine.begin() as conn:
+        for table, columns in _FIRST_ROUND_COLUMNS.items():
+            if table not in tables:
+                continue
+            existing = {c["name"] for c in insp.get_columns(table)}
+            for col, ddl in columns.items():
+                if col not in existing:
+                    logger.info("adding column %s to %s", col, table)
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
+
 
 def ensure_material_parse_columns(engine: Engine) -> None:
     """Add parse-tracking columns to ``materials`` if missing (legacy dev DBs).

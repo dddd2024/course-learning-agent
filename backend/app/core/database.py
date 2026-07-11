@@ -27,6 +27,9 @@ if settings.DATABASE_URL.startswith("sqlite"):
     @event.listens_for(engine, "connect")
     def _set_sqlite_pragma(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
+        # SQLite disables referential integrity by default for every new
+        # connection.  Enable it before any request can mutate data.
+        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA busy_timeout=30000")  # 30s
         cursor.close()

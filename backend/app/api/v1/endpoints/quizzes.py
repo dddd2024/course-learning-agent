@@ -24,6 +24,7 @@ leaked.
 """
 import json
 import logging
+import re
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
@@ -37,6 +38,7 @@ from app.core.exceptions import BusinessException, NotFoundException
 from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
 from app.models.quiz import Quiz, QuizItem, WeakPoint
+from app.models.plan import StudyTask, Todo
 from app.models.user import User
 from app.schemas.quiz import (
     QuizCreate,
@@ -103,24 +105,74 @@ def _quiz_to_response(quiz: Quiz) -> QuizOut:
     )
 
 
-def _grade_item(item: QuizItem, user_answer: str) -> bool:
-    """Grade a single item.
+def _normalise_option_answer(value) -> str:
+    if isinstance(value, list):
+        return ",".join(sorted({_normalise_option_answer(v) for v in value if _normalise_option_answer(v)}))
+    text = str(value or "").strip().upper()
+    return text[0] if text and text[0].isalpha() else text
 
-    - ``choice`` / ``true_false``: case-insensitive exact match on the
-      option letter.
-    - ``short_answer``: case-insensitive contains match (the reference
-      answer must appear in the user's answer).
-    """
+
+def _legacy_rubric(answer: str) -> list[dict]:
+    """Build an explainable fallback rubric for quizzes created before this feature."""
+    terms = list(dict.fromkeys(
+        term.lower()
+        for term in re.findall(r"[A-Za-z]{2,}|[\u4e00-\u9fff]{2,}", answer)
+    ))[:8]
+    return [{"criterion": f"说明“{term}”", "keywords": [term]} for term in terms]
+
+
+def _short_answer_feedback(item: QuizItem, user_answer) -> tuple[bool, list[dict], bool]:
+    """Return deterministic scoring details for a short answer."""
+    try:
+        rubric = json.loads(item.rubric_json or "[]")
+    except (TypeError, json.JSONDecodeError):
+        rubric = []
+    if not isinstance(rubric, list) or not rubric:
+        rubric = _legacy_rubric(item.answer or "")
+    text = str(user_answer or "").strip().lower()
+    feedback: list[dict] = []
+    for criterion in rubric:
+        if not isinstance(criterion, dict):
+            continue
+        keywords = [str(value).strip().lower() for value in criterion.get("keywords", []) if str(value).strip()]
+        if not keywords:
+            continue
+        met = any(keyword in text for keyword in keywords)
+        feedback.append({
+            "criterion": str(criterion.get("criterion") or "关键要点"),
+            "met": met,
+            "keywords": keywords,
+            "message": "已覆盖该要点" if met else "尚未说明该要点",
+        })
+    if not feedback:
+        return False, [], True
+    ratio = sum(entry["met"] for entry in feedback) / len(feedback)
+    return ratio >= 0.5, feedback, 0.4 <= ratio < 0.6
+
+
+def _grade_item_details(item: QuizItem, user_answer) -> tuple[bool, list[dict], bool]:
+    """Grade an item and return (correct, feedback, needs_human_review)."""
     answer = (item.answer or "").strip()
-    user_answer = (user_answer or "").strip()
+    user_answer = _normalise_option_answer(user_answer) if item.question_type in ("choice", "multiple_choice", "true_false") else str(user_answer or "").strip()
     if not user_answer:
-        return False
+        return False, [], item.question_type == "short_answer"
     if item.question_type in ("choice", "true_false"):
-        return user_answer.upper() == answer.upper()
+        return user_answer == _normalise_option_answer(answer), [], False
+    if item.question_type == "multiple_choice":
+        try:
+            correct = json.loads(answer) if answer.startswith("[") else answer.split(",")
+        except json.JSONDecodeError:
+            correct = answer.split(",")
+        return set(filter(None, user_answer.split(","))) == set(filter(None, _normalise_option_answer(correct).split(","))), [], False
     if item.question_type == "short_answer":
-        return answer.lower() in user_answer.lower()
+        return _short_answer_feedback(item, user_answer)
     # Unknown type: fall back to exact match.
-    return user_answer == answer
+    return user_answer == answer, [], False
+
+
+def _grade_item(item: QuizItem, user_answer) -> bool:
+    """Compatibility wrapper for callers that only need the score flag."""
+    return _grade_item_details(item, user_answer)[0]
 
 
 def _upsert_weak_point(
@@ -128,6 +180,7 @@ def _upsert_weak_point(
     user_id: int,
     course_id: int,
     knowledge_point_id: int,
+    correct: bool,
 ) -> None:
     """Insert or increment a ``WeakPoint`` row."""
     wp = (
@@ -145,13 +198,30 @@ def _upsert_weak_point(
             user_id=user_id,
             course_id=course_id,
             knowledge_point_id=knowledge_point_id,
-            wrong_count=1,
-            last_wrong_at=now,
+            wrong_count=0 if correct else 1,
+            correct_count=1 if correct else 0,
+            consecutive_correct=1 if correct else 0,
+            mastery_score=15 if correct else 0,
+            last_wrong_at=None if correct else now,
+            last_practiced_at=now,
+            status="improving" if correct else "active",
         )
         db.add(wp)
     else:
-        wp.wrong_count += 1
-        wp.last_wrong_at = now
+        wp.last_practiced_at = now
+        if correct:
+            wp.correct_count += 1
+            wp.consecutive_correct += 1
+            wp.mastery_score = min(100, wp.mastery_score + 20)
+            if wp.consecutive_correct >= 3 and wp.mastery_score >= 70:
+                wp.status, wp.resolved_at = "resolved", now
+            else:
+                wp.status = "improving"
+        else:
+            wp.wrong_count += 1
+            wp.consecutive_correct = 0
+            wp.mastery_score = max(0, wp.mastery_score - 25)
+            wp.status, wp.resolved_at, wp.last_wrong_at = "active", None, now
     db.flush()
 
 
@@ -224,6 +294,10 @@ def create_quiz(
             ),
             answer=item_data.get("answer", ""),
             explanation=item_data.get("explanation", ""),
+            difficulty=item_data.get("difficulty"),
+            source_evidence_ids=json.dumps(item_data.get("source_evidence_ids", [])),
+            evidence_snapshot=json.dumps(item_data.get("source_evidence_ids", [])),
+            rubric_json=json.dumps(item_data.get("rubric", []), ensure_ascii=False),
             order_index=item_data.get("order_index", 0),
         )
         db.add(item)
@@ -270,8 +344,10 @@ def get_quiz_result(
     if quiz.status != "submitted":
         raise BusinessException(message="该测验尚未提交，暂无结果")
 
-    items = [
-        QuizResultItemOut(
+    items = []
+    for item in sorted(quiz.items, key=lambda i: i.order_index):
+        _, rubric_feedback, needs_review = _grade_item_details(item, item.user_answer)
+        items.append(QuizResultItemOut(
             id=item.id,
             question_type=item.question_type,
             question_text=item.question_text,
@@ -281,9 +357,9 @@ def get_quiz_result(
             is_correct=item.is_correct,
             explanation=item.explanation,
             knowledge_point_id=item.knowledge_point_id,
-        )
-        for item in sorted(quiz.items, key=lambda i: i.order_index)
-    ]
+            rubric_feedback=rubric_feedback,
+            needs_review=needs_review,
+        ))
     return QuizResultOut(
         id=quiz.id,
         score=quiz.score or 0,
@@ -325,7 +401,7 @@ def submit_quiz(
 
     # Index items by id for O(1) lookup.
     items_by_id: dict[int, QuizItem] = {item.id: item for item in quiz.items}
-    answer_map: dict[int, str] = {
+    answer_map: dict[int, str | list[str]] = {
         a.item_id: a.user_answer for a in payload.answers
     }
 
@@ -351,22 +427,23 @@ def submit_quiz(
 
     score = 0
     result_items: list[QuizResultItemOut] = []
+    practiced: dict[int, bool] = {}
     for item in sorted(quiz.items, key=lambda i: i.order_index):
         user_answer = answer_map.get(item.id, "")
-        is_correct = _grade_item(item, user_answer) if user_answer else False
-        item.user_answer = user_answer
+        is_correct, rubric_feedback, needs_review = _grade_item_details(item, user_answer)
+        item.user_answer = json.dumps(user_answer, ensure_ascii=False) if isinstance(user_answer, list) else user_answer
         item.is_correct = 1 if is_correct else 0
         if is_correct:
             score += 1
         else:
-            # Record a weak point for the item's knowledge point (if any).
+            # Record each knowledge point once per submitted quiz. A generated
+            # quiz may contain multiple questions for the same point; counting
+            # each duplicate made severity depend on generator composition
+            # instead of the learner's number of failed review attempts.
             if item.knowledge_point_id is not None:
-                _upsert_weak_point(
-                    db,
-                    user_id=current_user.id,
-                    course_id=quiz.course_id,
-                    knowledge_point_id=item.knowledge_point_id,
-                )
+                practiced[item.knowledge_point_id] = False
+        if is_correct and item.knowledge_point_id is not None and item.knowledge_point_id not in practiced:
+            practiced[item.knowledge_point_id] = True
         result_items.append(
             QuizResultItemOut(
                 id=item.id,
@@ -378,11 +455,45 @@ def submit_quiz(
                 is_correct=item.is_correct,
                 explanation=item.explanation,
                 knowledge_point_id=item.knowledge_point_id,
+                rubric_feedback=rubric_feedback,
+                needs_review=needs_review,
             )
+        )
+
+    for knowledge_point_id, correct in practiced.items():
+        if correct and not db.query(WeakPoint.id).filter(
+            WeakPoint.user_id == current_user.id,
+            WeakPoint.course_id == quiz.course_id,
+            WeakPoint.knowledge_point_id == knowledge_point_id,
+        ).first():
+            continue
+        _upsert_weak_point(
+            db,
+            user_id=current_user.id,
+            course_id=quiz.course_id,
+            knowledge_point_id=knowledge_point_id,
+            correct=correct,
         )
 
     quiz.score = score
     quiz.status = "submitted"
+
+    # A quiz task is objectively complete only after a submitted score meets
+    # its threshold. Bind the first pending quiz task to this real quiz.
+    if items_by_id and score / len(items_by_id) >= 0.8:
+        task = db.query(StudyTask).filter(
+            StudyTask.course_id == quiz.course_id,
+            StudyTask.task_type == "quiz",
+            StudyTask.status == "pending",
+        ).order_by(StudyTask.id.asc()).first()
+        if task is not None:
+            now = datetime.now()
+            task.target_type, task.target_id = "quiz", quiz.id
+            task.status, task.execution_status = "done", "completed"
+            task.verification_method, task.auto_completed_at = "quiz_score", now
+            db.query(Todo).filter(Todo.task_id == task.id).update(
+                {Todo.status: "completed", Todo.completed_at: now}, synchronize_session=False
+            )
 
     db.commit()
     db.refresh(quiz)
@@ -420,9 +531,12 @@ def list_weak_points(
     """List the current user's weak points for a course."""
     _get_owned_course(db, course_id, current_user.id)
 
+    # Use an inner join (not outerjoin) so WeakPoint rows whose
+    # KnowledgePoint has been deleted (e.g. when points are regenerated)
+    # are filtered out instead of returning an empty title.
     rows = (
         db.query(WeakPoint, KnowledgePoint)
-        .outerjoin(
+        .join(
             KnowledgePoint,
             KnowledgePoint.id == WeakPoint.knowledge_point_id,
         )
@@ -441,6 +555,10 @@ def list_weak_points(
             knowledge_point_title=kp.title if kp is not None else "",
             wrong_count=wp.wrong_count,
             last_wrong_at=wp.last_wrong_at,
+            correct_count=wp.correct_count,
+            consecutive_correct=wp.consecutive_correct,
+            mastery_score=wp.mastery_score,
+            status=wp.status,
         )
         for wp, kp in rows
     ]

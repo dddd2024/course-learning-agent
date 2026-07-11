@@ -12,6 +12,7 @@ from app.core.database import get_db
 from app.core.exceptions import NotFoundException
 from app.models.course import Course
 from app.models.user import User
+from app.services.course_delete_service import delete_course as delete_course_data
 from app.schemas.course import (
     CourseCreate,
     CourseListResponse,
@@ -131,6 +132,5 @@ def delete_course(
 ) -> Response:
     """Delete a course owned by the current user (404 otherwise)."""
     course = _get_owned_course(db, course_id, current_user.id)
-    db.delete(course)
-    db.commit()
+    delete_course_data(db, course)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

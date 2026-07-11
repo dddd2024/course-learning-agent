@@ -260,6 +260,10 @@ async function handleSubmit() {
 }
 
 async function handleEnable(row: LLMConfig) {
+  if (row.last_test_status !== 'success') {
+    ElMessage.warning('请先测试连接；只有验证成功的配置才能启用')
+    return
+  }
   try {
     await enableConfig(row.id)
     ElMessage.success(`已启用「${row.name}」`)
@@ -510,11 +514,11 @@ onMounted(() => {
           <template #default="{ row }">
             <el-button
               size="small"
-              type="success"
+              :type="row.last_test_status === 'success' ? 'success' : 'info'"
               :disabled="row.enabled"
               @click="handleEnable(row)"
             >
-              启用
+              {{ row.last_test_status === 'success' ? '启用' : '先测试' }}
             </el-button>
             <el-button
               size="small"

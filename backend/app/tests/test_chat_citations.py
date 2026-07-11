@@ -24,19 +24,20 @@ TLB_TEXT = (
 def _make_duplicate_citations(ranked):
     """Build an answer_question result with two citations sharing chunk_id."""
     top = ranked[0] if ranked else {"chunk_id": 1}
+    quote = (top.get("text") or "")[:20]
     return {
         "answer": "快表是页表的高速缓存。",
         "key_points": ["加速地址转换"],
         "citations": [
             {
                 "chunk_id": top["chunk_id"],
-                "quote_text": "第一处引用文本",
+                "quote_text": quote,
                 "reason": "原因 A",
                 "confidence": 0.8,
             },
             {
                 "chunk_id": top["chunk_id"],
-                "quote_text": "第二处引用文本（重复 chunk）",
+                "quote_text": quote,
                 "reason": "原因 B",
                 "confidence": 0.6,
             },
@@ -70,7 +71,7 @@ def test_chat_deduplicates_citations_with_same_chunk_id(
 
     captured = {}
 
-    def fake_answer(db, course_id, question, ranked, course_name, user_config=None):
+    def fake_answer(db, course_id, question, ranked, course_name, user_config=None, **kwargs):
         captured["ranked"] = ranked
         return _make_duplicate_citations(ranked)
 

@@ -29,8 +29,9 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.agents.audit import AgentAudit
-from app.agents.llm import call_llm
+from app.agents.llm import call_llm_with_meta
 from app.agents.prompt_loader import load_prompt
+from app.core.config import settings
 from app.models.knowledge_point import KnowledgePoint
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ _REQUIRED_QUESTION_FIELDS = (
 # Map the LLM's question_type values to the persisted enum.
 _TYPE_MAP = {
     "single_choice": "choice",
-    "multiple_choice": "choice",
+    "multiple_choice": "multiple_choice",
     "choice": "choice",
     "true_false": "true_false",
     "short_answer": "short_answer",
@@ -77,21 +78,35 @@ def _normalise_question_type(raw: str) -> str:
     return _TYPE_MAP.get(raw, raw)
 
 
-def _prefix_options(options: list[str]) -> list[str]:
+def _normalise_rubric(raw: Any) -> list[dict[str, Any]]:
+    """Keep only machine-checkable criteria supplied for short answers."""
+    if not isinstance(raw, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for criterion in raw[:6]:
+        if not isinstance(criterion, dict):
+            continue
+        keywords = [str(value).strip() for value in criterion.get("keywords", []) if str(value).strip()]
+        if keywords:
+            result.append({"criterion": str(criterion.get("criterion") or "关键要点"), "keywords": keywords[:5]})
+    return result
+
+
+def _prefix_options(options: list[str]) -> list[dict[str, str]]:
     """Add ``A. `` / ``B. `` prefixes to options if not already present."""
     if not options:
         return []
     letters = "ABCDEFGH"
-    result = []
+    result: list[dict[str, str]] = []
     for i, opt in enumerate(options):
         if not isinstance(opt, str):
             opt = str(opt)
         # Skip prefixing if the option already looks prefixed.
         if len(opt) >= 2 and opt[1] == "." and opt[0].isalpha():
-            result.append(opt)
+            result.append({"label": opt[0].upper(), "text": opt[2:].strip(), "value": opt[0].upper()})
             continue
         prefix = letters[i] if i < len(letters) else str(i)
-        result.append(f"{prefix}. {opt}")
+        result.append({"label": prefix, "text": opt, "value": prefix})
     return result
 
 
@@ -187,13 +202,20 @@ def generate_quiz(
     prompt = template.format(
         course_name=course_name,
         question_count=question_count,
-        retrieved_chunks="（由知识点摘要出题）",
+        retrieved_chunks=_format_evidence(db, knowledge_points),
         knowledge_points=_format_knowledge_points(knowledge_points),
         question_types=_format_question_types(),
     )
 
     run_started_at = time.monotonic()
     run_id: int | None = None
+    # Determine provider/model_name before LLM call (best guess).
+    if user_config:
+        _provider = "user"
+        _model = user_config.get("model", "")
+    else:
+        _provider = "real" if settings.LLM_PROVIDER == "real" else "mock"
+        _model = settings.LLM_MODEL
     try:
         run = AgentAudit.create_run(
             db,
@@ -206,7 +228,8 @@ def generate_quiz(
                 "question_count": question_count,
             },
             prompt_version=_PROMPT_VERSION,
-            model_name="mock",
+            model_name=_model,
+            provider=_provider,
         )
         run_id = run.id
     except Exception as exc:  # pragma: no cover - audit must not break flow
@@ -214,10 +237,17 @@ def generate_quiz(
 
     generate_started = time.monotonic()
     try:
-        output = call_llm(
+        output, meta = call_llm_with_meta(
             prompt,
             agent_type="quiz_generate",
             user_config=user_config,
+        )
+        # Update audit run with actual provider/model_name from meta
+        AgentAudit.update_run_meta(
+            db, run_id,
+            model_name=meta.get("model_name"),
+            provider=meta.get("provider"),
+            meta=meta,
         )
         _validate_schema(output)
     except Exception:
@@ -250,7 +280,12 @@ def generate_quiz(
                 "question_text": q.get("stem", ""),
                 "options": _prefix_options(q.get("options", [])),
                 "answer": str(q.get("answer", "")),
+                "rubric": _normalise_rubric(q.get("rubric")),
                 "explanation": q.get("explanation", ""),
+                "difficulty": q.get("difficulty"),
+                "source_evidence_ids": _valid_evidence_ids(
+                    db, course_id, q.get("source_chunk_ids", []), knowledge_points
+                ),
                 "knowledge_point_id": _map_knowledge_point_id(
                     q.get("knowledge_point_ids", []), i, knowledge_points
                 ),
@@ -281,6 +316,41 @@ def generate_quiz(
         "title": title,
         "items": items,
     }
+
+
+def _valid_evidence_ids(db: Session, course_id: int, raw_ids: list, points: list[KnowledgePoint]) -> list[int]:
+    """Accept only active chunks in this course, never model-invented IDs."""
+    import json
+    from app.models.material_chunk import MaterialChunk
+    valid = {r[0] for r in db.query(MaterialChunk.id).filter(
+        MaterialChunk.course_id == course_id, MaterialChunk.is_active == 1
+    )}
+    selected = [int(x) for x in raw_ids if str(x).isdigit() and int(x) in valid]
+    if selected:
+        return selected[:5]
+    for point in points:
+        try:
+            selected = [int(x) for x in json.loads(point.source_chunk_ids or "[]") if int(x) in valid]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if selected:
+            return selected[:5]
+    return []
+
+
+def _format_evidence(db: Session, points: list[KnowledgePoint]) -> str:
+    import json
+    from app.models.material_chunk import MaterialChunk
+    ids: list[int] = []
+    for point in points:
+        try:
+            ids.extend(int(x) for x in json.loads(point.source_chunk_ids or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+    rows = db.query(MaterialChunk).filter(
+        MaterialChunk.id.in_(ids), MaterialChunk.is_active == 1
+    ).limit(20).all() if ids else []
+    return "\n".join(f"[evidence_id={r.id} page={r.page_no}] {r.text[:500]}" for r in rows)
 
 
 def _safe_add_step(

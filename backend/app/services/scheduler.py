@@ -100,4 +100,27 @@ def schedule_tasks(
     return scheduled
 
 
-__all__ = ["schedule_tasks"]
+def schedule_tasks_with_conflicts(
+    tasks: list[dict[str, Any]], start_date: date, deadline: date, daily_minutes: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Schedule only feasible tasks and return structured unscheduled work."""
+    days = [start_date + timedelta(days=i) for i in range(max(0, (deadline - start_date).days) + 1)] or [start_date]
+    remaining = {day: daily_minutes for day in days}
+    scheduled, unscheduled = [], []
+    for index, task in sorted(enumerate(tasks), key=lambda pair: -int(pair[1].get("priority", 0) or 0)):
+        estimate = int(task.get("estimate_minutes", 0) or 0)
+        chosen = next((day for day in days if remaining[day] >= estimate), None)
+        if chosen is None:
+            unscheduled.append({
+                "task_index": index, "title": task.get("title", ""),
+                "estimate_minutes": estimate, "remaining_budget": max(remaining.values(), default=0),
+                "deadline": deadline, "reason": "daily_budget_exceeded",
+                "suggestion": "提高每日学习时长或延长截止日期",
+            })
+            continue
+        remaining[chosen] -= estimate
+        scheduled.append({"task_index": index, "scheduled_date": chosen, "estimate_minutes": estimate, "title": task.get("title", ""), "course_name": task.get("course_name", "")})
+    return sorted(scheduled, key=lambda row: (row["scheduled_date"], row["task_index"])), unscheduled
+
+
+__all__ = ["schedule_tasks", "schedule_tasks_with_conflicts"]

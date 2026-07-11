@@ -15,6 +15,9 @@ import io
 from app.main import app
 from app.tests.conftest import auth_headers, create_course, upload_material
 
+# Diverse OS text that passes _is_low_quality_chunk filter
+from app.tests._test_data import DIVERSE_OS_TEXT
+
 
 def test_upload_material_success(client, tmp_path, monkeypatch) -> None:
     """POST /api/v1/courses/{id}/materials returns 201 with metadata."""
@@ -204,7 +207,7 @@ def test_delete_material_clears_chunks(client, tmp_path, monkeypatch) -> None:
         headers,
         course_id,
         "notes.txt",
-        ("操作系统是管理硬件资源的系统软件。" * 30).encode("utf-8"),
+        (DIVERSE_OS_TEXT * 2).encode("utf-8"),
     )
     # Parse so chunks exist (background task, returns processing).
     parse_resp = client.post(
@@ -245,13 +248,9 @@ def test_delete_material_missing_disk_file_still_succeeds(
         client, headers, course_id, "notes.txt", b"content"
     )
 
-    # Read the stored relative path from the API (no direct DB access) and
-    # remove the file from disk before deleting the record.
-    list_resp = client.get(
-        f"/api/v1/courses/{course_id}/materials", headers=headers
-    )
-    mat = next(m for m in list_resp.json()["items"] if m["id"] == material_id)
-    disk_path = tmp_path / mat["file_path"]
+    # The API intentionally does not disclose storage paths.  Test the
+    # missing-file condition using the deterministic server-side layout.
+    disk_path = tmp_path / "1" / str(course_id) / str(material_id) / "original.txt"
     disk_path.unlink(missing_ok=True)
 
     resp = client.delete(

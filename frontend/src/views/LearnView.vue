@@ -171,6 +171,14 @@
                 <span v-if="chunk.title" class="doc-chunk-title">
                   {{ chunk.title }}
                 </span>
+                <span
+                  v-if="chunk.quality_score !== null && chunk.quality_score !== undefined"
+                  class="quality-badge"
+                  :class="getQualityClass(chunk.quality_score)"
+                  :title="chunk.quality_reason || ''"
+                >
+                  AI 质量 {{ Math.round(chunk.quality_score * 100) }}%
+                </span>
               </div>
               <div
                 class="doc-chunk-text"
@@ -183,8 +191,8 @@
                   class="doc-chunk-image-item"
                 >
                   <el-image
-                    :src="`${UPLOAD_BASE_URL}/${img.image_path}`"
-                    :preview-src-list="[`${UPLOAD_BASE_URL}/${img.image_path}`]"
+                    :src="imageUrls[img.id] || ''"
+                    :preview-src-list="imageUrls[img.id] ? [imageUrls[img.id]] : []"
                     :alt="`${materials.find((m) => m.id === selectedMaterialId)?.filename || '课程资料'}第 ${chunk.page_no || '?'} 页插图`"
                     fit="contain"
                     style="max-width: 100%; max-height: 400px; border-radius: 6px;"
@@ -311,7 +319,7 @@ import {
 import { listKnowledgePoints } from '../api/knowledge'
 import { parseApiError } from '../utils/error'
 import { renderMarkdown } from '../utils/markdown'
-import { UPLOAD_BASE_URL } from '../config/api'
+import request from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -322,6 +330,7 @@ const materials = ref<Material[]>([])
 const selectedMaterialId = ref<number | null>(null)
 const rawChunks = ref<Chunk[]>([])
 const chunks = ref<Chunk[]>([])
+const imageUrls = ref<Record<number, string>>({})
 const docLoading = ref(false)
 const filteredCount = ref(0)
 const mobilePane = ref<'toc' | 'content' | 'assistant'>('content')
@@ -413,6 +422,32 @@ function isUsefulChunk(chunk: Chunk): boolean {
     return false
   }
 
+  // Check for high line repetition (diagram text)
+  const uniqueLines = new Set(lines.map(l => l.trim().toLowerCase()))
+  if (lines.length > 3 && uniqueLines.size / lines.length < 0.5) {
+    return false
+  }
+
+  // Check for short-line stacking (diagram labels)
+  const shortLines = lines.filter(l => l.trim().length < 4).length
+  if (lines.length > 3 && shortLines / lines.length > 0.6) {
+    return false
+  }
+
+  // Check for vocabulary diversity
+  const cjkChars = text.match(/[\u4e00-\u9fff\w]/g)
+  if (cjkChars && cjkChars.length > 50) {
+    const uniqueChars = new Set(cjkChars)
+    if (uniqueChars.size / cjkChars.length < 0.3) {
+      return false
+    }
+  }
+
+  // AI quality score filter - chunks with quality_score < 0.3 are filtered
+  if (chunk.quality_score !== null && chunk.quality_score !== undefined) {
+    if (chunk.quality_score < 0.3) return false
+  }
+
   return true
 }
 
@@ -448,6 +483,12 @@ function getChunkLabel(chunk: Chunk): string {
   }
   if (chunk.page_no) return `第${chunk.page_no}页`
   return '片段'
+}
+
+function getQualityClass(score: number): string {
+  if (score >= 0.7) return 'quality-high'
+  if (score >= 0.4) return 'quality-medium'
+  return 'quality-low'
 }
 
 // --- Term highlighting ---
@@ -676,6 +717,7 @@ async function loadChunks() {
       rawChunks.value = materialChunks
       chunks.value = filterUsefulChunks(materialChunks)
     }
+    await preloadImages(chunks.value)
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取资料内容失败'))
   } finally {
@@ -694,6 +736,15 @@ function askAboutSelection() {
   if (!selectedText.value) return
   inputQuestion.value = `请解释这段内容：\n"${selectedText.value}"`
   askQuestion()
+}
+
+async function preloadImages(source: Chunk[]) {
+  const images = source.flatMap((chunk) => chunk.images || [])
+  await Promise.all(images.map(async (image) => {
+    if (!image.file_url || imageUrls.value[image.id]) return
+    const { data } = await request.get(image.file_url, { responseType: 'blob' })
+    imageUrls.value[image.id] = URL.createObjectURL(data)
+  }))
 }
 
 function askAboutKnowledgePoint() {
@@ -1074,6 +1125,34 @@ function goBack() {
   font-size: 14px;
   font-weight: 600;
   color: #303133;
+}
+
+.quality-badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+  cursor: help;
+}
+
+.quality-high {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border: 1px solid #a5d6a7;
+}
+
+.quality-medium {
+  background: #fff3e0;
+  color: #e65100;
+  border: 1px solid #ffcc80;
+}
+
+.quality-low {
+  background: #ffebee;
+  color: #c62828;
+  border: 1px solid #ef9a9a;
 }
 
 .doc-chunk-text {
