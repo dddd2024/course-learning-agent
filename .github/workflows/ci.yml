@@ -291,20 +291,17 @@ jobs:
         run: |
           echo "Validating verification-result.json is a proper JSON report..."
           if [ -f artifacts/verification-result.json ]; then
-            # The file must be valid JSON with checks array
-            python -c "
+          # The file must be a passed V4 report with one real result per check.
+          python -c "
           import json, sys
           with open('artifacts/verification-result.json') as f:
               data = json.load(f)
-          assert 'checks' in data, 'Missing checks array in verification result'
-          assert 'total_checks' in data, 'Missing total_checks field'
-          assert data['total_checks'] > 0, 'No checks were run'
-          failed = [c for c in data['checks'] if c.get('status') == 'fail']
-          if failed:
-              print(f'FAILED checks: {len(failed)}')
-              for c in failed:
-                  print(f'  - {c[\"check\"]}: {c[\"message\"]}')
-              sys.exit(1)
+          assert data['version'] == 'v4', 'Unexpected verification version'
+          assert isinstance(data['results'], list), 'results must be a list'
+          assert isinstance(data['checks'], list), 'checks must be a list'
+          assert data['total_checks'] == len(data['checks']), 'check count mismatch'
+          assert data['passed'] is True, 'acceptance report is not passed'
+          assert all(item['status'] == 'pass' for item in data['checks']), 'a check failed'
           print(f'All {data[\"total_checks\"]} checks passed')
           "
           else
