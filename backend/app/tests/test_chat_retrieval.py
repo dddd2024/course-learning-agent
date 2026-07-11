@@ -70,6 +70,23 @@ def _get_chunk_ids(course_id: int, limit: int = 3) -> list[int]:
         db.close()
 
 
+def _get_chunk_quotes(course_id: int, limit: int = 2) -> list[tuple[int, str]]:
+    """Return real, non-empty source snippets paired with their chunk ids."""
+    db_generator = app.dependency_overrides[get_db]()
+    db: Session = next(db_generator)
+    try:
+        chunks = (
+            db.query(MaterialChunk)
+            .filter(MaterialChunk.course_id == course_id)
+            .order_by(MaterialChunk.chunk_index.asc())
+            .limit(limit)
+            .all()
+        )
+        return [(chunk.id, (chunk.text or "")[:20]) for chunk in chunks]
+    finally:
+        db.close()
+
+
 def test_chat_response_includes_retrieved_chunks(
     client, tmp_path, monkeypatch
 ) -> None:
@@ -148,8 +165,8 @@ def test_reliability_level_high(client, tmp_path, monkeypatch) -> None:
 
     headers = auth_headers(client, username="alice")
     course_id, conv_id = _setup_chat(client, headers)
-    chunk_ids = _get_chunk_ids(course_id, limit=2)
-    assert len(chunk_ids) >= 2, "test requires at least 2 chunks"
+    chunk_quotes = _get_chunk_quotes(course_id, limit=2)
+    assert len(chunk_quotes) >= 2, "test requires at least 2 chunks"
 
     def mock_call_llm(prompt, agent_type, schema=None, user_config=None):
         return {
@@ -157,14 +174,14 @@ def test_reliability_level_high(client, tmp_path, monkeypatch) -> None:
             "key_points": ["加速地址转换"],
             "citations": [
                 {
-                    "chunk_id": chunk_ids[0],
-                    "quote_text": "快表 TLB 是页表的高速缓存",
+                    "chunk_id": chunk_quotes[0][0],
+                    "quote_text": chunk_quotes[0][1],
                     "reason": "直接定义",
                     "confidence": 0.9,
                 },
                 {
-                    "chunk_id": chunk_ids[1],
-                    "quote_text": "页表存储虚拟页到物理页的映射",
+                    "chunk_id": chunk_quotes[1][0],
+                    "quote_text": chunk_quotes[1][1],
                     "reason": "补充背景",
                     "confidence": 0.7,
                 },
