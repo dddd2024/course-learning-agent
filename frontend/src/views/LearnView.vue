@@ -751,6 +751,8 @@ async function getAllMaterialChunks(
 
 async function loadChunks() {
   if (!selectedMaterialId.value) return
+  Object.values(imageUrls.value).forEach((url) => URL.revokeObjectURL(url))
+  imageUrls.value = {}
   docLoading.value = true
   chunks.value = []
   studyGuide.value = ''
@@ -779,14 +781,17 @@ async function loadChunks() {
       }
       selectedMaterialId.value = bestMaterialId
       rawChunks.value = allChunks
-      const filtered = filterUsefulChunks(allChunks).filter((c: Chunk) =>
+      const filtered = allChunks.filter((c: Chunk) =>
         kpSourceChunkIds.value.has(c.id),
       )
       chunks.value = filtered
     } else {
       const materialChunks = await getAllMaterialChunks(selectedMaterialId.value)
       rawChunks.value = materialChunks
-      chunks.value = filterUsefulChunks(materialChunks)
+      // The backend is the single source of truth for cleaned/displayable
+      // content; do not hide a valid citation with a second UI heuristic.
+      filteredCount.value = 0
+      chunks.value = materialChunks
     }
     await preloadImages(chunks.value)
   } catch (err) {
@@ -811,12 +816,14 @@ function askAboutSelection() {
 
 async function preloadImages(source: Chunk[]) {
   const images = source.flatMap((chunk) => chunk.images || [])
-  await Promise.all(images.map(async (image) => {
+  await Promise.allSettled(images.map(async (image) => {
     if (!image.file_url || imageUrls.value[image.id]) return
     const { data } = await request.get(image.file_url, { responseType: 'blob' })
     imageUrls.value[image.id] = URL.createObjectURL(data)
   }))
 }
+// Kept for diagnostic comparison only; rendering uses backend display state.
+void filterUsefulChunks
 
 function askAboutKnowledgePoint() {
   if (!kpTitle.value) return

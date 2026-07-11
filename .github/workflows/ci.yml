@@ -33,7 +33,9 @@ jobs:
           pip install -r backend/requirements.txt
 
       - name: Run pytest
+        shell: bash
         run: |
+          set -euo pipefail
           python -m pytest backend/app/tests -q 2>&1 | tee backend-test-result.txt
 
       - name: Upload backend test result
@@ -66,17 +68,23 @@ jobs:
           npm ci
 
       - name: Type check
+        shell: bash
         run: |
+          set -euo pipefail
           cd frontend
           npm run type-check 2>&1 | tee ../frontend-typecheck-result.txt
 
       - name: Run vitest
+        shell: bash
         run: |
+          set -euo pipefail
           cd frontend
           npm run test 2>&1 | tee ../frontend-test-result.txt
 
       - name: Build
+        shell: bash
         run: |
+          set -euo pipefail
           cd frontend
           npm run build 2>&1 | tee ../frontend-build-result.txt
 
@@ -115,17 +123,28 @@ jobs:
           pip install -r backend/requirements.txt
 
       - name: Initialize database
+        shell: bash
         run: |
-          cd backend
-          python -c "from app.core.database import engine; from app.models import *; from sqlalchemy import inspect; print('DB ready')"
+          set -euo pipefail
+          export DATABASE_URL="sqlite:///${RUNNER_TEMP}/migration-${GITHUB_RUN_ID}.db"
+          export PYTHONPATH="${GITHUB_WORKSPACE}/backend"
+          python -c "from app.models import Base; from app.core.database import engine; Base.metadata.create_all(engine); print('DB initialized')"
 
       - name: Run migration dry-run
+        shell: bash
         run: |
+          set -euo pipefail
+          export DATABASE_URL="sqlite:///${RUNNER_TEMP}/migration-${GITHUB_RUN_ID}.db"
+          export PYTHONPATH="${GITHUB_WORKSPACE}/backend"
           mkdir -p artifacts
           python scripts/migrate.py --dry-run --json artifacts/migration-dry-run.json 2>&1 | tee migration-dry-run-result.txt
 
       - name: Run migration smoke test
+        shell: bash
         run: |
+          set -euo pipefail
+          export DATABASE_URL="sqlite:///${RUNNER_TEMP}/migration-${GITHUB_RUN_ID}.db"
+          export PYTHONPATH="${GITHUB_WORKSPACE}/backend"
           python scripts/test_migration.py 2>&1 | tee migration-smoke-result.txt
 
       - name: Upload migration results
@@ -146,6 +165,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       LLM_PROVIDER: mock
+      DATABASE_URL: sqlite:///${{ runner.temp }}/e2e-${{ github.run_id }}.db
+      PYTHONPATH: ${{ github.workspace }}/backend
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -180,14 +201,36 @@ jobs:
           npx playwright install --with-deps chromium
 
       - name: Initialize database
+        shell: bash
         run: |
-          cd backend
-          python -c "from app.core.database import engine; from app.models import *; from sqlalchemy import inspect; print('DB ready')"
+          set -euo pipefail
+          python -c "from app.models import Base; from app.core.database import engine; Base.metadata.create_all(engine); print('DB initialized')"
 
       - name: Run E2E tests
+        shell: bash
         run: |
+          set -euo pipefail
           cd frontend
           npm run test:e2e 2>&1 | tee ../e2e-test-result.txt
+
+      - name: Verify Playwright machine-readable result
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = Path("frontend/playwright-results.json")
+          if not report.exists():
+              raise SystemExit("Playwright JSON report was not produced")
+          data = json.loads(report.read_text(encoding="utf-8"))
+          stats = data.get("stats", {})
+          failed = int(stats.get("unexpected", 0))
+          skipped = int(stats.get("skipped", 0))
+          if failed or skipped:
+              raise SystemExit(f"Playwright failed={failed}, skipped={skipped}")
+          print(f"Playwright passed={stats.get('expected', 0)}, failed=0, skipped=0")
+          PY
 
       - name: Upload E2E test artifacts
         if: always()
@@ -196,6 +239,7 @@ jobs:
           name: e2e-test-result
           path: |
             e2e-test-result.txt
+            frontend/playwright-results.json
             frontend/playwright-report/
             frontend/test-results/
 
@@ -260,24 +304,30 @@ jobs:
           name: e2e-test-result
           path: artifacts/e2e
 
-      - name: Run V4 functional closure verification
+      - name: Run V5 functional closure verification
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p artifacts
-          python scripts/verify_function_closure_v4.py
-          cp artifacts/verification/v4-baseline.json artifacts/verification-result.json
+          python scripts/verify_function_closure_v5.py --artifact-root artifacts --external-e2e artifacts/e2e/playwright-results.json
+          cp artifacts/verification/v5-acceptance.json artifacts/verification-result.json
 
       - name: Check for skipped tests
+        shell: bash
         run: |
+          set -euo pipefail
           echo "Checking for skipped tests..."
           # Check backend tests for skips
           if [ -f artifacts/backend/backend-test-result.txt ]; then
             SKIPPED=$(grep -i "skip" artifacts/backend/backend-test-result.txt | wc -l)
             echo "Backend skipped lines: $SKIPPED"
+            test "$SKIPPED" -eq 0
           fi
           # Check frontend tests for skips
           if [ -f artifacts/frontend/frontend-test-result.txt ]; then
             SKIPPED=$(grep -i "skip" artifacts/frontend/frontend-test-result.txt | wc -l)
             echo "Frontend skipped lines: $SKIPPED"
+            test "$SKIPPED" -eq 0
           fi
           # Check vitest output for "skipped" in summary
           if [ -f artifacts/frontend/frontend-test-result.txt ]; then
@@ -288,15 +338,17 @@ jobs:
           fi
 
       - name: Verify acceptance result is not just a static grep
+        shell: bash
         run: |
+          set -euo pipefail
           echo "Validating verification-result.json is a proper JSON report..."
           if [ -f artifacts/verification-result.json ]; then
-          # The file must be a passed V4 report with one real result per check.
+          # The file must be a passed V5 report with one real result per check.
           python -c "
           import json, sys
           with open('artifacts/verification-result.json') as f:
               data = json.load(f)
-          assert data['version'] == 'v4', 'Unexpected verification version'
+          assert data['version'] == 'v5', 'Unexpected verification version'
           assert isinstance(data['results'], list), 'results must be a list'
           assert isinstance(data['checks'], list), 'checks must be a list'
           assert data['total_checks'] == len(data['checks']), 'check count mismatch'

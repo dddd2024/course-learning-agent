@@ -32,6 +32,7 @@ from app.models.plan import StudyGoal, StudyTask, TaskExecutionEvent, Todo
 from app.models.quiz import Quiz, QuizItem
 from app.services.llm_config_service import build_user_config, get_active_config
 from app.services.task_target_resolver import ensure_target_spec
+from app.services.plan_state_service import recompute_goal
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ def _create_quiz_for_task(
     knowledge points, calls ``generate_quiz``, persists ``Quiz`` +
     ``QuizItem`` rows.
     """
+    spec = ensure_target_spec(db, task)
     course = (
         db.query(Course)
         .filter(Course.id == task.course_id, Course.user_id == user_id)
@@ -73,12 +75,15 @@ def _create_quiz_for_task(
     if course is None:
         raise NotFoundException(message="课程不存在")
 
+    target_ids = [int(value) for value in spec.get("knowledge_point_ids", []) if str(value).isdigit()]
     rows = (
         db.query(KnowledgePoint)
         .filter(
             KnowledgePoint.course_id == task.course_id,
             KnowledgePoint.user_id == user_id,
+            KnowledgePoint.status == "active",
         )
+        .filter(KnowledgePoint.id.in_(target_ids) if target_ids else True)
         .order_by(KnowledgePoint.id.asc())
         .all()
     )
@@ -95,7 +100,7 @@ def _create_quiz_for_task(
         course_id=task.course_id,
         knowledge_points=rows,
         course_name=course.name,
-        question_count=5,
+        question_count=max(1, int(spec.get("question_count", 5))),
         user_config=user_config,
     )
 
@@ -189,11 +194,9 @@ def start_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
     elif task.task_type == "learn":
         if task.target_type != "material" or task.target_id is None:
             raise BusinessException(message=spec.get("remediation", "学习任务缺少可用资料"), status_code=422)
-        _record_event(db, task, user_id, "material_opened", {"material_id": task.target_id, "material_version_id": spec.get("material_version_id")})
     elif task.task_type == "review":
         if task.target_type != "knowledge_point" or task.target_id is None:
             raise BusinessException(message=spec.get("remediation", "复习任务缺少可用知识点"), status_code=422)
-        _record_event(db, task, user_id, "knowledge_point_viewed", {"knowledge_point_id": task.target_id})
     else:
         raise BusinessException(message="不支持的任务类型", status_code=422)
 
@@ -267,10 +270,19 @@ def _complete_associated_todos(db: Session, task_id: int, user_id: int) -> int:
 
 def record_task_event(db: Session, task_id: int, user_id: int, event_type: str, note: str | None = None) -> dict[str, Any]:
     task = _get_owned_task(db, task_id, user_id)
-    allowed = {"learn": {"material_opened", "user_confirmed"}, "review": {"knowledge_point_viewed", "review_confirmed"}}
+    allowed = {"learn": {"target_loaded", "user_confirmed"}, "review": {"target_loaded", "review_confirmed"}}
     if event_type not in allowed.get(task.task_type, set()):
         raise BusinessException(message="该任务不接受此执行事件", status_code=422)
-    _record_event(db, task, user_id, event_type, {"note": note} if note else {})
+    spec = ensure_target_spec(db, task)
+    # The client supplies the loaded resource id in note payload only for old
+    # clients; modern events have the canonical task target.  Never accept an
+    # event for another material/knowledge point as completion evidence.
+    payload = {"note": note} if note else {}
+    expected = spec.get("material_id") if task.task_type == "learn" else spec.get("knowledge_point_id")
+    if expected is None:
+        raise BusinessException(message="任务目标未解析", status_code=409)
+    payload["target_id"] = expected
+    _record_event(db, task, user_id, event_type, payload)
     task.last_action_at = datetime.now()
     db.commit()
     return {"recorded": True, "event_type": event_type}
@@ -290,6 +302,7 @@ def retry_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
     task.target_spec_json = json.dumps(spec, ensure_ascii=False)
     task.execution_status, task.status, task.completed_at = "in_progress", "pending", None
     task.last_action_at = datetime.now()
+    recompute_goal(db, task.goal_id)
     db.commit()
     return {"quiz_id": new_id, "target_id": new_id, "history_quiz_ids": history, "action_type": "open_quiz", "route_name": "quizzes", "route_params": {"quiz_id": new_id}}
 
@@ -322,7 +335,7 @@ def verify_task(db: Session, task_id: int, user_id: int, confirmation: bool | No
             verified = percent >= threshold
             verification_result.update({"quiz_id": quiz.id, "score": quiz.score or 0, "question_count": quiz.question_count, "score_percent": percent, "pass_score": threshold, "passed": verified})
     else:
-        required = {"learn": {"material_opened", "user_confirmed"}, "review": {"knowledge_point_viewed", "review_confirmed"}}[task.task_type]
+        required = {"learn": {"target_loaded", "user_confirmed"}, "review": {"target_loaded", "review_confirmed"}}[task.task_type]
         if confirmation:
             _record_event(db, task, user_id, "user_confirmed" if task.task_type == "learn" else "review_confirmed", {"note": note} if note else {})
         seen = {row.event_type for row in db.query(TaskExecutionEvent).filter(TaskExecutionEvent.task_id == task.id, TaskExecutionEvent.user_id == user_id).all()}

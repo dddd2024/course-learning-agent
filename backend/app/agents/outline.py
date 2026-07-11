@@ -349,14 +349,12 @@ def _reconcile_chunk_ids(
 ) -> list:
     """Keep only source_chunk_ids that exist in ``valid_ids``.
 
-    Falls back to all ``valid_ids`` when none match (e.g. the mock LLM
-    returns placeholder strings like ``"chunk_1"``).
+    Invalid model references are deliberately dropped.  Binding a concept to
+    every available chunk turns an ungrounded answer into fabricated evidence.
     """
     valid_set = set(valid_ids)
     matched = [cid for cid in (raw_ids or []) if cid in valid_set]
-    if matched:
-        return matched
-    return list(valid_ids)
+    return matched
 
 
 def _fetch_chunks(db: Session, course_id: int) -> list[dict]:
@@ -492,6 +490,10 @@ def generate(
         source_ids = _reconcile_chunk_ids(
             point.get("source_chunk_ids", []), valid_chunk_ids
         )
+        if not source_ids:
+            # A knowledge point without a validated source quote/id is not
+            # eligible for the active course outline.
+            continue
         llm_importance = point.get("importance", 3)
         try:
             llm_importance = int(llm_importance)

@@ -20,6 +20,7 @@ from app.models.llm_config import UserLLMConfig
 from app.models.material import Material, MaterialVersion
 from app.models.material_chunk import MaterialChunk
 from app.models.material_image import MaterialImage
+from app.models.material_page import MaterialPage
 from app.models.plan import StudyGoal, StudyTask, TaskExecutionEvent, Todo
 from app.models.quiz import Quiz, QuizItem, WeakPoint
 from app.models.security_finding import MaterialSecurityFinding
@@ -44,6 +45,7 @@ __all__ = [
     "MaterialVersion",
     "MaterialChunk",
     "MaterialImage",
+    "MaterialPage",
     "MaterialSecurityFinding",
     "StudyGoal",
     "StudyTask",

@@ -72,6 +72,8 @@ class ImageResponse(BaseModel):
 
     id: int
     page_no: int
+    status: str = "ready"  # loading/ready/missing/forbidden/error
+    missing_reason: Optional[str] = None
     file_url: Optional[str] = None
     width: Optional[int] = None
     height: Optional[int] = None

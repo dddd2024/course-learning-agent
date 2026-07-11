@@ -132,7 +132,7 @@ def test_list_and_restore_persisted_plan(client) -> None:
         json={"status": "completed"},
         headers=headers,
     )
-    assert complete_resp.status_code == 200
+    assert complete_resp.status_code == 409
 
     list_resp = client.get("/api/v1/plans", headers=headers)
     assert list_resp.status_code == 200
@@ -143,7 +143,7 @@ def test_list_and_restore_persisted_plan(client) -> None:
     assert summary["course_names"] == ["操作系统"]
     assert summary["progress"]["tasks_total"] == len(created["tasks"])
     assert summary["progress"]["todos_total"] == len(created["todos"])
-    assert summary["progress"]["todos_completed"] == 1
+    assert summary["progress"]["todos_completed"] == 0
 
     detail_resp = client.get(f"/api/v1/plans/{goal_id}", headers=headers)
     assert detail_resp.status_code == 200
@@ -155,7 +155,7 @@ def test_list_and_restore_persisted_plan(client) -> None:
     restored_todo = next(
         todo for todo in restored["todos"] if todo["id"] == completed_todo_id
     )
-    assert restored_todo["status"] == "completed"
+    assert restored_todo["status"] == "pending"
 
 
 def test_plan_list_and_detail_are_user_scoped(client) -> None:
@@ -248,8 +248,8 @@ def test_list_todos_honors_pagination_and_keeps_filtered_total(client) -> None:
     assert first_page.json()["items"][0]["id"] != second_page.json()["items"][0]["id"]
 
 
-def test_complete_todo(client) -> None:
-    """PATCH /api/v1/todos/{id} {status:"completed"} returns 200."""
+def test_complete_todo_requires_task_verification(client) -> None:
+    """A linked Todo cannot bypass the task's server-side verification."""
     headers = auth_headers(client, username="alice")
     body = _create_plan(client, headers)
     todo_id = body["todos"][0]["id"]
@@ -259,12 +259,8 @@ def test_complete_todo(client) -> None:
         json={"status": "completed", "actual_minutes": 55},
         headers=headers,
     )
-    assert resp.status_code == 200
-    updated = resp.json()
-    assert updated["id"] == todo_id
-    assert updated["status"] == "completed"
-    assert updated["actual_minutes"] == 55
-    assert updated["completed_at"] is not None
+    assert resp.status_code == 409
+    assert "任务" in (resp.json().get("detail") or resp.json().get("message") or "")
 
     reopened_resp = client.patch(
         f"/api/v1/todos/{todo_id}",

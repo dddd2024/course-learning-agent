@@ -14,6 +14,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : 1,
   reporter: [
     ['html', { outputFolder: 'playwright-report' }],
+    ['json', { outputFile: process.env.PLAYWRIGHT_JSON_OUTPUT ?? 'playwright-results.json' }],
     ['list'],
   ],
   timeout: 60_000,
@@ -38,7 +39,10 @@ export default defineConfig({
   webServer: [
     {
       command: 'cd ../backend && python -m uvicorn app.main:app --host 127.0.0.1 --port 8000',
-      env: { LLM_PROVIDER: 'mock' },
+      env: {
+        LLM_PROVIDER: 'mock',
+        ...(process.env.DATABASE_URL ? { DATABASE_URL: process.env.DATABASE_URL } : {}),
+      },
       url: 'http://127.0.0.1:8000/docs',
       reuseExistingServer: !process.env.CI,
       timeout: 60_000,
