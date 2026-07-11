@@ -136,7 +136,9 @@ def test_dashboard_counts(client, tmp_path, monkeypatch) -> None:
     assert body["course_count"] == 1
     assert body["material_count"] == 1
     assert body["knowledge_point_count"] == 1
-    assert body["todo_today_count"] == 2
+    # Dashboard label says "今日待办"; completed items are reported by the
+    # separate completed counter and must not inflate actionable work.
+    assert body["todo_today_count"] == 1
     assert body["todo_completed_count"] == 1
     assert body["agent_run_count"] == 1
 

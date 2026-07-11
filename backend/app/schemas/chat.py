@@ -11,7 +11,7 @@ class ChatRequest(BaseModel):
 
     course_id: int
     conversation_id: int
-    question: str = Field(..., min_length=1)
+    question: str = Field(..., min_length=1, max_length=4000)
 
 
 class CitationItem(BaseModel):
@@ -21,6 +21,10 @@ class CitationItem(BaseModel):
     material_name: str
     page_no: Optional[int] = None
     quote_text: str = ""
+    claim_text: str = ""
+    support_status: str = "weak"
+    verification_reason: str = ""
+    verifier_version: str = ""
     confidence: float = 0.0
     # Phase 2 Task A: pre-assembled label for capsule display
     # (e.g. "操作系统讲义.pdf · 第 12 页"). Backend-assembled so the

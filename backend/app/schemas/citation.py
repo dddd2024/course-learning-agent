@@ -14,6 +14,9 @@ class CitationResponse(BaseModel):
     material_name: str = ""
     page_no: Optional[int] = None
     quote_text: str = ""
+    claim_text: str = ""
+    support_status: str = "weak"
+    verification_reason: str = ""
     confidence: float = 0.0
     # Phase 2 Task A: pre-assembled label for capsule display
     # (e.g. "操作系统讲义.pdf · 第 12 页"). The backend builds it so

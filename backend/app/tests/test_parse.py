@@ -16,8 +16,13 @@ import io
 import pytest
 
 from app.core.exceptions import BusinessException
+from app.api.deps import get_db
+from app.main import app
+from app.models.material_chunk import MaterialChunk
+from app.models.material_image import MaterialImage
 from app.retrieval.chunker import (
     build_chunks,
+    clean_material_text,
     chunk_text,
     clean_keyword_text,
 )
@@ -440,6 +445,76 @@ def test_clean_keyword_text_basic() -> None:
     assert "\t" not in cleaned
     assert "  " not in cleaned
     assert "操作系统" in cleaned
+
+
+def test_clean_material_text_removes_metadata_without_dropping_body() -> None:
+    raw = "主讲教师：王申\n教师助手会解释概念。\n第 3 页\n快表缓存页表项。"
+    cleaned = clean_material_text(raw)
+    assert "主讲教师" not in cleaned
+    assert "第 3 页" not in cleaned
+    assert "教师助手会解释概念" in cleaned
+    assert "快表缓存页表项" in cleaned
+
+
+def test_chunk_images_are_not_duplicated_and_decorative_images_are_opt_in(
+    client, tmp_path, monkeypatch
+) -> None:
+    """Page-level legacy images attach once; decorative images stay hidden."""
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr("app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed"))
+    headers = auth_headers(client, username="alice")
+    course_id = create_course(client, headers, "操作系统")
+    material_id = upload_material(
+        client, headers, course_id, "notes.txt", LONG_TEXT.encode("utf-8")
+    )
+    client.post(f"/api/v1/materials/{material_id}/parse", headers=headers)
+
+    db_generator = app.dependency_overrides[get_db]()
+    db = next(db_generator)
+    try:
+        first = db.query(MaterialChunk).filter_by(material_id=material_id).first()
+        assert first is not None
+        first.page_no = 1
+        second = MaterialChunk(
+            material_id=material_id,
+            course_id=course_id,
+            chunk_index=999,
+            page_no=1,
+            title="第二段",
+            text="第二段正文",
+            keyword_text="第二段正文",
+        )
+        db.add(second)
+        db.flush()
+        db.add_all([
+            MaterialImage(
+                material_id=material_id, course_id=course_id, page_no=1,
+                image_filename="diagram.png", image_path="/safe/diagram.png",
+                is_decorative=0,
+            ),
+            MaterialImage(
+                material_id=material_id, course_id=course_id, page_no=1,
+                image_filename="background.png", image_path="/safe/background.png",
+                is_decorative=1, decorative_reason="background_coverage",
+            ),
+        ])
+        db.commit()
+    finally:
+        db.close()
+
+    default_body = client.get(
+        f"/api/v1/materials/{material_id}/chunks?page_size=100", headers=headers
+    ).json()
+    default_images = [image for chunk in default_body["items"] for image in chunk.get("images", [])]
+    assert [image["id"] for image in default_images] == [1]
+
+    audit_body = client.get(
+        f"/api/v1/materials/{material_id}/chunks?page_size=100&include_decorative=true",
+        headers=headers,
+    ).json()
+    audit_images = [image for chunk in audit_body["items"] for image in chunk.get("images", [])]
+    assert len(audit_images) == 2
+    assert any(image["is_decorative"] for image in audit_images)
 
 
 def test_parse_md_file(tmp_path) -> None:

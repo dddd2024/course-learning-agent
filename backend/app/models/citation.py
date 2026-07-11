@@ -5,7 +5,7 @@ material chunk. It is persisted after every chat answer so the
 frontend can re-fetch the supporting evidence for any message without
 replaying the retrieval/agent pipeline.
 """
-from sqlalchemy import Column, Float, ForeignKey, Integer, Text
+from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text
 
 from app.models.base import Base, TimestampMixin
 
@@ -23,6 +23,10 @@ class Citation(Base, TimestampMixin):
         Integer, ForeignKey("material_chunks.id"), nullable=False
     )
     quote_text = Column(Text)
+    claim_text = Column(Text)
+    support_status = Column(String(20), nullable=False, default="weak")
+    verification_reason = Column(Text)
+    verifier_version = Column(String(30))
     confidence = Column(Float, default=0.0)
     page_no = Column(Integer)
 

@@ -22,3 +22,17 @@ class MaterialOverviewResponse(BaseModel):
     warnings: List[str] = []
     # Phase 2 Task D: count of security findings (prompt injection)
     security_findings_count: int = 0
+
+
+class MaterialStudyGuideResponse(BaseModel):
+    """Evidence-bounded AI study guide for a single material."""
+
+    material_id: int
+    answer: str
+    evidence_ids: List[int]
+    sampled_pages: List[int] = []
+    coverage_note: str
+    provider: str
+    fallback_used: bool = False
+    fallback_reason: Optional[str] = None
+    agent_run_id: Optional[int] = None

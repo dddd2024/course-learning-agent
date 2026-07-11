@@ -36,6 +36,7 @@ from app.models.material import Material
 from app.models.plan import StudyGoal, StudyTask, Todo
 from app.models.quiz import WeakPoint
 from app.models.user import User
+from app.services.weak_point_progress import apply_mastery_decay
 from app.schemas.multi_plan import (
     MultiPlanCreate,
     MultiPlanResponse,
@@ -181,12 +182,24 @@ def _build_weak_point_review_tasks(
             WeakPoint.user_id == user_id,
             WeakPoint.course_id.in_(course_ids),
         )
-        .order_by(WeakPoint.wrong_count.desc(), WeakPoint.id.asc())
+        .order_by(WeakPoint.id.asc())
         .all()
     )
+    if any(apply_mastery_decay(wp) for wp, _ in rows):
+        db.commit()
     id_to_name = {cid: name for name, cid in course_map.items()}
     tasks: list[dict] = []
-    for wp, kp in rows:
+    for wp, kp in sorted(
+        rows,
+        key=lambda row: (
+            row[0].status == "resolved",
+            row[0].mastery_score,
+            -(row[0].wrong_count or 0),
+            row[0].last_wrong_at or datetime.min,
+        ),
+    ):
+        if wp.status == "resolved":
+            continue
         tasks.append(
             {
                 "course_name": id_to_name.get(wp.course_id, ""),

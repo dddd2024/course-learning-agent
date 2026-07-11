@@ -62,6 +62,10 @@ _FIRST_ROUND_COLUMNS = {
         "is_active": "INTEGER DEFAULT 1 NOT NULL",
         "char_count": "INTEGER",
         "estimated_token_count": "INTEGER",
+        "raw_text": "TEXT",
+        "cleaner_version": "VARCHAR(32)",
+        "noise_score": "FLOAT",
+        "is_indexable": "INTEGER DEFAULT 1 NOT NULL",
     },
     "knowledge_points": {
         "stable_key": "VARCHAR(320)",
@@ -82,6 +86,7 @@ _FIRST_ROUND_COLUMNS = {
         "mastery_score": "INTEGER DEFAULT 0 NOT NULL",
         "status": "VARCHAR(20) DEFAULT 'active' NOT NULL",
         "resolved_at": "DATETIME",
+        "last_mastery_decay_at": "DATETIME",
     },
     "study_tasks": {
         "target_type": "VARCHAR(30)",
@@ -94,6 +99,8 @@ _FIRST_ROUND_COLUMNS = {
         "is_decorative": "INTEGER DEFAULT 0 NOT NULL",
         "decorative_reason": "VARCHAR(255)",
         "perceptual_hash": "VARCHAR(64)",
+        "color_variance": "FLOAT",
+        "coverage_ratio": "FLOAT",
     },
     "agent_runs": {
         "requested_provider": "VARCHAR(50)",
@@ -103,6 +110,12 @@ _FIRST_ROUND_COLUMNS = {
         "fallback_used": "INTEGER DEFAULT 0 NOT NULL",
         "fallback_reason": "TEXT",
         "evidence_status": "VARCHAR(30)",
+    },
+    "citations": {
+        "claim_text": "TEXT",
+        "support_status": "VARCHAR(20) DEFAULT 'weak' NOT NULL",
+        "verification_reason": "TEXT",
+        "verifier_version": "VARCHAR(30)",
     },
 }
 

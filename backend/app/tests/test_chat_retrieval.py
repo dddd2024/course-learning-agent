@@ -156,6 +156,50 @@ def test_retrieved_chunks_is_cited_flag(
         assert item["chunk_id"] not in cited_ids
 
 
+def test_follow_up_retrieval_uses_bounded_conversation_context(
+    client, tmp_path, monkeypatch
+) -> None:
+    """A pronoun follow-up carries the previous concept into retrieval + prompt."""
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr("app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed"))
+    content = (
+        "虚拟存储器把部分程序放在外存中。\n"
+        "快表 TLB 缓存页表项以加速地址转换。"
+    ).encode("utf-8")
+    headers = auth_headers(client, username="alice")
+    course_id, conv_id = _setup_chat(client, headers, content=content)
+    first = client.post(
+        "/api/v1/chat",
+        json={"course_id": course_id, "conversation_id": conv_id, "question": "什么是虚拟存储器？"},
+        headers=headers,
+    )
+    assert first.status_code == 200, first.text
+
+    from app.services import chat_service
+    original_search = chat_service.keyword_search
+    original_answer = chat_service.answer_question
+    captured: dict[str, str] = {}
+
+    def spy_search(db, cid, query, top_k=12):
+        captured["query"] = query
+        return original_search(db, cid, query, top_k)
+
+    def spy_answer(*args, **kwargs):
+        captured["context"] = kwargs.get("conversation_context", "")
+        return original_answer(*args, **kwargs)
+
+    monkeypatch.setattr(chat_service, "keyword_search", spy_search)
+    monkeypatch.setattr(chat_service, "answer_question", spy_answer)
+    second = client.post(
+        "/api/v1/chat",
+        json={"course_id": course_id, "conversation_id": conv_id, "question": "它和快表有什么区别？"},
+        headers=headers,
+    )
+    assert second.status_code == 200, second.text
+    assert "虚拟存储器" in captured["query"]
+    assert "虚拟存储器" in captured["context"]
+
+
 def test_reliability_level_high(client, tmp_path, monkeypatch) -> None:
     """citations>=2 with at least one confidence>=0.5 → reliability_level=high."""
     monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
@@ -176,12 +220,14 @@ def test_reliability_level_high(client, tmp_path, monkeypatch) -> None:
                 {
                     "chunk_id": chunk_quotes[0][0],
                     "quote_text": chunk_quotes[0][1],
+                    "claim_text": "快表是页表的高速缓存，加速地址转换。",
                     "reason": "直接定义",
                     "confidence": 0.9,
                 },
                 {
                     "chunk_id": chunk_quotes[1][0],
                     "quote_text": chunk_quotes[1][1],
+                    "claim_text": "快表是页表的高速缓存，加速地址转换。",
                     "reason": "补充背景",
                     "confidence": 0.7,
                 },
@@ -210,8 +256,8 @@ def test_reliability_level_high(client, tmp_path, monkeypatch) -> None:
     assert body["reliability_level"] == "high"
 
 
-def test_reliability_level_medium(client, tmp_path, monkeypatch) -> None:
-    """citations=1 → reliability_level=medium (default mock fallback)."""
+def test_reliability_level_low_for_degraded_mock(client, tmp_path, monkeypatch) -> None:
+    """A mock fallback may show a source, but is never marked verified."""
     monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
     monkeypatch.setattr(
         "app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed")
@@ -231,10 +277,11 @@ def test_reliability_level_medium(client, tmp_path, monkeypatch) -> None:
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    # Default mock: verify_citations drops the string chunk_id, fallback
-    # synthesises ONE citation from the top chunk with confidence=0.7.
+    # The mock may return an exact source quote for UI continuity, but its
+    # support status is deliberately weak and cannot inflate reliability.
     assert len(body["citations"]) == 1
-    assert body["reliability_level"] == "medium"
+    assert body["citations"][0]["support_status"] == "weak"
+    assert body["reliability_level"] == "low"
 
 
 def test_reliability_level_failed(client, tmp_path, monkeypatch) -> None:

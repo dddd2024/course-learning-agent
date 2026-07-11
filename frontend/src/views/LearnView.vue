@@ -111,13 +111,21 @@
               已自动过滤 {{ filteredCount }} 个无关片段（封面/目录/页眉等）
             </el-tag>
           </div>
+          <div class="image-filter-control">
+            <el-switch
+              v-model="showFilteredImages"
+              size="small"
+              active-text="显示已过滤图片"
+              @change="loadChunks"
+            />
+          </div>
 
           <!-- AI Study Guide -->
           <div v-if="studyGuide || studyGuideLoading" class="study-guide-card">
             <div class="study-guide-head">
               <el-icon color="#409eff"><MagicStick /></el-icon>
               <span>AI 内容速览</span>
-              <el-tag size="small" type="info" effect="plain">基于前 20 个片段</el-tag>
+              <el-tag size="small" type="info" effect="plain">基于抽样课程证据</el-tag>
               <el-button
                 v-if="studyGuide"
                 text
@@ -128,8 +136,9 @@
               </el-button>
               <el-button text size="small" @click="studyGuide = ''">收起</el-button>
             </div>
-            <div v-loading="studyGuideLoading" class="study-guide-body">
-              <div v-if="studyGuide" class="markdown-content" v-html="renderAnswer(studyGuide)"></div>
+              <div v-loading="studyGuideLoading" class="study-guide-body">
+                <div v-if="studyGuideCoverage" class="study-guide-coverage">{{ studyGuideCoverage }}</div>
+                <div v-if="studyGuide" class="markdown-content" v-html="renderAnswer(studyGuide)"></div>
             </div>
           </div>
 
@@ -308,7 +317,7 @@ import { nextTick, onMounted, ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ChatDotRound, CopyDocument, InfoFilled, Loading, MagicStick, Aim } from '@element-plus/icons-vue'
-import { listMaterials, getChunks, type Material, type Chunk } from '../api/material'
+import { listMaterials, getChunks, generateMaterialStudyGuide, type Material, type Chunk } from '../api/material'
 import { listCourses, type Course } from '../api/course'
 import {
   createConversation,
@@ -331,6 +340,7 @@ const selectedMaterialId = ref<number | null>(null)
 const rawChunks = ref<Chunk[]>([])
 const chunks = ref<Chunk[]>([])
 const imageUrls = ref<Record<number, string>>({})
+const showFilteredImages = ref(false)
 const docLoading = ref(false)
 const filteredCount = ref(0)
 const mobilePane = ref<'toc' | 'content' | 'assistant'>('content')
@@ -351,6 +361,7 @@ const conversationId = ref<number | null>(null)
 // Study guide state
 const studyGuide = ref('')
 const studyGuideLoading = ref(false)
+const studyGuideCoverage = ref('')
 
 // Knowledge point focus (from outline navigation)
 const kpTitle = ref('')
@@ -543,29 +554,14 @@ async function ensureConversation() {
 }
 
 async function generateStudyGuide() {
-  if (chunks.value.length === 0) return
+  if (!selectedMaterialId.value || chunks.value.length === 0) return
   studyGuideLoading.value = true
   studyGuide.value = ''
+  studyGuideCoverage.value = ''
   try {
-    const convId = await ensureConversation()
-    const chunkSummaries = chunks.value
-      .slice(0, 20)
-      .map((c, i) => `[片段${i + 1}] 第${c.page_no || '?'}页 ${c.title || ''}\n${c.text.substring(0, 200)}`)
-      .join('\n\n')
-    const question = `请根据以下选取的前 20 个课程资料片段，生成一份结构化内容速览。请明确说明这不是对整份资料的完整覆盖，并包含：
-1. 本章节核心概念（3-5个关键词）
-2. 重点知识点梳理（按逻辑顺序组织）
-3. 常见易错点或难点提示
-
-资料片段：
-${chunkSummaries}`
-
-    const { data } = await sendMessage({
-      course_id: courseId.value,
-      conversation_id: convId,
-      question,
-    })
-    studyGuide.value = (data as ChatResult).answer
+    const { data } = await generateMaterialStudyGuide(selectedMaterialId.value)
+    studyGuide.value = data.answer
+    studyGuideCoverage.value = data.coverage_note
   } catch (err) {
     ElMessage.error(parseApiError(err, '学习指南生成失败'))
   } finally {
@@ -663,14 +659,25 @@ onMounted(async () => {
   }
 })
 
-async function getAllMaterialChunks(materialId: number): Promise<Chunk[]> {
+async function getAllMaterialChunks(
+  materialId: number,
+  includeDecorative = showFilteredImages.value,
+): Promise<Chunk[]> {
   const pageSize = 100
-  const first = await getChunks(materialId, { page: 1, page_size: pageSize })
+  const first = await getChunks(materialId, {
+    page: 1,
+    page_size: pageSize,
+    include_decorative: includeDecorative,
+  })
   const items = [...first.data.items]
   const total = first.data.total ?? items.length
   let page = 2
   while (items.length < total) {
-    const { data } = await getChunks(materialId, { page, page_size: pageSize })
+    const { data } = await getChunks(materialId, {
+      page,
+      page_size: pageSize,
+      include_decorative: includeDecorative,
+    })
     if (data.items.length === 0) break
     items.push(...data.items)
     page += 1
@@ -1001,6 +1008,12 @@ function goBack() {
   margin-bottom: 16px;
 }
 
+.image-filter-control {
+  display: flex;
+  justify-content: flex-end;
+  margin: -8px 0 12px;
+}
+
 /* Study guide card */
 .study-guide-card {
   margin-bottom: 24px;
@@ -1031,6 +1044,16 @@ function goBack() {
   line-height: 1.8;
   color: #303133;
   min-height: 80px;
+}
+
+.study-guide-coverage {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #f4f7fb;
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 /* Knowledge point focus banner */

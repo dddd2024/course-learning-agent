@@ -234,6 +234,7 @@ def _mock_course_qa(prompt: str = "") -> dict[str, Any]:
             {
                 "chunk_id": first_cid,
                 "quote_text": first_text[:150],
+                "claim_text": answer,
                 "reason": "该片段直接回答了用户的问题。",
                 "confidence": 0.85,
             }
@@ -257,6 +258,19 @@ def _mock_course_qa(prompt: str = "") -> dict[str, Any]:
         "citations": citations,
         "not_found": False,
         "follow_up_questions": follow_ups,
+    }
+
+
+def _mock_material_overview(prompt: str = "") -> dict[str, Any]:
+    """Produce an explicitly bounded guide from supplied evidence only."""
+    snippets = re.findall(r"\[证据\d+[^\]]*\]\s*(.+?)(?=\n\n\[证据|\Z)", prompt, re.DOTALL)
+    highlights = [re.sub(r"\s+", " ", snippet).strip()[:160] for snippet in snippets if snippet.strip()]
+    if not highlights:
+        return {"answer": "资料不足，无法生成内容速览。"}
+    return {
+        "answer": "本速览仅覆盖抽样资料片段，不代表整份资料。\n\n" + "\n".join(
+            f"- {highlight}" for highlight in highlights[:5]
+        )
     }
 
 
@@ -898,6 +912,7 @@ def _mock_chunk_quality(prompt: str = "") -> dict[str, Any]:
 
 _MOCK_BUILDERS = {
     "course_qa": _mock_course_qa,
+    "material_overview": _mock_material_overview,
     "outline": _mock_outline,
     "planner": _mock_planner,
     "task_decompose": _mock_task_decompose,

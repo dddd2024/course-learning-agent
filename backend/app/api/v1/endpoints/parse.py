@@ -210,6 +210,7 @@ def list_chunks(
     material_id: int,
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
+    include_decorative: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ChunkListResponse:
@@ -237,11 +238,13 @@ def list_chunks(
     images_by_chunk: dict[int, list] = defaultdict(list)
     page_fallback_images: dict[int, list] = defaultdict(list)
     if page_nos:
-        imgs = db.query(MaterialImage).filter(
+        image_query = db.query(MaterialImage).filter(
             MaterialImage.material_id == material_id,
             MaterialImage.page_no.in_(page_nos),
-            MaterialImage.is_decorative == 0,
-        ).all()
+        )
+        if not include_decorative:
+            image_query = image_query.filter(MaterialImage.is_decorative == 0)
+        imgs = image_query.all()
         for img in imgs:
             if img.chunk_id:
                 images_by_chunk[img.chunk_id].append(img)
@@ -262,6 +265,10 @@ def list_chunks(
                     id=img.id, page_no=img.page_no, width=img.width,
                     height=img.height, format=img.format,
                     file_url=f"/api/v1/materials/images/{img.id}/file",
+                    is_decorative=bool(img.is_decorative),
+                    decorative_reason=img.decorative_reason,
+                    color_variance=img.color_variance,
+                    coverage_ratio=img.coverage_ratio,
                 ) for img in attached
             ]
         chunk_responses.append(ChunkResponse(**chunk_dict))

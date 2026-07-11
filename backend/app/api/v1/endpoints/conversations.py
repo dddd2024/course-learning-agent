@@ -158,6 +158,9 @@ def list_messages(
                     page_no=cite.page_no,
                     material_name=filename,
                     display_label=label,
+                    claim_text=cite.claim_text,
+                    support_status=cite.support_status or "weak",
+                    verification_reason=cite.verification_reason,
                 )
             )
 

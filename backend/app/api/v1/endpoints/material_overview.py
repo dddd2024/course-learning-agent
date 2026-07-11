@@ -14,11 +14,14 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import BusinessException, NotFoundException
+from app.agents.audit import AgentAudit
+from app.agents.llm import call_llm_with_meta
 from app.models.material import Material
 from app.models.material_chunk import MaterialChunk
 from app.models.user import User
-from app.schemas.material_overview import MaterialOverviewResponse
+from app.schemas.material_overview import MaterialOverviewResponse, MaterialStudyGuideResponse
+from app.services.llm_config_service import build_user_config, get_active_config
 
 router = APIRouter()
 
@@ -79,6 +82,22 @@ def _build_warnings(chunks: list[MaterialChunk]) -> list[str]:
     return warnings
 
 
+def _sample_chunks_by_page(chunks: list[MaterialChunk], limit: int = 12) -> list[MaterialChunk]:
+    """Sample evidence across pages instead of truncating to the first chunks."""
+    usable = [chunk for chunk in chunks if chunk.is_active and chunk.is_indexable]
+    if len(usable) <= limit:
+        return usable
+    by_page: dict[int, MaterialChunk] = {}
+    for chunk in usable:
+        by_page.setdefault(chunk.page_no or 0, chunk)
+    candidates = list(by_page.values())
+    if len(candidates) >= limit:
+        step = (len(candidates) - 1) / (limit - 1)
+        return [candidates[round(index * step)] for index in range(limit)]
+    remaining = [chunk for chunk in usable if chunk not in candidates]
+    return (candidates + remaining)[:limit]
+
+
 @router.get(
     "/{material_id}/overview",
     response_model=MaterialOverviewResponse,
@@ -134,4 +153,56 @@ def get_material_overview(
         keywords=keywords,
         warnings=warnings,
         security_findings_count=security_count,
+    )
+
+
+@router.post("/{material_id}/study-guide", response_model=MaterialStudyGuideResponse)
+def generate_material_study_guide(
+    material_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MaterialStudyGuideResponse:
+    """Generate a guide from evenly sampled active evidence, never chat text."""
+    material = _get_owned_material(db, material_id, current_user.id)
+    chunks = db.query(MaterialChunk).filter(
+        MaterialChunk.material_id == material_id,
+        MaterialChunk.is_active == 1,
+        MaterialChunk.is_indexable == 1,
+    ).order_by(MaterialChunk.chunk_index.asc()).all()
+    samples = _sample_chunks_by_page(chunks)
+    if not samples:
+        raise BusinessException(message="资料没有可用正文证据，无法生成内容速览")
+    evidence_ids = [chunk.id for chunk in samples]
+    evidence_text = "\n\n".join(
+        f"[证据{index} id={chunk.id} page={chunk.page_no or '未知'}]\n{chunk.text[:700]}"
+        for index, chunk in enumerate(samples, start=1)
+    )
+    config = get_active_config(db, current_user.id)
+    user_config = build_user_config(config) if config else None
+    run = AgentAudit.create_run(
+        db, user_id=current_user.id, run_type="material_overview",
+        input_summary={"material_id": material_id, "evidence_ids": evidence_ids},
+        prompt_version="material_overview_v1",
+        model_name=(config.model if config else "mock"),
+        provider=("user" if config else "mock"), config_id=(config.id if config else None),
+    )
+    prompt = (
+        "你是课程资料速览助手。只能依据下列证据生成 Markdown 速览，首句必须说明覆盖范围，"
+        "不得添加证据外事实。严格返回 JSON：{\"answer\":\"...\"}。\n\n" + evidence_text
+    )
+    output, meta = call_llm_with_meta(prompt, "material_overview", user_config=user_config)
+    AgentAudit.update_run_meta(db, run.id, meta.get("actual_model"), meta.get("actual_provider"), meta)
+    answer = str(output.get("answer") or "资料不足，无法生成内容速览。")
+    AgentAudit.finish_run(
+        db, run.id, status="degraded" if meta.get("degraded") else "success",
+        output_summary={"evidence_ids": evidence_ids, "provider": meta.get("actual_provider")},
+    )
+    db.commit()
+    return MaterialStudyGuideResponse(
+        material_id=material_id, answer=answer, evidence_ids=evidence_ids,
+        sampled_pages=sorted({chunk.page_no for chunk in samples if chunk.page_no is not None}),
+        coverage_note=f"本速览均匀抽样了 {len(samples)} 个证据片段，不代表整份资料的完整覆盖。",
+        provider=meta.get("actual_provider", meta.get("provider", "mock")),
+        fallback_used=bool(meta.get("fallback_used")), fallback_reason=meta.get("fallback_reason"),
+        agent_run_id=run.id,
     )

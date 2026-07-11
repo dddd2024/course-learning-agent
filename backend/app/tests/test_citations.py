@@ -12,7 +12,7 @@ Covers:
 - CitationVerifier keeps citations whose chunk_id is in retrieved chunks
 - Out-of-material questions yield an empty citations list
 """
-from app.agents.course_qa import verify_citations
+from app.agents.course_qa import answer_question, verify_citations
 from app.tests.conftest import (
     auth_headers,
     setup_course_with_material,
@@ -178,6 +178,78 @@ def test_citation_verifier_removes_invalid_quote() -> None:
     """A valid chunk id cannot make an invented quote appear trustworthy."""
     output = {"citations": [{"chunk_id": 1, "quote_text": "invented quote"}]}
     assert verify_citations(output, [{"chunk_id": 1, "text": "actual source"}]) == []
+
+
+def test_unverified_citations_do_not_turn_into_fallback_evidence(monkeypatch) -> None:
+    """Relevant retrieval is shown separately, never fabricated as a citation."""
+    monkeypatch.setattr(
+        "app.agents.course_qa.call_llm_with_meta",
+        lambda *args, **kwargs: (
+            {
+                "answer": "模型给出的课程结论",
+                "key_points": ["结论"],
+                "citations": [{"chunk_id": 1, "quote_text": "伪造原文"}],
+                "not_found": False,
+                "follow_up_questions": ["追问"],
+            },
+            {"provider": "real", "fallback_used": False, "fallback_reason": None},
+        ),
+    )
+    result = answer_question(
+        db=None, course_id=1, question="问题", course_name="课程",
+        retrieved_chunks=[{"chunk_id": 1, "text": "真实原文"}],
+    )
+    assert result["citations"] == []
+    assert result["not_found"] is True
+    assert "未能提供可验证" in result["answer"]
+
+
+def test_not_found_flag_cannot_leak_an_uncited_partial_answer(monkeypatch) -> None:
+    """A model's partial answer is hidden when no source citation survives."""
+    monkeypatch.setattr(
+        "app.agents.course_qa.call_llm_with_meta",
+        lambda *args, **kwargs: (
+            {
+                "answer": "虚拟存储器会扩充可用内存。",
+                "key_points": ["虚拟存储器"],
+                "citations": [],
+                "not_found": True,
+                "follow_up_questions": [],
+            },
+            {"provider": "real", "fallback_used": False, "fallback_reason": None},
+        ),
+    )
+    result = answer_question(
+        db=None, course_id=1, question="问题", course_name="课程",
+        retrieved_chunks=[{"chunk_id": 1, "text": "真实原文"}],
+    )
+    assert result["not_found"] is True
+    assert result["citations"] == []
+    assert "虚拟存储器会扩充" not in result["answer"]
+    assert "未能提供可验证" in result["answer"]
+
+
+def test_exact_quote_without_claim_is_marked_weak(monkeypatch) -> None:
+    """Quote identity alone is not presented as verified claim support."""
+    monkeypatch.setattr(
+        "app.agents.course_qa.call_llm_with_meta",
+        lambda *args, **kwargs: (
+            {
+                "answer": "快表加速地址转换。",
+                "key_points": ["快表"],
+                "citations": [{"chunk_id": 1, "quote_text": "快表加速地址转换"}],
+                "not_found": False,
+                "follow_up_questions": [],
+            },
+            {"provider": "real", "fallback_used": False, "fallback_reason": None},
+        ),
+    )
+    result = answer_question(
+        db=None, course_id=1, question="问题", course_name="课程",
+        retrieved_chunks=[{"chunk_id": 1, "text": "快表加速地址转换"}],
+    )
+    assert result["citations"][0]["support_status"] == "weak"
+    assert result["reliability_level"] == "low"
 
 
 def test_no_citations_when_not_found(

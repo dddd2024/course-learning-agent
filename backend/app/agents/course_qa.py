@@ -11,12 +11,13 @@ The agent:
 4. Runs :func:`verify_citations` to drop any citation whose ``chunk_id``
    is not present in the retrieved chunks (prevents the LLM from
    fabricating references).
-5. When no citations survive verification but retrieved chunks exist,
-   a fallback citation is synthesised from the top-ranked chunk so the
-   response still carries a traceable reference.
+5. When no citations survive verification, return a transparent
+   insufficient-evidence result. Retrieved snippets remain available for
+   inspection but are never relabelled as verified citations.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.agents.llm import call_llm_with_meta
@@ -79,8 +80,7 @@ def _compute_reliability_level(output: dict[str, Any]) -> str:
     - ``failed``: ``not_found`` is true (the LLM call is also treated as
       failed if it raised — handled by the caller).
     - ``low``: ``not_found`` is false but no citations survived
-      verification (defensive; should not normally happen because the
-      fallback synthesises a citation when chunks exist).
+      verification.
     - ``medium``: exactly one citation, or every citation has
       ``confidence < 0.5``.
     - ``high``: two or more citations with at least one
@@ -88,7 +88,10 @@ def _compute_reliability_level(output: dict[str, Any]) -> str:
     """
     if output.get("not_found"):
         return "failed"
-    citations = output.get("citations", [])
+    citations = [
+        citation for citation in output.get("citations", [])
+        if citation.get("support_status") == "verified"
+    ]
     count = len(citations)
     if count == 0:
         return "low"
@@ -98,6 +101,41 @@ def _compute_reliability_level(output: dict[str, Any]) -> str:
     if any(c.get("confidence", 0.0) >= 0.5 for c in citations):
         return "high"
     return "medium"
+
+
+def _normalise_for_match(value: str) -> str:
+    return re.sub(r"\s+", "", value or "")
+
+
+def _annotate_support(citation: dict[str, Any], answer: str) -> dict[str, Any]:
+    """Record what the lightweight verifier can and cannot prove.
+
+    Exact quote membership proves source identity. A claim copied from the
+    answer plus lexical overlap with the quote is a conservative, transparent
+    support check; anything else remains ``weak`` rather than being promoted.
+    """
+    claim = str(citation.get("claim_text") or "").strip()
+    quote = str(citation.get("quote_text") or "").strip()
+    citation["claim_text"] = claim
+    citation["verifier_version"] = "citation_support_v1"
+    if not claim or _normalise_for_match(claim) not in _normalise_for_match(answer):
+        citation["support_status"] = "weak"
+        citation["verification_reason"] = "未提供可在回答中定位的具体结论"
+        return citation
+    def terms(value: str) -> set[str]:
+        ascii_terms = set(re.findall(r"[A-Za-z]{2,}", value.lower()))
+        cjk = [char for char in value if "\u4e00" <= char <= "\u9fff"]
+        return ascii_terms | {"".join(cjk[index:index + 2]) for index in range(len(cjk) - 1)}
+
+    claim_terms = terms(claim)
+    quote_terms = terms(quote)
+    if claim_terms & quote_terms:
+        citation["support_status"] = "verified"
+        citation["verification_reason"] = "原文精确匹配，且回答结论可定位并与原文共享关键术语"
+    else:
+        citation["support_status"] = "weak"
+        citation["verification_reason"] = "原文已匹配，但自动校验无法确认其支撑该结论"
+    return citation
 
 
 def _build_retrieved_chunks(
@@ -228,22 +266,30 @@ def answer_question(
         output["citations"] = []
 
     # CitationVerifier: keep only citations whose chunk_id is real.
-    output["citations"] = verify_citations(output, retrieved_chunks)
+    output["citations"] = [
+        _annotate_support(citation, output.get("answer", ""))
+        for citation in verify_citations(output, retrieved_chunks)
+    ]
+    if llm_meta.get("degraded"):
+        # A deterministic mock is useful for keeping the product available,
+        # but it is not an evidence-verification engine.  Do not let a mock
+        # response inherit a high/medium reliability label merely because its
+        # template happened to copy a source sentence.
+        for citation in output["citations"]:
+            citation["support_status"] = "weak"
+            citation["verification_reason"] = "降级模型输出，未作为可验证课程结论展示"
 
-    # Fallback: if verification removed every citation but we do have
-    # chunks, synthesise one from the top-ranked chunk so the response
-    # still carries a traceable reference.
-    if not output["citations"] and not output.get("not_found"):
-        top = retrieved_chunks[0]
-        text = top.get("text", "")
-        output["citations"] = [
-            {
-                "chunk_id": top["chunk_id"],
-                "quote_text": text[:200],
-                "reason": "基于检索到的最相关资料片段生成引用。",
-                "confidence": 0.7,
-            }
-        ]
+    # Never turn a merely retrieved snippet into a fabricated citation. If
+    # the model cannot supply an exact source quote, hide its factual answer
+    # and make the evidence gap explicit while retaining the retrieval view.
+    if not output["citations"]:
+        output["answer"] = (
+            "已检索到相关资料片段，但本次回答未能提供可验证的原文引用。"
+            "为避免把未经证实的内容当作课程结论，请查看“检索过程”中的片段后重试或换一种问法。"
+        )
+        output["key_points"] = []
+        output["follow_up_questions"] = []
+        output["not_found"] = True
 
     # Task 19: attach the retrieved-chunk view (with is_cited flag) so
     # the frontend can render the retrieval visualisation drawer.

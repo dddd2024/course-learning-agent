@@ -58,6 +58,66 @@ def test_short_answer_without_usable_rubric_requests_review() -> None:
     assert needs_review is True
 
 
+def test_review_needed_short_answer_does_not_create_weak_point(
+    client, tmp_path, monkeypatch
+) -> None:
+    """Borderline automatic scoring must wait for review before harming mastery."""
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr("app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed"))
+    headers = auth_headers(client, username="alice")
+    course_id = _setup_course_with_kps(client, headers)
+    created = client.post(
+        "/api/v1/quizzes", json={"course_id": course_id, "question_count": 1}, headers=headers
+    )
+    assert created.status_code == 200, created.text
+    quiz_id = created.json()["id"]
+    db = _get_db_session()
+    try:
+        item = (
+            db.query(QuizItem)
+            .filter(QuizItem.quiz_id == quiz_id)
+            .order_by(QuizItem.order_index.asc())
+            .first()
+        )
+        assert item is not None
+        db.query(QuizItem).filter(
+            QuizItem.quiz_id == quiz_id,
+            QuizItem.id != item.id,
+        ).delete(synchronize_session=False)
+        item.question_type = "short_answer"
+        item.answer = "TLB 缓存页表项，减少访存并加速地址转换"
+        item.rubric_json = (
+            '[{"criterion":"TLB","keywords":["TLB"]},'
+            '{"criterion":"缓存","keywords":["缓存"]},'
+            '{"criterion":"页表项","keywords":["页表项"]},'
+            '{"criterion":"减少访存","keywords":["访存"]},'
+            '{"criterion":"加速转换","keywords":["加速"]}]'
+        )
+        item_id = item.id
+        kp_id = item.knowledge_point_id
+        db.commit()
+    finally:
+        db.close()
+    submitted = client.post(
+        f"/api/v1/quizzes/{quiz_id}/submit",
+        json={"answers": [{"item_id": item_id, "user_answer": "TLB 缓存"}]},
+        headers=headers,
+    )
+    assert submitted.status_code == 200, submitted.text
+    result = submitted.json()["items"][0]
+    assert result["is_correct"] is False
+    assert result["needs_review"] is True
+    if kp_id is not None:
+        db = _get_db_session()
+        try:
+            assert db.query(WeakPoint).filter(
+                WeakPoint.course_id == course_id,
+                WeakPoint.knowledge_point_id == kp_id,
+            ).count() == 0
+        finally:
+            db.close()
+
+
 def _setup_course_with_kps(
     client,
     headers: dict[str, str],

@@ -82,6 +82,7 @@ def generate_knowledge_points(
             Material.course_id == course_id,
             Material.status == "ready",
             MaterialChunk.is_active == 1,
+            MaterialChunk.is_indexable == 1,
         )
         .count()
     )

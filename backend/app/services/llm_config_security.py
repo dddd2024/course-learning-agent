@@ -9,12 +9,46 @@ keys are lost. The companion CLI script is
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ipaddress
+import socket
+from urllib.parse import urlsplit
 
 from sqlalchemy.orm import Session
 
 from app.core import crypto
 from app.core.config import settings
 from app.models.llm_config import UserLLMConfig
+
+
+def validate_llm_base_url(value: str) -> str:
+    """Reject malformed and production-private LLM endpoints.
+
+    Development keeps local endpoints available for the existing Windows
+    workflow. Production resolves DNS before accepting a URL so a hostname
+    cannot bypass the private-address policy.
+    """
+    parsed = urlsplit(value.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Base URL 必须是包含主机名的 http 或 https 地址")
+    if parsed.username or parsed.password:
+        raise ValueError("Base URL 不允许包含用户名或密码")
+    if settings.ENVIRONMENT.lower() != "production":
+        return value.rstrip("/")
+
+    host = parsed.hostname.lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        raise ValueError("生产环境不允许 LLM Base URL 指向本地地址")
+    try:
+        addresses = {item[4][0] for item in socket.getaddrinfo(host, parsed.port or 443)}
+    except OSError as exc:
+        raise ValueError("Base URL 主机名无法解析") from exc
+    for address in addresses:
+        ip = ipaddress.ip_address(address)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_reserved:
+            raise ValueError("生产环境不允许 LLM Base URL 指向私有或保留地址")
+        if str(ip) == "169.254.169.254":
+            raise ValueError("生产环境不允许 LLM Base URL 指向云元数据地址")
+    return value.rstrip("/")
 
 
 @dataclass

@@ -118,6 +118,15 @@ function formatTime(dt: string | null | undefined): string {
             :citations="msg.citations"
             @open="emit('open-citation', $event, msg)"
           />
+          <el-alert
+            v-if="msg.citations?.some((citation) => citation.support_status && citation.support_status !== 'verified')"
+            type="info"
+            :closable="false"
+            show-icon
+            class="citation-support-alert"
+          >
+            部分资料片段仅与回答相关，自动校验尚未确认其直接支撑关系。
+          </el-alert>
           <div v-else class="no-citation">
             本次回答未找到直接资料依据
           </div>
@@ -263,6 +272,12 @@ function formatTime(dt: string | null | undefined): string {
 }
 
 .fallback-alert {
+  margin-top: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.citation-support-alert {
   margin-top: 6px;
   padding: 4px 10px;
   font-size: 12px;
