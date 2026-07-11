@@ -30,13 +30,13 @@ def _make_duplicate_citations(ranked):
         "citations": [
             {
                 "chunk_id": top["chunk_id"],
-                "quote_text": "第一处引用文本",
+                "quote_text": "快表 TLB 是页表的高速缓存",
                 "reason": "原因 A",
                 "confidence": 0.8,
             },
             {
                 "chunk_id": top["chunk_id"],
-                "quote_text": "第二处引用文本（重复 chunk）",
+                "quote_text": "快表 TLB 是页表的高速缓存",
                 "reason": "原因 B",
                 "confidence": 0.6,
             },
