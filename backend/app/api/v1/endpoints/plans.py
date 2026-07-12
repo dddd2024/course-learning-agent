@@ -950,21 +950,27 @@ def _load_multi_plan_detail(
     task_ids = [pt.task_id for pt in plan_tasks if pt.task_id is not None]
     course_ids = {pt.course_id for pt in plan_tasks}
 
-    task_title_by_id: dict[int, str] = {}
+    task_by_id: dict[int, StudyTask] = {}
     if task_ids:
         for t in db.query(StudyTask).filter(StudyTask.id.in_(task_ids)).all():
-            task_title_by_id[t.id] = t.title
+            task_by_id[t.id] = t
 
     course_name_by_id = _load_course_names(db, course_ids)
 
     task_items: list[MultiPlanTaskItem] = []
     for pt in plan_tasks:
+        task = task_by_id.get(pt.task_id) if pt.task_id else None
+        # Default detail is the current schedule generation. Historical task
+        # rows stay durable and can be queried explicitly for audit, but they
+        # must not duplicate today's actionable schedule.
+        if task is None or task.generation != multi_plan.generation_version:
+            continue
         task_items.append(
             MultiPlanTaskItem(
                 task_id=pt.task_id,
                 course_id=pt.course_id,
                 course_name=course_name_by_id.get(pt.course_id, ""),
-                title=task_title_by_id.get(pt.task_id, "") if pt.task_id else "",
+                title=task.title,
                 scheduled_date=pt.scheduled_date,
                 estimate_minutes=pt.estimate_minutes,
                 unscheduled_reason=pt.unscheduled_reason,
@@ -1137,9 +1143,12 @@ def reschedule_multi_plan(
     # Preserve historical tasks, events, todos and quiz results.  Only
     # unstarted pending rows are superseded by the next schedule generation;
     # completed and in-progress rows stay frozen and readable.
+    superseded_by_key: dict[str, list[StudyTask]] = {}
     for old_task in db.query(StudyTask).filter(StudyTask.id.in_(old_task_ids)).all() if old_task_ids else []:
         if old_task.execution_status == "pending" and old_task.status == "pending":
             old_task.schedule_status = "superseded"
+            if old_task.stable_task_key:
+                superseded_by_key.setdefault(old_task.stable_task_key, []).append(old_task)
 
     # Update the plan's daily_minutes.
     plan.daily_minutes = payload.daily_minutes
@@ -1224,6 +1233,8 @@ def reschedule_multi_plan(
         )
         db.add(task)
         db.flush()
+        for superseded_task in superseded_by_key.pop(task.stable_task_key, []):
+            superseded_task.superseded_by_task_id = task.id
 
         db.add(MultiCoursePlanTask(
             multi_plan_id=plan.id,

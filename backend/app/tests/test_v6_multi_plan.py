@@ -228,6 +228,13 @@ def test_reschedule_keeps_completed_and_in_progress_task_history(client) -> None
         frozen = db.query(StudyTask).filter(StudyTask.id.in_(frozen_ids)).all()
         assert {task.id for task in frozen} == frozen_ids
         assert {task.execution_status for task in frozen} == {"completed", "in_progress"}
-        assert any(task.generation >= 2 for task in db.query(StudyTask).all())
+        current = [task for task in db.query(StudyTask).all() if task.generation >= 2]
+        assert current
+        superseded = db.query(StudyTask).filter_by(schedule_status="superseded").all()
+        assert all(task.superseded_by_task_id is not None for task in superseded)
     finally:
         db.close()
+
+    detail = client.get(f"/api/v1/plans/multi/{plan_id}", headers=headers)
+    assert detail.status_code == 200
+    assert {row["task_id"] for row in detail.json()["tasks"]} <= {task.id for task in current}
