@@ -436,17 +436,11 @@ def update_task(
     if task is None:
         raise NotFoundException(message="任务不存在")
 
-    if payload.status is not None and payload.status in {"done", "completed"}:
-        raise BusinessException(
-            message="任务不能直接标记为完成，请通过验证端点完成",
-            status_code=400,
-        )
-
     if payload.status is not None:
-        task.status = payload.status
-
-    db.commit()
-    db.refresh(task)
+        raise BusinessException(
+            message="任务状态仅能通过任务执行状态机变更",
+            status_code=409,
+        )
 
     course = db.query(Course).filter(Course.id == task.course_id).first()
     course_name = course.name if course else ""

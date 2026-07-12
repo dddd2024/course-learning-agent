@@ -2,11 +2,11 @@
   "version": "v7.1",
   "branch": "codex/v7-production-integration",
   "base_commit": "53a1221",
-  "current_head": "d12def25b97c6ab0fa9eb0ed86b58c3091bbdc07",
+  "current_head": "f04ff79b45cbff03adebb1397996bcbacabbe4b7",
   "started_at": "2026-07-12T00:00:00+08:00",
   "updated_at": "2026-07-12T00:00:00+08:00",
   "overall_status": "in_progress",
-  "current_task": "V7-CONT-03",
+  "current_task": "V7-CONT-04",
   "tasks": {
     "V7-CONT-00": {
       "status": "verified",
@@ -27,7 +27,9 @@
       "evidence": [
         "parse_file returns Document IR and parse_with_retry uses semantic_chunk_document with persisted provenance."
       ],
-      "commits": [],
+      "commits": [
+        "f04ff79 fix(v7): preserve versioned reader evidence"
+      ],
       "tests": [
         "python -m pytest backend/app/tests/test_v7_document_ir_pipeline.py -q --tb=short"
       ],
@@ -38,21 +40,27 @@
       "evidence": [
         "Reparse preserves prior MaterialPage versions; page API selects active version; LearnView clean/raw/page rendering is exclusive."
       ],
-      "commits": [],
+      "commits": [
+        "f04ff79 fix(v7): preserve versioned reader evidence"
+      ],
       "tests": [
         "python -m pytest backend/app/tests/test_v7_document_ir_pipeline.py -q --tb=short"
       ],
       "notes": ""
     },
     "V7-CONT-03": {
-      "status": "in_progress",
-      "evidence": [],
+      "status": "verified",
+      "evidence": [
+        "Retry and override delegate lifecycle writes to transition_task; direct task PATCH status mutation is rejected."
+      ],
       "commits": [],
-      "tests": [],
+      "tests": [
+        "python -m pytest backend/app/tests/test_v6_state_machine.py backend/app/tests/test_v6_task_flows.py backend/app/tests/test_v3_plan_execution.py backend/app/tests/test_v7_no_legacy_paths.py -q --tb=short"
+      ],
       "notes": ""
     },
     "V7-CONT-04": {
-      "status": "not_started",
+      "status": "in_progress",
       "evidence": [],
       "commits": [],
       "tests": [],

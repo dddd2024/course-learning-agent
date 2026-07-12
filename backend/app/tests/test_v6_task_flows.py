@@ -22,6 +22,7 @@ from app.models.plan import StudyGoal, StudyTask, TaskExecutionEvent
 from app.models.quiz import QuizItem
 from app.schemas.quiz import QuizSubmit, QuizSubmitAnswer
 from app.services.task_execution_service import (
+    override_task,
     record_task_event,
     retry_task,
     start_task,
@@ -104,6 +105,42 @@ def _mock_generate_quiz(**kwargs: Any) -> dict[str, Any]:
             },
         ],
     }
+
+
+def test_override_uses_state_machine_and_records_event(
+    db_session, sample_user, sample_course
+):
+    goal = _make_goal(db_session, sample_user, title="Override goal")
+    material = Material(
+        user_id=sample_user.id,
+        course_id=sample_course.id,
+        filename="notes.txt",
+        file_type="txt",
+        file_path="notes.txt",
+        status="ready",
+    )
+    db_session.add(material)
+    db_session.flush()
+    task = _make_task(
+        db_session,
+        goal,
+        sample_course,
+        "learn",
+        "material",
+        material.id,
+        spec={"material_id": material.id},
+    )
+    start_task(db_session, task.id, sample_user.id)
+
+    result = override_task(db_session, task.id, sample_user.id, "documented exception")
+
+    db_session.refresh(task)
+    assert result["todos_completed"] == 0
+    assert task.execution_status == "completed"
+    assert task.verification_method == "manual_override"
+    assert db_session.query(TaskExecutionEvent).filter_by(
+        task_id=task.id, event_type="task_override"
+    ).count() == 1
 
 
 def _event_types(db, task_id: int) -> set[str]:

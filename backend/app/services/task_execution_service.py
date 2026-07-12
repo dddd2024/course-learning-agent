@@ -28,11 +28,10 @@ from app.core.exceptions import BusinessException, NotFoundException
 from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
 from app.models.material import Material
-from app.models.plan import StudyGoal, StudyTask, TaskExecutionEvent, Todo
+from app.models.plan import StudyGoal, StudyTask, TaskExecutionEvent
 from app.models.quiz import Quiz, QuizItem
 from app.services.llm_config_service import build_user_config, get_active_config
 from app.services.task_target_resolver import ensure_target_spec
-from app.services.plan_state_service import recompute_goal
 from app.services.task_state_machine import transition_task
 
 logger = logging.getLogger(__name__)
@@ -147,14 +146,6 @@ def _create_quiz_for_task(
     return quiz.id
 
 
-def _record_event(db: Session, task: StudyTask, user_id: int, event_type: str, payload: dict | None = None) -> None:
-    db.add(TaskExecutionEvent(
-        task_id=task.id, user_id=user_id, event_type=event_type,
-        target_type=task.target_type, target_id=task.target_id,
-        payload_json=json.dumps(payload or {}, ensure_ascii=False), occurred_at=datetime.now(),
-    ))
-
-
 def _build_route_info(task: StudyTask, quiz_id: int | None) -> dict[str, Any]:
     """Build routing info for the frontend based on task type."""
     route = ""
@@ -230,48 +221,6 @@ def start_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
     }
 
 
-def _recalculate_goal_progress(db: Session, goal_id: int) -> None:
-    """Recalculate the parent Goal's progress after a task completes.
-
-    Updates the Goal's status to ``done`` if all tasks are done.
-    """
-    tasks = (
-        db.query(StudyTask)
-        .filter(StudyTask.goal_id == goal_id)
-        .all()
-    )
-    total = len(tasks)
-    completed = sum(1 for t in tasks if t.status in {"done", "completed"})
-
-    if total > 0 and completed == total:
-        goal = db.query(StudyGoal).filter(StudyGoal.id == goal_id).first()
-        if goal is not None and goal.status != "done":
-            goal.status = "done"
-
-
-def _complete_associated_todos(db: Session, task_id: int, user_id: int) -> int:
-    """Mark all pending todos for a task as completed.
-
-    Returns the number of todos completed.
-    """
-    todos = (
-        db.query(Todo)
-        .filter(
-            Todo.task_id == task_id,
-            Todo.user_id == user_id,
-            Todo.status != "completed",
-        )
-        .all()
-    )
-    now = datetime.now()
-    count = 0
-    for todo in todos:
-        todo.status = "completed"
-        todo.completed_at = now
-        count += 1
-    return count
-
-
 def record_task_event(db: Session, task_id: int, user_id: int, event_type: str, target_id: int, material_version_id: int | None = None, note: str | None = None) -> dict[str, Any]:
     task = _get_owned_task(db, task_id, user_id)
     allowed = {"learn": {"target_loaded", "user_confirmed"}, "review": {"target_loaded", "review_confirmed"}}
@@ -309,17 +258,14 @@ def retry_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
     task = _get_owned_task(db, task_id, user_id)
     if task.task_type != "quiz":
         raise BusinessException(message="只有测验任务可以重新练习", status_code=422)
+    ensure_target_spec(db, task)
+    new_id = _create_quiz_for_task(db, task, user_id)
+    # The state machine owns the completed -> in_progress transition and
+    # records the previous quiz in target_spec_json as audit history.
+    transition_task(db, task, "retry", user_id, commit=False)
     spec = ensure_target_spec(db, task)
     history = list(spec.get("history_quiz_ids") or [])
-    if task.target_id is not None and task.target_id not in history:
-        history.append(task.target_id)
-    new_id = _create_quiz_for_task(db, task, user_id)
-    spec["history_quiz_ids"] = history
     task.target_type, task.target_id = "quiz", new_id
-    task.target_spec_json = json.dumps(spec, ensure_ascii=False)
-    task.execution_status, task.status, task.completed_at = "in_progress", "pending", None
-    task.last_action_at = datetime.now()
-    recompute_goal(db, task.goal_id)
     db.commit()
     return {"quiz_id": new_id, "target_id": new_id, "history_quiz_ids": history, "action_type": "open_quiz", "route_name": "quizzes", "route_params": {"quiz_id": new_id}}
 
@@ -354,7 +300,17 @@ def verify_task(db: Session, task_id: int, user_id: int, confirmation: bool | No
     else:
         required = {"learn": {"target_loaded", "user_confirmed"}, "review": {"target_loaded", "review_confirmed"}}[task.task_type]
         if confirmation:
-            _record_event(db, task, user_id, "user_confirmed" if task.task_type == "learn" else "review_confirmed", {"note": note} if note else {})
+            transition_task(
+                db,
+                task,
+                "record_event",
+                user_id,
+                evidence={
+                    "event_type": "user_confirmed" if task.task_type == "learn" else "review_confirmed",
+                    "note": note,
+                },
+                commit=False,
+            )
         seen = {row.event_type for row in db.query(TaskExecutionEvent).filter(TaskExecutionEvent.task_id == task.id, TaskExecutionEvent.user_id == user_id).all()}
         verified = required <= seen
         verification_result.update({"required_events": sorted(required), "observed_events": sorted(seen), "passed": verified})
@@ -430,7 +386,9 @@ def override_task(
         "previous_execution_status": task.execution_status,
     }
 
-    todos_completed = mark_task_completed(db, task, manual=True)
+    transition = transition_task(
+        db, task, "override", user_id, reason=reason, commit=False
+    )
     task.verification_method = "manual_override"
     task.verification_result_json = json.dumps(
         override_record, ensure_ascii=False
@@ -446,7 +404,7 @@ def override_task(
         "completion_status": "completed",
         "execution_status": task.execution_status,
         "status": task.status,
-        "todos_completed": todos_completed,
+        "todos_completed": transition["todos_affected"],
     }
 
 
