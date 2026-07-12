@@ -157,6 +157,36 @@ def test_remove_from_fts_index(db_session, sample_user, sample_course):
     assert all(r["chunk_id"] != chunk.id for r in results)
 
 
+def test_version_switch_removes_old_active_chunk_from_fts(
+    db_session, sample_user, sample_course
+):
+    """Only the active material version may remain in the retrieval index."""
+    material = _create_material(db_session, sample_user, sample_course)
+    old = _create_chunk(db_session, sample_course, material, "obsolete TLB definition")
+    new = _create_chunk(
+        db_session, sample_course, material, "current TCP definition", chunk_index=1, is_active=0
+    )
+    update_fts_index(db_session, [old.id, new.id])
+    old.is_active, new.is_active = 0, 1
+    db_session.flush()
+    update_fts_index(db_session, [old.id, new.id])
+
+    assert all(row["chunk_id"] != old.id for row in fts_search(db_session, sample_course.id, "TLB"))
+    assert any(row["chunk_id"] == new.id for row in fts_search(db_session, sample_course.id, "TCP"))
+
+
+def test_keyword_search_falls_back_when_fts_is_unavailable(
+    db_session, sample_user, sample_course, monkeypatch
+):
+    material = _create_material(db_session, sample_user, sample_course)
+    chunk = _create_chunk(db_session, sample_course, material, "TCP fallback search evidence")
+    db_session.commit()
+    monkeypatch.setattr("app.retrieval.search._ensure_fts_table", lambda _db: (_ for _ in ()).throw(RuntimeError("FTS unavailable")))
+
+    results = keyword_search(db_session, sample_course.id, "TCP")
+    assert any(row["chunk_id"] == chunk.id for row in results)
+
+
 # ---------------------------------------------------------------------------
 # Search works without rebuild_fts_index being called
 # ---------------------------------------------------------------------------
@@ -223,7 +253,7 @@ def test_fts_index_after_parse(db_session, sample_user, sample_course, tmp_path,
     """After material parsing, chunks are in FTS without explicit rebuild."""
     monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
 
-    from app.retrieval.parsers import ParsedPage, TextBlock
+    from app.retrieval.document_ir import DocumentBlock, DocumentPage
     from app.services.material_parser import parse_with_retry
 
     material = Material(
@@ -247,13 +277,17 @@ def test_fts_index_after_parse(db_session, sample_user, sample_course, tmp_path,
     # Mock parse_fn to return a simple page
     def mock_parse_fn(file_path, file_type):
         return [
-            ParsedPage(
-                page_no=1,
-                blocks=[
-                    TextBlock(
-                        text="Page cache and TLB translation lookaside "
-                        "buffer for virtual address translation."
-                    )
+                DocumentPage(
+                    page_no=1,
+                    blocks=[
+                        DocumentBlock(
+                            block_id="fts-source-1",
+                            page_no=1,
+                            block_type="body",
+                            reading_order=1,
+                            text="Page cache and TLB translation lookaside "
+                            "buffer for virtual address translation."
+                        )
                 ],
             )
         ]
