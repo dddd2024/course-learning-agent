@@ -2,11 +2,11 @@
   "version": "v7.1",
   "branch": "codex/v7-production-integration",
   "base_commit": "53a1221",
-  "current_head": "58ef5ccb019964f1c95dd7eab7bf1989359a35e7",
+  "current_head": "aa608956b568078d0510eb4b7f071cc52fd91838",
   "started_at": "2026-07-12T00:00:00+08:00",
   "updated_at": "2026-07-12T00:00:00+08:00",
   "overall_status": "in_progress",
-  "current_task": "V7-CONT-10",
+  "current_task": "V7-CONT-06",
   "tasks": {
     "V7-CONT-00": {
       "status": "verified",
@@ -90,7 +90,7 @@
       "notes": ""
     },
     "V7-CONT-06": {
-      "status": "verified",
+      "status": "implemented_unverified",
       "evidence": [
         "Explicit quiz constraints validate requested active KP scope, question count, supported types, difficulty distribution and pass score; unsatisfied requests return structured QUIZ_CONSTRAINT_UNSATISFIED without persisting a partial quiz."
       ],
@@ -104,7 +104,7 @@
       "notes": ""
     },
     "V7-CONT-07": {
-      "status": "verified",
+      "status": "implemented_unverified",
       "evidence": [
         "Quiz submission validates bound task before mutations and runs scoring, weak points, task verification, todos and goals in one transaction."
       ],
@@ -114,7 +114,7 @@
       "tests": [
         "python -m pytest backend/app/tests/test_v6_task_flows.py backend/app/tests/test_quizzes.py -q --tb=short"
       ],
-      "notes": ""
+      "notes": "Atomic code path is covered by happy-path regression only; failure-injection rollback proof remains required."
     },
     "V7-CONT-08": {
       "status": "verified",
@@ -130,7 +130,7 @@
       "notes": ""
     },
     "V7-CONT-09": {
-      "status": "verified",
+      "status": "implemented_unverified",
       "evidence": [
         "Reschedule retains completed and in-progress StudyTask rows, supersedes only pending schedule rows, and creates a new plan generation."
       ],
@@ -140,28 +140,36 @@
       "tests": [
         "python -m pytest backend/app/tests/test_v6_multi_plan.py -q --tb=short"
       ],
-      "notes": ""
+      "notes": "History preservation is implemented, but stable-key reuse, superseded linkage, and active-generation default reads require final verification."
     },
     "V7-CONT-10": {
-      "status": "implemented_unverified",
+      "status": "verified",
       "evidence": [
         "parse_with_retry accepts worker cancellation signal, checks it before staging/activation, and returns cancelled without activating a new version."
       ],
       "commits": [
         "2b29a96 fix(v7): cancel parse before version activation",
-        "58ef5cc fix(v7): keep cancelled parse jobs terminal"
+        "58ef5cc fix(v7): keep cancelled parse jobs terminal",
+        "aa60895 fix(v7): stage parser images until activation"
       ],
       "tests": [
         "python -m pytest backend/app/tests/test_v7_document_ir_pipeline.py backend/app/tests/test_v6_parse_worker.py backend/app/tests/test_parse_retry_timeout.py -q --tb=short"
       ],
-      "notes": ""
+      "notes": "Cancellation is checked before source/staging/chunks/images/activation; PDF images are staged with no commit until the version switch."
     },
     "V7-CONT-11": {
-      "status": "in_progress",
-      "evidence": [],
-      "commits": [],
-      "tests": [],
-      "notes": ""
+      "status": "verified",
+      "evidence": [
+        "ParseWorker recovers stale running jobs before every claim, so a replacement worker can resume work after a crashed sibling.",
+        "A real two-child-process test terminates the first worker, makes its heartbeat stale, and verifies the second worker completes exactly one active material version."
+      ],
+      "commits": [
+        "f0b144c feat(v7): recover stale parse jobs on worker startup"
+      ],
+      "tests": [
+        "python -m pytest backend/app/tests/test_v6_parse_worker.py -q --tb=short"
+      ],
+      "notes": "Requires a final strict-contract audit for persisted pass-score semantics and legacy request compatibility."
     },
     "V7-CONT-12": {
       "status": "not_started",
