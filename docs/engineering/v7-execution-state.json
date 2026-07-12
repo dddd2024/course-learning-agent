@@ -2,7 +2,7 @@
   "version": "v7.1",
   "branch": "codex/v7-production-integration",
   "base_commit": "53a1221",
-  "current_head": "e5c0179f65e5c8a6157ca345128ccb552eac20c7",
+  "current_head": "58ef5ccb019964f1c95dd7eab7bf1989359a35e7",
   "started_at": "2026-07-12T00:00:00+08:00",
   "updated_at": "2026-07-12T00:00:00+08:00",
   "overall_status": "in_progress",
@@ -147,7 +147,10 @@
       "evidence": [
         "parse_with_retry accepts worker cancellation signal, checks it before staging/activation, and returns cancelled without activating a new version."
       ],
-      "commits": [],
+      "commits": [
+        "2b29a96 fix(v7): cancel parse before version activation",
+        "58ef5cc fix(v7): keep cancelled parse jobs terminal"
+      ],
       "tests": [
         "python -m pytest backend/app/tests/test_v7_document_ir_pipeline.py backend/app/tests/test_v6_parse_worker.py backend/app/tests/test_parse_retry_timeout.py -q --tb=short"
       ],
