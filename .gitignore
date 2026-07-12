@@ -32,6 +32,11 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+# Playwright test artifacts
+playwright-report/
+playwright-results.json
+test-results/
+
 # IDE
 .vscode/
 .idea/
@@ -53,36 +58,24 @@ credentials.json
 *.db
 *.sqlite
 *.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+*.db.backup-*
+*.backup
 course_assistant.db
 
 # Storage (user uploads / parsed / exports)
-storage/uploads/
-storage/parsed/
-storage/exports/
+storage/
 
 # Build artifacts
 build/
 *.egg-info/
 .eggs/
+artifacts/
+tmp/
 
 # OS
 Thumbs.db
 ehthumbs.db
 Desktop.ini
-
-# Database backups and WAL files
-*.db-shm
-*.db-wal
-*.db.backup-*
-
-
-tmp/
-*.db
-*.db-journal
-*.db-wal
-*.backup
-artifacts/
-node_modules/
-__pycache__/
-.pytest_cache/
-storage/
