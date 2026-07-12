@@ -60,6 +60,7 @@ const mockQuiz: Quiz = {
   question_count: 1,
   status: 'submitted',
   score: 80,
+  pass_score: 60,
   created_at: '2024-01-01T00:00:00Z',
   items: [
     {
