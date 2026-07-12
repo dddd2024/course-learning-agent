@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.timezone import utc_now
 from app.models.material import Material
 from app.models.parse_job import ParseJob
-from app.services.parse_job_service import claim_next_job
+from app.services.parse_job_service import claim_next_job, recover_stale_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -82,10 +82,12 @@ class ParseWorker:
         """Pick up one queued job and process it.
 
         Returns ``True`` if a job was processed, ``False`` if the queue
-        was empty.
+        was empty.  Stale jobs are recovered before the claim so a worker
+        restart is sufficient to resume work after a crashed sibling.
         """
         db = self.session_factory()
         try:
+            recover_stale_jobs(db, timeout_seconds=STALE_HEARTBEAT_TIMEOUT)
             job = self._acquire_job(db)
             if job is None:
                 return False

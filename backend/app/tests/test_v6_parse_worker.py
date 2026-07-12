@@ -8,9 +8,13 @@ tests cover the worker contract and the API/job-service changes.
 from __future__ import annotations
 
 import io
+import os
+import subprocess
+import sys
 import threading
 import time
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -28,7 +32,7 @@ from app.services.parse_job_service import (
     recover_stale_jobs,
 )
 from app.tests.conftest import auth_headers, create_course, upload_material
-from app.workers.parse_worker import ParseWorker
+from app.workers.parse_worker import ParseWorker, STALE_HEARTBEAT_TIMEOUT
 
 
 # ---------------------------------------------------------------------------
@@ -358,3 +362,101 @@ def test_cancelled_job_not_processed(db_session, sample_user, sample_course):
 
     job = _refresh(db_session, job)
     assert job.status == "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# 11. A killed worker process is recovered by an independent worker process.
+# ---------------------------------------------------------------------------
+def test_worker_process_crash_is_recovered_without_duplicate_active_version(
+    db_session, sample_user, sample_course, tmp_path, monkeypatch
+):
+    """Prove the durable recovery path across real interpreter processes.
+
+    The first child claims the durable job and blocks inside its parser.  The
+    parent terminates that interpreter, marks its last heartbeat stale, and a
+    second child runs the production parser against the same file-backed
+    SQLite database.  This guards the production failure mode rather than
+    merely unit-testing ``recover_stale_jobs`` in one process.
+    """
+    from app.core.config import settings
+    from app.models.material import MaterialVersion
+
+    monkeypatch.setattr(settings, "UPLOAD_DIR", str(tmp_path))
+    source = tmp_path / "crash-recovery.txt"
+    source.write_text("TCP/IP crash recovery source", encoding="utf-8")
+    material = Material(
+        user_id=sample_user.id,
+        course_id=sample_course.id,
+        filename=source.name,
+        file_type="txt",
+        file_path=source.name,
+        status="processing",
+    )
+    db_session.add(material)
+    db_session.commit()
+    job = _make_job(db_session, material, sample_user)
+
+    db_path = db_session.get_bind().url.database
+    env = os.environ.copy()
+    env.update({
+        "DATABASE_URL": f"sqlite:///{db_path}",
+        "UPLOAD_DIR": str(tmp_path),
+        "PYTHONPATH": str(Path(__file__).parents[2]),
+    })
+    blocker = """
+import threading
+from app.core.database import SessionLocal
+from app.workers.parse_worker import ParseWorker
+
+def hold_parse(db, material, user_id):
+    threading.Event().wait(60)
+    return "ready", 0
+
+ParseWorker(SessionLocal, parse_fn=hold_parse, heartbeat_interval=0.05).run_once()
+"""
+    first = subprocess.Popen([sys.executable, "-c", blocker], env=env)
+    try:
+        wait = threading.Event()
+        for _ in range(100):
+            running = _refresh(db_session, job)
+            if running.status == "running":
+                break
+            wait.wait(0.05)
+        else:
+            raise AssertionError("child worker did not claim the queued parse job")
+
+        first.terminate()
+        first.wait(timeout=10)
+
+        running = _refresh(db_session, job)
+        assert running.status == "running"
+        running.heartbeat_at = utc_now() - timedelta(seconds=STALE_HEARTBEAT_TIMEOUT + 1)
+        db_session.commit()
+
+        # The replacement worker performs stale recovery as part of its
+        # normal startup/claim path, then claims and finishes this same job.
+        recovery = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from app.core.database import SessionLocal; from app.workers.parse_worker import ParseWorker; ParseWorker(SessionLocal, heartbeat_interval=0.05).run_once()",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert recovery.returncode == 0, recovery.stderr
+    finally:
+        if first.poll() is None:
+            first.terminate()
+            first.wait(timeout=10)
+
+    job = _refresh(db_session, job)
+    db_session.expire_all()
+    material = db_session.get(Material, material.id)
+    versions = db_session.query(MaterialVersion).filter_by(material_id=material.id).all()
+    assert job.status == "succeeded"
+    assert material.status == "ready"
+    assert len(versions) == 1
+    assert material.active_version_id == versions[0].id
