@@ -319,13 +319,13 @@ jobs:
           echo "Checking for skipped tests..."
           # Check backend tests for skips
           if [ -f artifacts/backend/backend-test-result.txt ]; then
-            SKIPPED=$(grep -i "skip" artifacts/backend/backend-test-result.txt | wc -l)
+            SKIPPED=$(python -c "from pathlib import Path; print(sum('skip' in line.lower() for line in Path('artifacts/backend/backend-test-result.txt').read_text(encoding='utf-8').splitlines()))")
             echo "Backend skipped lines: $SKIPPED"
             test "$SKIPPED" -eq 0
           fi
           # Check frontend tests for skips
           if [ -f artifacts/frontend/frontend-test-result.txt ]; then
-            SKIPPED=$(grep -i "skip" artifacts/frontend/frontend-test-result.txt | wc -l)
+            SKIPPED=$(python -c "from pathlib import Path; print(sum('skip' in line.lower() for line in Path('artifacts/frontend/frontend-test-result.txt').read_text(encoding='utf-8').splitlines()))")
             echo "Frontend skipped lines: $SKIPPED"
             test "$SKIPPED" -eq 0
           fi
