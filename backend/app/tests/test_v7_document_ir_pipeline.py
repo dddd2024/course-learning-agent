@@ -93,6 +93,29 @@ def test_reparse_preserves_historical_page_version(db_session, sample_user, samp
     assert {page.material_version_id for page in pages} == {versions[0].id, versions[1].id}
 
 
+def test_cancelled_parse_never_creates_or_activates_a_version(
+    db_session, sample_user, sample_course, tmp_path, monkeypatch
+):
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    (tmp_path / "notes.txt").write_text("TCP/IP cancellation test", encoding="utf-8")
+    material = Material(
+        user_id=sample_user.id, course_id=sample_course.id, filename="notes.txt",
+        file_type="txt", file_path="notes.txt", status="uploaded",
+    )
+    db_session.add(material)
+    db_session.commit()
+
+    status, count = parse_with_retry(
+        db_session, material, sample_user.id, is_cancelled=lambda: True
+    )
+
+    db_session.refresh(material)
+    assert (status, count) == ("cancelled", 0)
+    assert material.status == "uploaded"
+    assert material.active_version_id is None
+    assert db_session.query(MaterialVersion).filter_by(material_id=material.id).count() == 0
+
+
 def test_clean_reader_mode_does_not_render_page_clean_text_twice():
     source = (Path(__file__).parents[3] / "frontend" / "src" / "views" / "LearnView.vue").read_text(encoding="utf-8")
 

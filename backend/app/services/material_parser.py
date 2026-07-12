@@ -53,6 +53,10 @@ RETRY_DELAYS_SECONDS = (0, 2, 5)  # course-project-friendly; not too slow
 _NON_RETRYABLE_HINTS = ("unsupported file type", "file not found", "permission")
 
 
+class ParseCancelled(Exception):
+    """Internal control-flow signal: do not activate a partial parse."""
+
+
 def _is_retryable(exc: Exception) -> bool:
     """Heuristic: retry on parser/runtime errors, not on config errors."""
     msg = (str(exc) or "").lower()
@@ -75,6 +79,7 @@ def parse_with_retry(
     max_retries: int = MAX_PARSE_RETRIES,
     parse_fn: Callable[[str, str], list] | None = None,
     sleep_fn: Callable[[float], None] | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> tuple[str, int]:
     """Run the parse with bounded retry.
 
@@ -92,6 +97,10 @@ def parse_with_retry(
     material_id = material.id
     existing_chunk_count = _count_existing_chunks(db, material_id)
 
+    def check_cancelled() -> None:
+        if is_cancelled is not None and is_cancelled():
+            raise ParseCancelled()
+
     material.status = "processing"
     material.error_message = None
     # Preserve the parse_started_at set by the parse endpoint so the
@@ -108,12 +117,15 @@ def parse_with_retry(
         material.parse_attempts = attempt
         db.commit()
         try:
+            check_cancelled()  # before reading source
             file_path = Path(settings.UPLOAD_DIR) / material.file_path
             pages = parse_fn(str(file_path), material.file_type)
+            check_cancelled()  # after parser
             # parse_file's V7 production contract is Document IR; no tuple
             # or fixed-window compatibility path is permitted here.
             clean_results = clean_pages([page.text for page in pages])
             chunks = semantic_chunk_document(pages)
+            check_cancelled()  # before creating a staging version
 
             # Preserve old evidence: a successful parse creates a new
             # immutable version and only the active version participates in
@@ -176,6 +188,7 @@ def parse_with_retry(
             for page, cleaned in zip(pages, clean_results):
                 raw = page.text
                 db.add(MaterialPage(material_id=material_id, material_version_id=version_row.id, page_no=page.page_no, page_type=page.page_type, parser_version=page.parser_version, raw_text=raw, clean_text=cleaned.text, blocks_json=json.dumps([block.to_dict() for block in page.blocks], ensure_ascii=False), decisions_json=json.dumps(cleaned.decisions, ensure_ascii=False)))
+            check_cancelled()  # before writing chunks
             # Collect old active chunk ids before deactivating so we can
             # update the FTS index after the commit.
             old_chunk_ids_new = [
@@ -254,6 +267,8 @@ def parse_with_retry(
 
             db.flush()
 
+            check_cancelled()  # before image extraction / indexing
+
             # --- Image extraction (PDF only) ---
             if material.file_type.lower() == "pdf":
                 try:
@@ -265,6 +280,8 @@ def parse_with_retry(
 
             for f in security_scanner.scan_material_chunks(saved_chunks):
                 db.add(f)
+
+            check_cancelled()  # immediately before active-version switch
 
             material.status = "ready"
             version_row.status = "ready"
@@ -288,6 +305,16 @@ def parse_with_retry(
                 except Exception as fts_exc:
                     logger.warning("FTS index update failed for material %s: %s", material_id, fts_exc)
             return "ready", len(chunks)
+        except ParseCancelled:
+            db.rollback()
+            material = db.query(Material).filter(Material.id == material_id).first()
+            if material is not None:
+                material.status = "ready" if existing_chunk_count else "uploaded"
+                material.parse_finished_at = utc_now()
+                material.last_parse_error = "解析已取消"
+                material.error_message = None
+                db.commit()
+            return "cancelled", 0
         except Exception as exc:  # noqa: BLE001 - any parse failure
             db.rollback()
             material = (

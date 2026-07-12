@@ -21,6 +21,7 @@ Key design points
 from __future__ import annotations
 
 import logging
+import inspect
 import threading
 import time
 from typing import Callable, Optional
@@ -170,9 +171,22 @@ class ParseWorker:
         first_tick_done.wait(timeout=2.0)
 
         try:
-            status, _chunk_count = self.parse_fn(db, material, job.user_id)
+            def is_cancelled() -> bool:
+                cancel_db = self.session_factory()
+                try:
+                    latest = cancel_db.get(ParseJob, job_id)
+                    return latest is None or latest.status == "cancelled"
+                finally:
+                    cancel_db.close()
+
+            if "is_cancelled" in inspect.signature(self.parse_fn).parameters:
+                status, _chunk_count = self.parse_fn(
+                    db, material, job.user_id, is_cancelled=is_cancelled
+                )
+            else:
+                status, _chunk_count = self.parse_fn(db, material, job.user_id)
             db.refresh(job)
-            if job.status == "cancelled":
+            if job.status == "cancelled" or status == "cancelled":
                 return
             job.status = "succeeded" if status == "ready" else "failed"
             job.finished_at = utc_now()
