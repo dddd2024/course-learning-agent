@@ -183,7 +183,7 @@ def parse_material(
 
     job, created = create_or_get_job(db, material, current_user.id, include_created=True)
     if created:
-        background_tasks.add_task(run_job, job.id)
+        background_tasks.add_task(run_job, job.id, parse_with_retry)
 
     return ParseResponse(
         material_id=material_id,
@@ -219,7 +219,7 @@ def retry_parse_job(material_id: int, job_id: int, background_tasks: BackgroundT
     if old.status in {"queued", "running"}:
         return {"job_id": old.id, "status": old.status}
     job = create_or_get_job(db, material, current_user.id)
-    background_tasks.add_task(run_job, job.id)
+    background_tasks.add_task(run_job, job.id, parse_with_retry)
     return {"job_id": job.id, "status": job.status}
 
 

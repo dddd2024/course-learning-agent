@@ -9,6 +9,7 @@ from app.core.timezone import utc_now
 from app.models.material import Material
 from app.models.parse_job import ParseJob
 from app.services.material_parser import parse_with_retry
+from app.services.error_logger import log_error
 
 ACTIVE = {"queued", "running"}
 
@@ -27,7 +28,7 @@ def create_or_get_job(db: Session, material: Material, user_id: int, *, include_
     return (job, True) if include_created else job
 
 
-def run_job(job_id: int) -> None:
+def run_job(job_id: int, parse_fn=None) -> None:
     from app.core.database import SessionLocal
     db = SessionLocal()
     try:
@@ -41,7 +42,7 @@ def run_job(job_id: int) -> None:
         job.status, job.started_at, job.heartbeat_at = "running", utc_now(), utc_now()
         job.attempt += 1
         db.commit()
-        status, _ = parse_with_retry(db, material, job.user_id)
+        status, _ = (parse_fn or parse_with_retry)(db, material, job.user_id)
         db.refresh(job)
         if job.status != "cancelled":
             job.status = "succeeded" if status == "ready" else "failed"
@@ -53,6 +54,15 @@ def run_job(job_id: int) -> None:
         job = db.query(ParseJob).filter(ParseJob.id == job_id).first()
         if job:
             job.status, job.error_message, job.finished_at = "failed", str(exc), utc_now()
+            material = db.query(Material).filter(Material.id == job.material_id).first()
+            if material is not None:
+                material.status = "failed"
+                material.error_message = "后台解析任务异常，请查看日志中心"
+                material.last_parse_error = str(exc)
+                material.parse_finished_at = utc_now()
+                log_error(db, job.user_id, category="parse", level="error", title="后台解析任务异常",
+                          message=str(exc), technical_detail=f"{exc.__class__.__name__}: {exc}",
+                          course_id=material.course_id, material_id=material.id, commit=False)
             db.commit()
     finally:
         db.close()

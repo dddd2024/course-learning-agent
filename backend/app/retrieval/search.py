@@ -166,7 +166,11 @@ def keyword_search(
         # Chat contexts need at least two chunks where the course has them;
         # preserve the exact BM25 winner and append deterministic active
         # neighbours instead of abandoning FTS for a different algorithm.
-        if len(fts_results) < min(2, top_k):
+        # For a pure ASCII query, returning an unrelated neighbour would
+        # violate word-boundary correctness (for example NAT vs
+        # International). CJK conversational questions may safely use a
+        # nearby explanatory chunk for context.
+        if len(fts_results) < min(2, top_k) and not any(re.match(r"^[a-zA-Z]{2,}$", key) for key in _split_keywords(query)):
             seen = {item["chunk_id"] for item in fts_results}
             neighbours = (db.query(MaterialChunk, Material.filename)
                 .join(Material, Material.id == MaterialChunk.material_id)
