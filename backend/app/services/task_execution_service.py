@@ -32,7 +32,8 @@ from app.models.plan import StudyGoal, StudyTask, TaskExecutionEvent, Todo
 from app.models.quiz import Quiz, QuizItem
 from app.services.llm_config_service import build_user_config, get_active_config
 from app.services.task_target_resolver import ensure_target_spec
-from app.services.plan_state_service import recompute_goal, mark_task_completed
+from app.services.plan_state_service import recompute_goal
+from app.services.task_state_machine import transition_task
 
 logger = logging.getLogger(__name__)
 
@@ -204,11 +205,10 @@ def start_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
     else:
         raise BusinessException(message="不支持的任务类型", status_code=422)
 
-    if task.started_at is None:
-        task.started_at = now
-    task.last_action_at = now
     if task.execution_status == "pending":
-        task.execution_status = "in_progress"
+        transition_task(db, task, "start", user_id, commit=False)
+    else:
+        task.last_action_at = now
 
     db.commit()
     db.refresh(task)
@@ -299,7 +299,7 @@ def record_task_event(db: Session, task_id: int, user_id: int, event_type: str, 
         ).first()
         if existing:
             return {"recorded": False, "event_type": event_type}
-    _record_event(db, task, user_id, event_type, payload)
+    transition_task(db, task, "record_event", user_id, evidence={"event_type": event_type, **payload}, commit=False)
     task.last_action_at = datetime.now()
     db.commit()
     return {"recorded": True, "event_type": event_type}
@@ -362,14 +362,18 @@ def verify_task(db: Session, task_id: int, user_id: int, confirmation: bool | No
             verification_result["reason"] = "尚缺少学习或确认事件"
 
     if verified:
-        todos_completed = mark_task_completed(db, task)
+        transition = transition_task(
+            db, task, "verify", user_id,
+            evidence={"passed": True, "verification": verification_result},
+            commit=False,
+        )
         task.verification_method = verification_method
         task.verification_result_json = json.dumps(
             verification_result, ensure_ascii=False
         )
         task.last_action_at = now
 
-        verification_result["todos_completed"] = todos_completed
+        verification_result["todos_completed"] = transition["todos_affected"]
 
         db.commit()
         db.refresh(task)
@@ -382,6 +386,11 @@ def verify_task(db: Session, task_id: int, user_id: int, confirmation: bool | No
             "status": task.status,
         }
     else:
+        transition_task(
+            db, task, "verify", user_id,
+            evidence={"passed": False, "verification": verification_result},
+            commit=False,
+        )
         task.verification_method = verification_method
         task.verification_result_json = json.dumps(
             verification_result, ensure_ascii=False
