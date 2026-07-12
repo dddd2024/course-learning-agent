@@ -104,9 +104,11 @@ def _create_quiz_for_task(
         user_config=user_config,
     )
 
-    # A planned quiz has a resolved target spec: unlike free practice it may
-    # not persist an unclassified question or a question outside that target.
-    items = [item for item in quiz_output.get("items", []) if item.get("knowledge_point_id") in {row.id for row in rows}]
+    # ``generate_quiz`` has already verified every item against an active
+    # source chunk and reconciled its point reference.  Preserve its partial
+    # generation result rather than turning a valid evidence-backed question
+    # into an empty planned quiz merely because a model omitted a label.
+    items = quiz_output.get("items", [])
     if not items:
         raise BusinessException(message="资料证据不足，无法生成有效测验；请补充并解析课程资料后重试", status_code=422)
     quiz = Quiz(
