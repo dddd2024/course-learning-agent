@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { loginWithFreshUser } from './helpers'
 
 /**
  * E2E: Multi-tenant file isolation.
@@ -8,15 +9,8 @@ import { test, expect } from '@playwright/test'
  * access must return 404 (not 200 with another user's data).
  */
 
-const TEST_USER = { username: 'test', password: 'test1234' }
-
 async function login(page: import('@playwright/test').Page) {
-  await page.goto('/login')
-  await page.fill('input[placeholder="请输入用户名"]', TEST_USER.username)
-  await page.fill('input[placeholder="请输入密码"]', TEST_USER.password)
-  await page.click('button:has-text("登录")')
-  // Wait for redirect to dashboard
-  await page.waitForURL('**/dashboard', { timeout: 15_000 })
+  await loginWithFreshUser(page)
 }
 
 test.describe('Auth & File Isolation', () => {
