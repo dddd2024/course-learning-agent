@@ -20,6 +20,7 @@ leaked.
 import json
 import logging
 import time
+import re
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, Query
@@ -809,6 +810,7 @@ def create_multi_plan(
         deadline=max(item.deadline for item in payload.courses),
         daily_minutes=payload.daily_minutes,
         status="active",
+        constraints_json=json.dumps(payload.constraints or {}, ensure_ascii=False),
     )
     db.add(parent)
     db.flush()
@@ -863,6 +865,9 @@ def create_multi_plan(
             target_id=target_id,
             target_spec_json=json.dumps(target_spec, ensure_ascii=False),
             execution_status="pending",
+            generation=parent.generation_version,
+            stable_task_key=f"{course_id}:{task_type}:{re.sub(r'\\s+', '', item['title']).lower()}",
+            schedule_status="active",
         )
         db.add(task)
         db.flush()
@@ -1129,24 +1134,17 @@ def reschedule_multi_plan(
                 }
             )
 
-    # Delete old tasks/todos/goals/plan-tasks.
-    if old_task_ids:
-        db.query(Todo).filter(Todo.task_id.in_(old_task_ids)).delete(
-            synchronize_session=False
-        )
-        db.query(StudyTask).filter(StudyTask.id.in_(old_task_ids)).delete(
-            synchronize_session=False
-        )
-    if old_goal_ids:
-        db.query(StudyGoal).filter(StudyGoal.id.in_(old_goal_ids)).delete(
-            synchronize_session=False
-        )
-    db.query(MultiCoursePlanTask).filter(
-        MultiCoursePlanTask.multi_plan_id == plan.id
-    ).delete(synchronize_session=False)
+    # Preserve historical tasks, events, todos and quiz results.  Only
+    # unstarted pending rows are superseded by the next schedule generation;
+    # completed and in-progress rows stay frozen and readable.
+    for old_task in db.query(StudyTask).filter(StudyTask.id.in_(old_task_ids)).all() if old_task_ids else []:
+        if old_task.execution_status == "pending" and old_task.status == "pending":
+            old_task.schedule_status = "superseded"
 
     # Update the plan's daily_minutes.
     plan.daily_minutes = payload.daily_minutes
+    plan.generation_version += 1
+    plan.last_rescheduled_at = datetime.now()
     db.flush()
 
     # Run the scheduler with the new daily_minutes.
@@ -1220,6 +1218,9 @@ def reschedule_multi_plan(
             target_id=target_id,
             target_spec_json=json.dumps(target_spec, ensure_ascii=False),
             execution_status="pending",
+            generation=plan.generation_version,
+            stable_task_key=f"{course_id}:{task_type}:{re.sub(r'\\s+', '', item['title']).lower()}",
+            schedule_status="active",
         )
         db.add(task)
         db.flush()

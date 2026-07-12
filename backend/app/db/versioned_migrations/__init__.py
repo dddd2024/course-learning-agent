@@ -44,6 +44,7 @@ MIGRATION_MODULES = [
     "013_v5_task_completion_fields",
     "014_v6_kp_generation",
     "015_v7_chunk_provenance",
+    "016_v7_non_destructive_reschedule",
 ]
 
 

@@ -33,6 +33,8 @@ class MultiCoursePlan(Base, TimestampMixin):
     daily_minutes = Column(Integer, nullable=False)
     status = Column(String(30), nullable=False, default="active", index=True)
     generation_version = Column(Integer, nullable=False, default=1)
+    constraints_json = Column(Text, nullable=False, default="{}")
+    last_rescheduled_at = Column(DateTime, nullable=True)
 
 
 class MultiCoursePlanTask(Base, TimestampMixin):
@@ -91,6 +93,10 @@ class StudyTask(Base, TimestampMixin):
     target_type = Column(String(30), nullable=True)  # material/knowledge_point/quiz
     target_id = Column(Integer, nullable=True)
     execution_status = Column(String(30), nullable=False, default="pending")
+    generation = Column(Integer, nullable=False, default=1)
+    stable_task_key = Column(String(320), nullable=True, index=True)
+    schedule_status = Column(String(30), nullable=False, default="active")
+    superseded_by_task_id = Column(Integer, ForeignKey("study_tasks.id"), nullable=True, index=True)
     verification_method = Column(String(50), nullable=True)
     auto_completed_at = Column(DateTime, nullable=True)
     # PLAN-V3-01: executable task target columns

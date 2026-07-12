@@ -12,6 +12,9 @@ Fixtures: ``client`` + ``auth_headers()`` + ``create_course`` from
 conftest.py (HTTP-level tests).
 """
 from app.tests.conftest import auth_headers, create_course
+from app.api.deps import get_db
+from app.main import app
+from app.models.plan import StudyTask
 
 
 def _create_multi_plan(client, headers, daily_minutes=120):
@@ -196,3 +199,35 @@ def test_multi_plan_lifecycle(client) -> None:
     # GET after delete -> 404
     resp = client.get(f"/api/v1/plans/multi/{plan_id}", headers=headers)
     assert resp.status_code == 404
+
+
+def test_reschedule_keeps_completed_and_in_progress_task_history(client) -> None:
+    headers = auth_headers(client, username="history")
+    _, plan_id, _, _ = _create_multi_plan(client, headers)
+    db = next(app.dependency_overrides[get_db]())
+    try:
+        tasks = db.query(StudyTask).order_by(StudyTask.id).all()
+        assert tasks
+        completed, in_progress = tasks[0], tasks[-1]
+        completed.status = "done"
+        completed.execution_status = "completed"
+        in_progress.execution_status = "in_progress"
+        db.commit()
+        frozen_ids = {completed.id, in_progress.id}
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/api/v1/plans/multi/{plan_id}/reschedule",
+        json={"daily_minutes": 90}, headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+    db = next(app.dependency_overrides[get_db]())
+    try:
+        frozen = db.query(StudyTask).filter(StudyTask.id.in_(frozen_ids)).all()
+        assert {task.id for task in frozen} == frozen_ids
+        assert {task.execution_status for task in frozen} == {"completed", "in_progress"}
+        assert any(task.generation >= 2 for task in db.query(StudyTask).all())
+    finally:
+        db.close()

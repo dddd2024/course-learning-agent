@@ -2,11 +2,11 @@
   "version": "v7.1",
   "branch": "codex/v7-production-integration",
   "base_commit": "53a1221",
-  "current_head": "180d51157bfe7200fd901d43cafd74bc8bf717ac",
+  "current_head": "a6cba5f99657e8dc176be4743fe13fae611344cc",
   "started_at": "2026-07-12T00:00:00+08:00",
   "updated_at": "2026-07-12T00:00:00+08:00",
   "overall_status": "in_progress",
-  "current_task": "V7-CONT-09",
+  "current_task": "V7-CONT-10",
   "tasks": {
     "V7-CONT-00": {
       "status": "verified",
@@ -121,21 +121,27 @@
       "evidence": [
         "A replacement generation is staged before old active KPs are archived; invalid generated evidence returns 422 and preserves the existing active outline."
       ],
-      "commits": [],
+      "commits": [
+        "a6cba5f fix(v7): preserve active outline on generation failure"
+      ],
       "tests": [
         "python -m pytest backend/app/tests/test_v6_kp_titles.py -q --tb=short"
       ],
       "notes": ""
     },
     "V7-CONT-09": {
-      "status": "in_progress",
-      "evidence": [],
+      "status": "verified",
+      "evidence": [
+        "Reschedule retains completed and in-progress StudyTask rows, supersedes only pending schedule rows, and creates a new plan generation."
+      ],
       "commits": [],
-      "tests": [],
+      "tests": [
+        "python -m pytest backend/app/tests/test_v6_multi_plan.py -q --tb=short"
+      ],
       "notes": ""
     },
     "V7-CONT-10": {
-      "status": "not_started",
+      "status": "in_progress",
       "evidence": [],
       "commits": [],
       "tests": [],
