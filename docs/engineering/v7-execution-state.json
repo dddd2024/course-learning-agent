@@ -1,0 +1,141 @@
+{
+  "version": "v7.1",
+  "branch": "codex/v7-production-integration",
+  "base_commit": "53a1221",
+  "current_head": "62d114065155e233199a1b91a15c68d39d688fb0",
+  "started_at": "2026-07-12T00:00:00+08:00",
+  "updated_at": "2026-07-12T00:00:00+08:00",
+  "overall_status": "in_progress",
+  "current_task": "V7-CONT-01",
+  "tasks": {
+    "V7-CONT-00": {
+      "status": "verified",
+      "evidence": [
+        "Repository and production wiring audited at 62d1140.",
+        "8 targeted V7 pipeline/wiring tests passed under Python 3.13."
+      ],
+      "commits": [],
+      "tests": [
+        "python -m pytest backend/app/tests/test_v7_production_wiring.py backend/app/tests/test_v7_no_legacy_paths.py backend/app/tests/test_v7_document_ir_pipeline.py backend/app/tests/test_v7_learn_evidence.py -q --tb=short"
+      ],
+      "notes": ""
+    },
+    "V7-CONT-01": {
+      "status": "in_progress",
+      "evidence": [],
+      "commits": [],
+      "tests": [],
+      "notes": ""
+    },
+    "V7-CONT-02": {
+      "status": "not_started",
+      "evidence": [],
+      "commits": [],
+      "tests": [],
+      "notes": ""
+    },
+    "V7-CONT-03": {
+      "status": "not_started",
+      "evidence": [],
+      "commits": [],
+      "tests": [],
+      "notes": ""
+    },
+    "V7-CONT-04": {
+      "status": "not_started",
+      "evidence": [],
+      "commits": [],
+      "tests": [],
+      "notes": ""
+    },
+    "V7-CONT-05": {
+      "status": "not_started",
+      "evidence": [],
+      "commits": [],
+      "tests": [],
+      "notes": ""
+    },
+    "V7-CONT-06": {
+      "status": "not_started",
+      "evidence": [],
+      "commits": [],
+      "tests": [],
+      "notes": ""
+    },
+    "V7-CONT-07": {
+      "status": "not_started",
+      "evidence": [],
+      "commits": [],
+      "tests": [],
+      "notes": ""
+    },
+    "V7-CONT-08": {
+      "status": "not_started",
+      "evidence": [],
+      "commits": [],
+      "tests": [],
+      "notes": ""
+    },
+    "V7-CONT-09": {
+      "status": "not_started",
+      "evidence": [],
+      "commits": [],
+      "tests": [],
+      "notes": ""
+    },
+    "V7-CONT-10": {
+      "status": "not_started",
+      "evidence": [],
+      "commits": [],
+      "tests": [],
+      "notes": ""
+    },
+    "V7-CONT-11": {
+      "status": "not_started",
+      "evidence": [],
+      "commits": [],
+      "tests": [],
+      "notes": ""
+    },
+    "V7-CONT-12": {
+      "status": "not_started",
+      "evidence": [],
+      "commits": [],
+      "tests": [],
+      "notes": ""
+    },
+    "V7-CONT-13": {
+      "status": "not_started",
+      "evidence": [],
+      "commits": [],
+      "tests": [],
+      "notes": ""
+    },
+    "V7-CONT-14": {
+      "status": "not_started",
+      "evidence": [],
+      "commits": [],
+      "tests": [],
+      "notes": ""
+    },
+    "V7-CONT-15": {
+      "status": "not_started",
+      "evidence": [],
+      "commits": [],
+      "tests": [],
+      "notes": ""
+    }
+  },
+  "local_validation_deferred": [],
+  "user_action_required": [],
+  "final_checks": {
+    "backend": "not_run",
+    "frontend_typecheck": "not_run",
+    "frontend_unit": "not_run",
+    "frontend_build": "not_run",
+    "playwright": "not_run",
+    "migration": "not_run",
+    "acceptance": "not_run",
+    "ci": "not_run"
+  }
+}
