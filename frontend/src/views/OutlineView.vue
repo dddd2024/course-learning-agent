@@ -22,6 +22,7 @@ import {
   type Chunk,
   type Material,
 } from '../api/material'
+import { recordTaskEvent, verifyTask } from '../api/plan'
 import { parseApiError } from '../utils/error'
 import EmptyState from '../components/common/EmptyState.vue'
 
@@ -54,6 +55,10 @@ const currentSourceKp = ref<KnowledgePoint | null>(null)
 const sourceListChunks = ref<ChunkWithSource[]>([])
 
 const materialChunksCache = ref<Map<number, Chunk[]>>(new Map())
+const reviewTaskId = computed(() => Number(route.query.task_id || 0))
+const targetKnowledgePointId = computed(() => Number(route.query.knowledge_point_id || 0))
+const targetResolved = ref(false)
+const completingReview = ref(false)
 
 function normalizeImportance(value: number | undefined | null): number {
   if (value === undefined || value === null || Number.isNaN(value)) return 0
@@ -107,6 +112,15 @@ async function fetchKnowledgePoints() {
   try {
     const { data } = await listKnowledgePoints(courseId.value)
     knowledgePoints.value = data.items
+    const target = knowledgePoints.value.find((item) => item.id === targetKnowledgePointId.value)
+    if (reviewTaskId.value && !target) {
+      ElMessage.error('复习任务目标不存在或已归档，无法完成该任务')
+      return
+    }
+    if (reviewTaskId.value && target) {
+      targetResolved.value = true
+      await recordTaskEvent(reviewTaskId.value, 'target_loaded', Number(target.id))
+    }
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取知识点列表失败'))
     knowledgePoints.value = []
@@ -227,6 +241,21 @@ function goToLearnWithKp(kp: KnowledgePoint) {
   })
 }
 
+async function completeReview() {
+  if (!reviewTaskId.value || !targetResolved.value) return
+  completingReview.value = true
+  try {
+    const { data } = await verifyTask(reviewTaskId.value, true)
+    if (!data.verified) throw new Error('服务端尚未验证复习完成')
+    ElMessage.success('复习任务已完成')
+    router.push('/plans')
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '复习任务验证失败'))
+  } finally {
+    completingReview.value = false
+  }
+}
+
 onMounted(async () => {
   await fetchCourse()
   if (course.value) {
@@ -285,6 +314,21 @@ onMounted(async () => {
       </div>
     </el-card>
 
+    <el-alert
+      v-if="reviewTaskId"
+      :title="targetResolved ? '已定位任务目标，请完成本次复习后提交验证' : '正在解析复习任务目标'"
+      :type="targetResolved ? 'success' : 'warning'"
+      :closable="false"
+      class="section-card"
+    />
+    <el-button
+      v-if="reviewTaskId"
+      type="primary"
+      :disabled="!targetResolved"
+      :loading="completingReview"
+      @click="completeReview"
+    >完成本次复习</el-button>
+
     <el-card
       v-if="!listLoading && knowledgePoints.length === 0"
       class="section-card"
@@ -316,6 +360,7 @@ onMounted(async () => {
           v-for="(kp, idx) in knowledgePoints"
           :key="idx"
           class="kp-card kp-card--clickable"
+          :class="{ 'kp-card--target': kp.id === targetKnowledgePointId }"
           role="link"
           tabindex="0"
           :aria-label="`学习知识点：${kp.title}`"
@@ -627,6 +672,11 @@ onMounted(async () => {
 
 .kp-card--clickable {
   cursor: pointer;
+}
+
+.kp-card--target {
+  outline: 2px solid #409eff;
+  outline-offset: 2px;
 }
 
 .kp-card--clickable:focus-visible,
