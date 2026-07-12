@@ -176,6 +176,14 @@ def generate_knowledge_points(
     # instead of creating an unusable empty course; on regeneration we keep
     # the active generation and return the explicit failure below.
     if not points:
+        if archived_count > 0:
+            # V7.4-05: Regeneration with empty result — preserve existing
+            # active KPs and return an explicit failure.
+            db.rollback()
+            raise BusinessException(
+                message="生成失败：未产生有效知识点，已保留当前提纲",
+                status_code=422,
+            )
         fallback_chunk = (
             db.query(MaterialChunk)
             .join(Material, Material.id == MaterialChunk.material_id)
@@ -310,6 +318,48 @@ def list_knowledge_points(
     rows = query.order_by(KnowledgePoint.id.asc()).all()
     items = [KnowledgePointResponse.model_validate(r) for r in rows]
     return KnowledgePointListResponse(items=items, total=len(items))
+
+
+@router.get(
+    "/{course_id}/knowledge-points/generations",
+)
+def list_kp_generations(
+    course_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """V7.4-05: List all knowledge-point generations with metadata.
+
+    Returns a list of ``{generation, status, count, created_at}`` dicts,
+    one per generation, sorted by generation descending.
+    """
+    _get_owned_course(db, course_id, current_user.id)
+
+    rows = (
+        db.query(KnowledgePoint)
+        .filter(
+            KnowledgePoint.course_id == course_id,
+            KnowledgePoint.user_id == current_user.id,
+        )
+        .order_by(KnowledgePoint.generation.desc())
+        .all()
+    )
+    # Group by generation
+    gen_map: dict[int, dict] = {}
+    for row in rows:
+        if row.generation not in gen_map:
+            gen_map[row.generation] = {
+                "generation": row.generation,
+                "status": row.status,
+                "count": 0,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+        gen_map[row.generation]["count"] += 1
+        # If any KP in this generation is active, the generation is active
+        if row.status == "active":
+            gen_map[row.generation]["status"] = "active"
+
+    return list(gen_map.values())
 
 
 def _safe_add_step(
