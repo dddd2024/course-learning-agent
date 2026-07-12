@@ -145,9 +145,15 @@ test.describe('Plan Execution (V6)', () => {
       //     the same course/KPs will have the same questions.
       const practiceRes = await request.post(`${API_BASE}/quizzes`, {
         headers,
-        data: { course_id: courseId, question_count: 5 },
+        data: {
+          course_id: courseId,
+          question_count: 3,
+          question_types: ['choice', 'multiple_choice', 'true_false', 'short_answer'],
+          difficulty_distribution: { easy: 0, medium: 3, hard: 0 },
+          pass_score: 60,
+        },
       })
-      expect(practiceRes.ok()).toBeTruthy()
+      expect(practiceRes.ok(), await practiceRes.text()).toBeTruthy()
       const practiceQuiz = await practiceRes.json()
       expect(practiceQuiz.items.length).toBeGreaterThan(0)
 

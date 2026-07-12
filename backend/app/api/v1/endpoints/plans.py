@@ -41,6 +41,8 @@ from app.services.weak_point_progress import apply_mastery_decay
 from app.schemas.multi_plan import (
     MultiPlanCreate,
     MultiPlanDetailResponse,
+    MultiPlanHistoryItem,
+    MultiPlanListItem,
     MultiPlanReschedule,
     MultiPlanResponse,
     MultiPlanTaskItem,
@@ -390,6 +392,43 @@ def list_plans(
             )
         )
     return PlanListResponse(items=items, total=len(items))
+
+
+@router.get("/multi", response_model=list[MultiPlanListItem])
+def list_multi_plans(
+    status: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[MultiPlanListItem]:
+    """List all multi-course plans for the current user.
+
+    Optional ``status`` query parameter filters by plan status
+    (e.g., ``active``, ``archived``).
+    """
+    query = db.query(MultiCoursePlan).filter(
+        MultiCoursePlan.user_id == current_user.id
+    )
+    if status:
+        query = query.filter(MultiCoursePlan.status == status)
+    plans = query.order_by(MultiCoursePlan.id.desc()).all()
+
+    result: list[MultiPlanListItem] = []
+    for plan in plans:
+        task_count = (
+            db.query(MultiCoursePlanTask)
+            .filter(MultiCoursePlanTask.multi_plan_id == plan.id)
+            .count()
+        )
+        result.append(MultiPlanListItem(
+            id=plan.id,
+            title=plan.title,
+            status=plan.status,
+            deadline=plan.deadline,
+            daily_minutes=plan.daily_minutes,
+            generation_version=plan.generation_version,
+            task_count=task_count,
+        ))
+    return result
 
 
 @router.get("/{goal_id}", response_model=PlanResponse)
@@ -960,22 +999,40 @@ def _load_multi_plan_detail(
     task_items: list[MultiPlanTaskItem] = []
     for pt in plan_tasks:
         task = task_by_id.get(pt.task_id) if pt.task_id else None
-        # Default detail is the current schedule generation. Historical task
-        # rows stay durable and can be queried explicitly for audit, but they
-        # must not duplicate today's actionable schedule.
-        if task is None or task.generation != multi_plan.generation_version:
-            continue
-        task_items.append(
-            MultiPlanTaskItem(
-                task_id=pt.task_id,
-                course_id=pt.course_id,
-                course_name=course_name_by_id.get(pt.course_id, ""),
-                title=task.title,
-                scheduled_date=pt.scheduled_date,
-                estimate_minutes=pt.estimate_minutes,
-                unscheduled_reason=pt.unscheduled_reason,
+        # Include unscheduled tasks (task_id=None) in the response.
+        # Historical task rows (generation mismatch) are excluded from
+        # the active view but available via the /history endpoint.
+        if pt.task_id is not None:
+            if task is None or task.generation != multi_plan.generation_version:
+                continue
+            task_items.append(
+                MultiPlanTaskItem(
+                    task_id=pt.task_id,
+                    course_id=pt.course_id,
+                    course_name=course_name_by_id.get(pt.course_id, ""),
+                    title=task.title,
+                    scheduled_date=pt.scheduled_date,
+                    estimate_minutes=pt.estimate_minutes,
+                    unscheduled_reason=pt.unscheduled_reason,
+                    task_status=task.status,
+                    generation=task.generation,
+                )
             )
-        )
+        else:
+            # Unscheduled task — include with empty title/status
+            task_items.append(
+                MultiPlanTaskItem(
+                    task_id=None,
+                    course_id=pt.course_id,
+                    course_name=course_name_by_id.get(pt.course_id, ""),
+                    title="（未排程任务）",
+                    scheduled_date=pt.scheduled_date,
+                    estimate_minutes=pt.estimate_minutes,
+                    unscheduled_reason=pt.unscheduled_reason,
+                    task_status="unscheduled",
+                    generation=multi_plan.generation_version,
+                )
+            )
 
     return MultiPlanDetailResponse(
         id=multi_plan.id,
@@ -983,6 +1040,7 @@ def _load_multi_plan_detail(
         status=multi_plan.status,
         deadline=multi_plan.deadline,
         daily_minutes=multi_plan.daily_minutes,
+        generation_version=multi_plan.generation_version,
         tasks=task_items,
     )
 
@@ -1015,6 +1073,53 @@ def get_multi_plan(
     """Get a multi-course plan with all tasks and schedule."""
     plan = _get_owned_multi_plan(db, multi_plan_id, current_user.id)
     return _load_multi_plan_detail(db, plan)
+
+
+@router.get("/multi/{multi_plan_id}/history", response_model=list[MultiPlanHistoryItem])
+def get_multi_plan_history(
+    multi_plan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[MultiPlanHistoryItem]:
+    """Get all tasks from all generations of a multi-course plan.
+
+    Unlike the detail endpoint which only shows the current generation,
+    this endpoint returns tasks from every generation for audit and
+    historical review.
+    """
+    plan = _get_owned_multi_plan(db, multi_plan_id, current_user.id)
+
+    plan_tasks = (
+        db.query(MultiCoursePlanTask)
+        .filter(MultiCoursePlanTask.multi_plan_id == plan.id)
+        .order_by(MultiCoursePlanTask.id.asc())
+        .all()
+    )
+    task_ids = [pt.task_id for pt in plan_tasks if pt.task_id is not None]
+    course_ids = {pt.course_id for pt in plan_tasks}
+
+    task_by_id: dict[int, StudyTask] = {}
+    if task_ids:
+        for t in db.query(StudyTask).filter(StudyTask.id.in_(task_ids)).all():
+            task_by_id[t.id] = t
+
+    course_name_by_id = _load_course_names(db, course_ids)
+
+    result: list[MultiPlanHistoryItem] = []
+    for pt in plan_tasks:
+        task = task_by_id.get(pt.task_id) if pt.task_id else None
+        result.append(MultiPlanHistoryItem(
+            task_id=pt.task_id,
+            course_id=pt.course_id,
+            course_name=course_name_by_id.get(pt.course_id, ""),
+            title=task.title if task else "（未排程任务）",
+            scheduled_date=pt.scheduled_date,
+            estimate_minutes=pt.estimate_minutes,
+            task_status=task.status if task else "unscheduled",
+            generation=task.generation if task else None,
+            unscheduled_reason=pt.unscheduled_reason,
+        ))
+    return result
 
 
 @router.patch("/multi/{multi_plan_id}", response_model=MultiPlanDetailResponse)

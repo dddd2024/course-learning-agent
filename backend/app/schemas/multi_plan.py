@@ -113,6 +113,8 @@ class MultiPlanTaskItem(BaseModel):
     scheduled_date: Optional[date] = None
     estimate_minutes: int = 0
     unscheduled_reason: Optional[str] = None
+    task_status: Optional[str] = None
+    generation: Optional[int] = None
 
 
 class MultiPlanDetailResponse(BaseModel):
@@ -128,7 +130,34 @@ class MultiPlanDetailResponse(BaseModel):
     status: str
     deadline: date
     daily_minutes: int
+    generation_version: int = 1
     tasks: List[MultiPlanTaskItem] = Field(default_factory=list)
+
+
+class MultiPlanListItem(BaseModel):
+    """A multi-plan summary in the list response."""
+
+    id: int
+    title: str
+    status: str
+    deadline: date
+    daily_minutes: int
+    generation_version: int = 1
+    task_count: int = 0
+
+
+class MultiPlanHistoryItem(BaseModel):
+    """A historical task entry in the history response."""
+
+    task_id: Optional[int] = None
+    course_id: int
+    course_name: str = ""
+    title: str = ""
+    scheduled_date: Optional[date] = None
+    estimate_minutes: int = 0
+    task_status: Optional[str] = None
+    generation: Optional[int] = None
+    unscheduled_reason: Optional[str] = None
 
 
 class MultiPlanUpdate(BaseModel):
