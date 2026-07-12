@@ -320,7 +320,15 @@ def retry_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
     return {"quiz_id": new_id, "target_id": new_id, "history_quiz_ids": history, "action_type": "open_quiz", "route_name": "quizzes", "route_params": {"quiz_id": new_id}}
 
 
-def verify_task(db: Session, task_id: int, user_id: int, confirmation: bool | None = None, note: str | None = None) -> dict[str, Any]:
+def verify_task(
+    db: Session,
+    task_id: int,
+    user_id: int,
+    confirmation: bool | None = None,
+    note: str | None = None,
+    *,
+    commit: bool = True,
+) -> dict[str, Any]:
     """Verify task completion.
 
     For quiz tasks: checks if ``score >= threshold``. If pass,
@@ -381,8 +389,9 @@ def verify_task(db: Session, task_id: int, user_id: int, confirmation: bool | No
 
         verification_result["todos_completed"] = transition["todos_affected"]
 
-        db.commit()
-        db.refresh(task)
+        if commit:
+            db.commit()
+            db.refresh(task)
 
         return {
             "verified": True,
@@ -402,8 +411,9 @@ def verify_task(db: Session, task_id: int, user_id: int, confirmation: bool | No
             verification_result, ensure_ascii=False
         )
         task.last_action_at = now
-        db.commit()
-        db.refresh(task)
+        if commit:
+            db.commit()
+            db.refresh(task)
 
         return {
             "verified": False,

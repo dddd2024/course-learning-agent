@@ -38,7 +38,7 @@ from app.core.exceptions import BusinessException, NotFoundException
 from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
 from app.models.quiz import Quiz, QuizItem, WeakPoint
-from app.models.plan import StudyTask, Todo
+from app.models.plan import StudyGoal, StudyTask, Todo
 from app.models.user import User
 from app.schemas.quiz import (
     QuizCreate,
@@ -536,6 +536,24 @@ def submit_quiz(
     if quiz.status == "submitted":
         raise BusinessException(message="该测验已提交，不可重复提交")
 
+    # Validate a bound task before mutating any quiz item.  A mismatched,
+    # foreign, or inactive task must leave the quiz completely untouched.
+    task_id = getattr(payload, "task_id", None)
+    if task_id is not None:
+        bound_task = (
+            db.query(StudyTask)
+            .join(StudyGoal, StudyGoal.id == StudyTask.goal_id)
+            .filter(StudyTask.id == task_id, StudyGoal.user_id == current_user.id)
+            .first()
+        )
+        if (
+            bound_task is None
+            or bound_task.task_type != "quiz"
+            or bound_task.target_id != quiz.id
+            or bound_task.execution_status != "in_progress"
+        ):
+            raise BusinessException(message="测验任务绑定无效或未开始", status_code=409)
+
     # Index items by id for O(1) lookup.
     items_by_id: dict[int, QuizItem] = {item.id: item for item in quiz.items}
     answer_map: dict[int, str | list[str]] = {
@@ -620,7 +638,17 @@ def submit_quiz(
     quiz.score = score
     quiz.status = "submitted"
 
-    db.commit()
+    # Task verification is part of the same transaction as scoring and weak
+    # point updates.  Do not catch errors here: a failed transition rolls the
+    # entire submission back instead of creating a split quiz/task state.
+    if task_id is not None:
+        verify_task_service(db, task_id, current_user.id, commit=False)
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(quiz)
 
     if run_id is not None:
@@ -629,29 +657,11 @@ def submit_quiz(
                 db,
                 run_id=run_id,
                 status="success",
-                output_summary={
-                    "quiz_id": quiz_id,
-                    "score": score,
-                    "total": len(items_by_id),
-                },
+                output_summary={"quiz_id": quiz_id, "score": score, "total": len(items_by_id)},
             )
             db.commit()
         except Exception as exc:  # pragma: no cover - audit must not break flow
             logger.warning("AgentAudit.finish_run(quiz submit) failed: %s", exc)
-
-    # V6-23: auto-verify the bound quiz task if task_id is provided.
-    # If the score meets the threshold, the task is auto-completed; if
-    # not, the task stays in_progress.  Failures here are logged but
-    # do not break the quiz submission.
-    task_id = getattr(payload, "task_id", None)
-    if task_id is not None:
-        try:
-            verify_task_service(db, task_id, current_user.id)
-        except Exception:
-            logger.warning(
-                "Auto-verify for task %s after quiz %s submit failed",
-                task_id, quiz_id, exc_info=True,
-            )
 
     return QuizResultOut(
         id=quiz.id,
