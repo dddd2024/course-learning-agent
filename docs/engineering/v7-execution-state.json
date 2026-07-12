@@ -2,11 +2,11 @@
   "version": "v7.1",
   "branch": "codex/v7-production-integration",
   "base_commit": "53a1221",
-  "current_head": "225688c648c5ccda78f9b3439e5fd376055e69fa",
+  "current_head": "745ba314c9ef1053aa787e58e08e229bae05f539",
   "started_at": "2026-07-12T00:00:00+08:00",
   "updated_at": "2026-07-12T00:00:00+08:00",
   "overall_status": "in_progress",
-  "current_task": "V7-CONT-05",
+  "current_task": "V7-CONT-06",
   "tasks": {
     "V7-CONT-00": {
       "status": "verified",
@@ -66,7 +66,9 @@
       "evidence": [
         "LearnView records target_loaded only after ready target and reader data load; event persists loaded_at, route, and page_count."
       ],
-      "commits": [],
+      "commits": [
+        "745ba31 fix(v7): record learn load evidence after render"
+      ],
       "tests": [
         "python -m pytest backend/app/tests/test_v7_learn_evidence.py backend/app/tests/test_v7_production_wiring.py backend/app/tests/test_v6_task_flows.py -q --tb=short",
         "frontend: npm run type-check"
@@ -74,14 +76,19 @@
       "notes": ""
     },
     "V7-CONT-05": {
-      "status": "in_progress",
-      "evidence": [],
+      "status": "verified",
+      "evidence": [
+        "OutlineView records real target load and review confirmation; archived review targets rebind to matching active replacement with task_target_rebound event."
+      ],
       "commits": [],
-      "tests": [],
+      "tests": [
+        "python -m pytest backend/app/tests/test_v7_learn_evidence.py backend/app/tests/test_v6_task_flows.py -q --tb=short",
+        "frontend: npm run type-check"
+      ],
       "notes": ""
     },
     "V7-CONT-06": {
-      "status": "not_started",
+      "status": "in_progress",
       "evidence": [],
       "commits": [],
       "tests": [],

@@ -241,6 +241,40 @@ def record_task_event(
     spec = ensure_target_spec(db, task)
     payload = {"note": note} if note else {}
     expected = spec.get("material_id") if task.task_type == "learn" else spec.get("knowledge_point_id")
+    # A regenerated outline archives old point IDs.  Rebind a pending review
+    # task to the matching active point before recording real UI evidence so
+    # the normal review flow never needs a manual override.
+    if task.task_type == "review" and expected is not None:
+        point = db.query(KnowledgePoint).filter(
+            KnowledgePoint.id == expected,
+            KnowledgePoint.course_id == task.course_id,
+            KnowledgePoint.user_id == user_id,
+        ).first()
+        if point is not None and point.status == "archived":
+            replacement = db.query(KnowledgePoint).filter(
+                KnowledgePoint.course_id == task.course_id,
+                KnowledgePoint.user_id == user_id,
+                KnowledgePoint.status == "active",
+                KnowledgePoint.stable_key == point.stable_key,
+            ).order_by(KnowledgePoint.generation.desc(), KnowledgePoint.id.desc()).first()
+            if replacement is not None:
+                task.target_id = replacement.id
+                spec["knowledge_point_id"] = replacement.id
+                task.target_spec_json = json.dumps(spec, ensure_ascii=False)
+                transition_task(
+                    db,
+                    task,
+                    "record_event",
+                    user_id,
+                    evidence={
+                        "event_type": "task_target_rebound",
+                        "archived_target_id": point.id,
+                        "replacement_target_id": replacement.id,
+                    },
+                    commit=False,
+                )
+                expected = replacement.id
+                target_id = replacement.id
     if expected is None:
         raise BusinessException(message="任务目标未解析", status_code=409)
     if target_id != expected:

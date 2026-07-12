@@ -9,6 +9,8 @@ export interface KnowledgePoint {
   source_chunk_ids: number[]
   exam_style: string
   review_action: string
+  status?: string
+  stable_key?: string | null
 }
 
 export interface GenerateKnowledgeResult {
@@ -29,7 +31,7 @@ export function generateKnowledgePoints(
 
 export function listKnowledgePoints(
   courseId: number,
-  params?: { page?: number; page_size?: number },
+  params?: { page?: number; page_size?: number; include_archived?: boolean },
 ): AxiosPromise<KnowledgeListResult> {
   return request.get(`/courses/${courseId}/knowledge-points`, { params })
 }

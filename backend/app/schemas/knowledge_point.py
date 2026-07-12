@@ -22,6 +22,7 @@ class KnowledgePointResponse(BaseModel):
     review_action: Optional[str] = None
     parent_id: Optional[int] = None
     status: Optional[str] = "active"
+    stable_key: Optional[str] = None
     generation: int = 1
 
     @field_validator("source_chunk_ids", mode="before")

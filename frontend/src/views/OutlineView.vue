@@ -114,7 +114,15 @@ async function fetchKnowledgePoints() {
     knowledgePoints.value = data.items
     const target = knowledgePoints.value.find((item) => item.id === targetKnowledgePointId.value)
     if (reviewTaskId.value && !target) {
-      ElMessage.error('复习任务目标不存在或已归档，无法完成该任务')
+      const archived = await listKnowledgePoints(courseId.value, { include_archived: true })
+      const archivedTarget = archived.data.items.find((item) => item.id === targetKnowledgePointId.value)
+      if (!archivedTarget) {
+        ElMessage.error('复习任务目标不存在，无法完成该任务')
+        return
+      }
+      targetResolved.value = true
+      await recordTaskEvent(reviewTaskId.value, 'target_loaded', Number(archivedTarget.id))
+      ElMessage.warning('复习目标已更新到当前提纲版本，请确认内容后完成复习')
       return
     }
     if (reviewTaskId.value && target) {

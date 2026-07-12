@@ -3,6 +3,7 @@ import json
 from datetime import date
 
 from app.models.material import Material
+from app.models.knowledge_point import KnowledgePoint
 from app.models.plan import StudyGoal, StudyTask, TaskExecutionEvent
 from app.services.task_execution_service import start_task, record_task_event
 
@@ -56,3 +57,35 @@ def test_target_loaded_records_reader_context(db_session, sample_user, sample_co
     assert payload["route"] == "/courses/1/learn?material_id=1"
     assert payload["page_count"] == 3
     assert payload["loaded_at"]
+
+
+def test_archived_review_target_rebinds_to_active_replacement(
+    db_session, sample_user, sample_course
+):
+    archived = KnowledgePoint(
+        user_id=sample_user.id, course_id=sample_course.id, title="TCP/IP",
+        stable_key=f"{sample_course.id}:tcp/ip", status="archived", generation=1,
+    )
+    replacement = KnowledgePoint(
+        user_id=sample_user.id, course_id=sample_course.id, title="TCP/IP",
+        stable_key=f"{sample_course.id}:tcp/ip", status="active", generation=2,
+    )
+    goal = StudyGoal(user_id=sample_user.id, title="review", deadline=date.today(), daily_minutes=30)
+    db_session.add_all([archived, replacement, goal])
+    db_session.flush()
+    task = StudyTask(
+        goal_id=goal.id, course_id=sample_course.id, title="review", task_type="review",
+        estimate_minutes=10, priority=1, target_type="knowledge_point", target_id=archived.id,
+        target_spec_json=json.dumps({"knowledge_point_id": archived.id}), execution_status="pending",
+    )
+    db_session.add(task)
+    db_session.commit()
+    start_task(db_session, task.id, sample_user.id)
+
+    record_task_event(db_session, task.id, sample_user.id, "target_loaded", archived.id)
+
+    db_session.refresh(task)
+    assert task.target_id == replacement.id
+    assert db_session.query(TaskExecutionEvent).filter_by(
+        task_id=task.id, event_type="task_target_rebound"
+    ).count() == 1
