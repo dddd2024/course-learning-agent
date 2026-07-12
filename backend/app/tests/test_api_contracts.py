@@ -10,6 +10,7 @@ frontend TypeScript types in the same commit.
 from app.tests.conftest import (
     auth_headers,
     create_course,
+    run_pending_parse_jobs,
     upload_material,
 )
 
@@ -67,6 +68,7 @@ def test_chat_response_contract(client) -> None:
         "进程是程序在数据集合上运行的过程\n".encode("utf-8"),
     )
     client.post(f"/api/v1/materials/{material_id}/parse", headers=headers)
+    run_pending_parse_jobs(client)
 
     # 创建对话
     conv_resp = client.post(
@@ -198,6 +200,7 @@ def _create_chat_run(client, headers, course_name: str, question: str) -> int:
         f"{question}的答案是示例文本\n".encode("utf-8"),
     )
     client.post(f"/api/v1/materials/{material_id}/parse", headers=headers)
+    run_pending_parse_jobs(client)
     conv_resp = client.post(
         "/api/v1/conversations",
         json={"course_id": course_id, "title": f"{course_name} 对话"},

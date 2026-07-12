@@ -19,6 +19,7 @@ from app.retrieval.search import keyword_search
 from app.tests.conftest import (
     auth_headers,
     create_course,
+    run_pending_parse_jobs,
     setup_course_with_material,
 )
 
@@ -349,6 +350,7 @@ def test_keyword_search_weights_filename(client, tmp_path, monkeypatch) -> None:
         client, headers, course_id, "普通笔记.txt", body_kw
     )
     client.post(f"/api/v1/materials/{mid_b}/parse", headers=headers)
+    run_pending_parse_jobs(client)
 
     from app.api.deps import get_db
     from app.main import app

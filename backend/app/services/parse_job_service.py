@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.core.timezone import utc_now
@@ -26,6 +27,39 @@ def create_or_get_job(db: Session, material: Material, user_id: int, *, include_
     db.commit()
     db.refresh(job)
     return (job, True) if include_created else job
+
+
+def claim_next_job(db: Session) -> ParseJob | None:
+    """Atomically claim the oldest queued job using a conditional UPDATE.
+
+    Finds the oldest ``queued`` job, then issues::
+
+        UPDATE parse_jobs SET status='running', started_at=NOW(), heartbeat_at=NOW()
+        WHERE id = <job_id> AND status = 'queued'
+
+    The ``AND status = 'queued'`` guard prevents a race where two workers
+    select the same row: only the first UPDATE succeeds (rowcount=1),
+    the second gets rowcount=0 and returns ``None``.
+    """
+    job = (
+        db.query(ParseJob)
+        .filter(ParseJob.status == "queued")
+        .order_by(ParseJob.created_at)
+        .first()
+    )
+    if job is None:
+        return None
+    now = utc_now()
+    result = db.execute(
+        update(ParseJob)
+        .where(ParseJob.id == job.id, ParseJob.status == "queued")
+        .values(status="running", started_at=now, heartbeat_at=now)
+    )
+    if result.rowcount == 0:
+        # Another worker claimed it between our SELECT and UPDATE.
+        return None
+    db.commit()
+    return db.get(ParseJob, job.id)
 
 
 def run_job(job_id: int, parse_fn=None) -> None:
@@ -69,13 +103,24 @@ def run_job(job_id: int, parse_fn=None) -> None:
 
 
 def recover_stale_jobs(db: Session, timeout_seconds: int = 600) -> int:
+    """Re-queue running jobs whose heartbeat is older than ``timeout_seconds``.
+
+    V6-50: stale running jobs are reset to ``queued`` (not ``failed``) so
+    the persistent worker can pick them up again.  The material is also
+    reset to ``uploaded`` so the UI shows the correct state.
+    """
     threshold = utc_now() - timedelta(seconds=timeout_seconds)
     stale = db.query(ParseJob).filter(ParseJob.status == "running", ParseJob.heartbeat_at < threshold).all()
     for job in stale:
-        job.status, job.error_message, job.finished_at = "failed", "解析 worker 心跳超时，可重试", utc_now()
+        job.status = "queued"
+        job.error_message = "解析 worker 心跳超时，已重新排队"
+        job.started_at = None
+        job.heartbeat_at = None
+        job.finished_at = None
         material = db.query(Material).filter(Material.id == job.material_id).first()
         if material and material.status == "processing":
-            material.status, material.last_parse_error = "failed", job.error_message
+            material.status = "uploaded"
+            material.last_parse_error = job.error_message
     if stale:
         db.commit()
     return len(stale)

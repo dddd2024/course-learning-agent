@@ -37,6 +37,7 @@ from app.models.material_page import MaterialPage
 from app.models.security_finding import MaterialSecurityFinding
 from app.retrieval.chunker import build_chunks, clean_keyword_text
 from app.retrieval.parsers import parse_file
+from app.retrieval.search import update_fts_index
 from app.services.material_cleaner import clean_pages
 from app.services import security_scanner
 from app.services.chunk_quality import evaluate_chunks_quality
@@ -127,18 +128,41 @@ def parse_with_retry(
                 MaterialVersion.status == "ready",
             ).first()
             if existing_version is not None:
+                # Collect old active chunk ids before deactivating so we
+                # can update the FTS index after the commit.
+                old_chunk_ids = [
+                    row.id for row in db.query(MaterialChunk).filter(
+                        MaterialChunk.material_id == material_id,
+                        MaterialChunk.is_active == 1,
+                    ).all()
+                ]
                 db.query(MaterialChunk).filter(MaterialChunk.material_id == material_id).update(
                     {MaterialChunk.is_active: 0}, synchronize_session=False
                 )
                 db.query(MaterialChunk).filter(MaterialChunk.material_version_id == existing_version.id).update(
                     {MaterialChunk.is_active: 1}, synchronize_session=False
                 )
+                # Collect re-activated chunk ids for FTS update.
+                reactivated_ids = [
+                    row.id for row in db.query(MaterialChunk).filter(
+                        MaterialChunk.material_version_id == existing_version.id,
+                        MaterialChunk.is_active == 1,
+                    ).all()
+                ]
                 material.active_version_id = existing_version.id
                 material.version = existing_version.version
                 material.status = "ready"
                 material.parse_finished_at = utc_now()
                 material.parse_attempts = 0
                 db.commit()
+                # V6-60: Update FTS index AFTER the commit so a failure
+                # here does not roll back the chunk data.  The call
+                # removes old (now-inactive) chunks and inserts the
+                # re-activated ones in a single pass.
+                try:
+                    update_fts_index(db, old_chunk_ids + reactivated_ids)
+                except Exception as fts_exc:
+                    logger.warning("FTS index update failed for material %s: %s", material_id, fts_exc)
                 return "ready", _count_existing_chunks(db, material_id)
             next_version = (db.query(MaterialVersion.version).filter(
                 MaterialVersion.material_id == material_id
@@ -155,6 +179,14 @@ def parse_with_retry(
                 if hasattr(page, "page_no"):
                     raw = page.text
                     db.add(MaterialPage(material_id=material_id, material_version_id=version_row.id, page_no=page.page_no or 1, page_type=page.source_kind, parser_version=page.parser_version, raw_text=raw, clean_text=cleaned.text, blocks_json=json.dumps([block.__dict__ for block in page.blocks], ensure_ascii=False), decisions_json=json.dumps(cleaned.decisions, ensure_ascii=False)))
+            # Collect old active chunk ids before deactivating so we can
+            # update the FTS index after the commit.
+            old_chunk_ids_new = [
+                row.id for row in db.query(MaterialChunk).filter(
+                    MaterialChunk.material_id == material_id,
+                    MaterialChunk.is_active == 1,
+                ).all()
+            ]
             db.query(MaterialChunk).filter(MaterialChunk.material_id == material_id).update(
                 {MaterialChunk.is_active: 0}, synchronize_session=False
             )
@@ -242,6 +274,17 @@ def parse_with_retry(
             material.parse_attempts = 0  # reset on success
             material.parse_finished_at = utc_now()
             db.commit()
+            # V6-60: Incrementally update the FTS index AFTER the commit
+            # so that a failure here does not roll back the chunk data.
+            # ``update_fts_index`` with both old and new chunk IDs removes
+            # the now-inactive old chunks and inserts the new active ones
+            # in a single pass.
+            all_affected_ids = old_chunk_ids_new + [c.id for c in saved_chunks]
+            if all_affected_ids:
+                try:
+                    update_fts_index(db, all_affected_ids)
+                except Exception as fts_exc:
+                    logger.warning("FTS index update failed for material %s: %s", material_id, fts_exc)
             return "ready", len(chunks)
         except Exception as exc:  # noqa: BLE001 - any parse failure
             db.rollback()

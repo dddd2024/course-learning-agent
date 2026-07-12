@@ -32,12 +32,105 @@ from app.models.material_chunk import MaterialChunk
 from app.retrieval.aliases import expand
 
 
+def _ensure_fts_table(db: Session) -> None:
+    """Create the FTS5 virtual table if it does not yet exist."""
+    db.execute(
+        text(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS material_chunks_fts "
+            "USING fts5(chunk_id UNINDEXED, course_id UNINDEXED, body, title)"
+        )
+    )
+
+
 def rebuild_fts_index(db: Session) -> None:
-    """Rebuild the SQLite FTS5 index from active, indexable chunks."""
-    db.execute(text("CREATE VIRTUAL TABLE IF NOT EXISTS material_chunks_fts USING fts5(chunk_id UNINDEXED, course_id UNINDEXED, body, title)"))
+    """Rebuild the SQLite FTS5 index from active, indexable chunks.
+
+    This is a **full** rebuild: it deletes every row from the FTS table
+    and re-inserts all active+indexable chunks.  Use this for manual
+    rebuilds or migrations.  For incremental updates after parsing or
+    deactivation, prefer :func:`update_fts_index` /
+    :func:`remove_from_fts_index`.
+    """
+    _ensure_fts_table(db)
     db.execute(text("DELETE FROM material_chunks_fts"))
     rows = db.query(MaterialChunk).filter(MaterialChunk.is_active == 1, MaterialChunk.is_indexable == 1).all()
     db.execute(text("INSERT INTO material_chunks_fts(chunk_id, course_id, body, title) VALUES (:chunk_id, :course_id, :body, :title)"), [{"chunk_id": row.id, "course_id": row.course_id, "body": row.text or "", "title": row.title or ""} for row in rows])
+    db.commit()
+
+
+def update_fts_index(db: Session, chunk_ids: list[int] | None = None) -> None:
+    """Incrementally update the FTS index for specific chunks.
+
+    * If ``chunk_ids`` is ``None``, performs a full rebuild via
+      :func:`rebuild_fts_index` (backward compatibility).
+    * If ``chunk_ids`` is provided, each chunk is looked up in the
+      database.  Chunks that are active **and** indexable are
+      upserted (DELETE + INSERT) into the FTS table.  Chunks that are
+      inactive or not indexable are removed from the FTS table so that
+      stale entries never surface in search results.
+
+    This is called from :mod:`app.services.material_parser` after new
+    chunks are stored, and also when existing chunks are deactivated.
+    """
+    if chunk_ids is None:
+        rebuild_fts_index(db)
+        return
+
+    if not chunk_ids:
+        return
+
+    _ensure_fts_table(db)
+
+    # Remove any existing FTS entries for these chunk_ids (covers both
+    # the "replace" and "deactivate" cases in one pass).
+    placeholders = ",".join(str(int(cid)) for cid in chunk_ids)
+    db.execute(
+        text(f"DELETE FROM material_chunks_fts WHERE chunk_id IN ({placeholders})")
+    )
+
+    # Re-insert only chunks that are still active and indexable.
+    rows = (
+        db.query(MaterialChunk)
+        .filter(
+            MaterialChunk.id.in_(chunk_ids),
+            MaterialChunk.is_active == 1,
+            MaterialChunk.is_indexable == 1,
+        )
+        .all()
+    )
+    if rows:
+        db.execute(
+            text(
+                "INSERT INTO material_chunks_fts(chunk_id, course_id, body, title) "
+                "VALUES (:chunk_id, :course_id, :body, :title)"
+            ),
+            [
+                {
+                    "chunk_id": row.id,
+                    "course_id": row.course_id,
+                    "body": row.text or "",
+                    "title": row.title or "",
+                }
+                for row in rows
+            ],
+        )
+    db.commit()
+
+
+def remove_from_fts_index(db: Session, chunk_ids: list[int]) -> None:
+    """Remove specific chunks from the FTS index.
+
+    Called when chunks are deactivated (e.g. during re-parsing) so
+    that stale content does not surface in search results.
+    """
+    if not chunk_ids:
+        return
+
+    _ensure_fts_table(db)
+    placeholders = ",".join(str(int(cid)) for cid in chunk_ids)
+    db.execute(
+        text(f"DELETE FROM material_chunks_fts WHERE chunk_id IN ({placeholders})")
+    )
     db.commit()
 
 
@@ -47,7 +140,7 @@ def fts_search(db: Session, course_id: int, query: str, top_k: int = 12) -> list
     if not terms:
         return []
     try:
-        rebuild_fts_index(db)
+        _ensure_fts_table(db)
         match = " OR ".join(dict.fromkeys(terms))
         rows = db.execute(text("SELECT chunk_id, bm25(material_chunks_fts) AS rank FROM material_chunks_fts WHERE material_chunks_fts MATCH :match AND course_id = :course_id ORDER BY rank LIMIT :limit"), {"match": match, "course_id": course_id, "limit": top_k}).mappings().all()
     except Exception:
@@ -560,4 +653,7 @@ __all__ = [
     "vector_search",
     "merge_and_deduplicate",
     "rerank",
+    "rebuild_fts_index",
+    "update_fts_index",
+    "remove_from_fts_index",
 ]

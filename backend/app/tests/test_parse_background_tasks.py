@@ -12,7 +12,7 @@ from app.core.database import get_db
 from app.core.timezone import utc_now
 from app.models.general_error_log import ErrorLog
 from app.models.material import Material
-from app.tests.conftest import auth_headers, create_course, upload_material
+from app.tests.conftest import auth_headers, create_course, upload_material, run_pending_parse_jobs
 
 
 def _test_db(client):
@@ -104,6 +104,7 @@ def test_parse_background_task_completes(
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "processing"
+    run_pending_parse_jobs(client)
 
     # TestClient runs BackgroundTasks after the response is sent.
     # Re-fetch the material to see the final state.

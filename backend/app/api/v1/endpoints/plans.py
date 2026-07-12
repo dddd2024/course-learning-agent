@@ -39,7 +39,11 @@ from app.models.user import User
 from app.services.weak_point_progress import apply_mastery_decay
 from app.schemas.multi_plan import (
     MultiPlanCreate,
+    MultiPlanDetailResponse,
+    MultiPlanReschedule,
     MultiPlanResponse,
+    MultiPlanTaskItem,
+    MultiPlanUpdate,
     MultiScheduleItem,
 )
 from app.schemas.plan import (
@@ -906,6 +910,364 @@ def create_multi_plan(
     db.commit()
 
     return MultiPlanResponse(
+        multi_plan_id=parent.id,
+        schedule=items,
+        overflow_warnings=overflow_warnings,
+        unscheduled_tasks=unscheduled_tasks,
+    )
+
+
+# ---------------------------------------------------------------------------
+# V6-40: Multi-course plan lifecycle endpoints
+# ---------------------------------------------------------------------------
+
+
+def _load_multi_plan_detail(
+    db: Session,
+    multi_plan: MultiCoursePlan,
+) -> MultiPlanDetailResponse:
+    """Build a ``MultiPlanDetailResponse`` from a ``MultiCoursePlan`` row.
+
+    Joins ``MultiCoursePlanTask`` -> ``StudyTask`` (for the title) and
+    ``Course`` (for the course name) so the frontend gets a complete
+    view in one round-trip.
+    """
+    plan_tasks = (
+        db.query(MultiCoursePlanTask)
+        .filter(MultiCoursePlanTask.multi_plan_id == multi_plan.id)
+        .order_by(MultiCoursePlanTask.id.asc())
+        .all()
+    )
+    task_ids = [pt.task_id for pt in plan_tasks if pt.task_id is not None]
+    course_ids = {pt.course_id for pt in plan_tasks}
+
+    task_title_by_id: dict[int, str] = {}
+    if task_ids:
+        for t in db.query(StudyTask).filter(StudyTask.id.in_(task_ids)).all():
+            task_title_by_id[t.id] = t.title
+
+    course_name_by_id = _load_course_names(db, course_ids)
+
+    task_items: list[MultiPlanTaskItem] = []
+    for pt in plan_tasks:
+        task_items.append(
+            MultiPlanTaskItem(
+                task_id=pt.task_id,
+                course_id=pt.course_id,
+                course_name=course_name_by_id.get(pt.course_id, ""),
+                title=task_title_by_id.get(pt.task_id, "") if pt.task_id else "",
+                scheduled_date=pt.scheduled_date,
+                estimate_minutes=pt.estimate_minutes,
+                unscheduled_reason=pt.unscheduled_reason,
+            )
+        )
+
+    return MultiPlanDetailResponse(
+        id=multi_plan.id,
+        title=multi_plan.title,
+        status=multi_plan.status,
+        deadline=multi_plan.deadline,
+        daily_minutes=multi_plan.daily_minutes,
+        tasks=task_items,
+    )
+
+
+def _get_owned_multi_plan(
+    db: Session,
+    multi_plan_id: int,
+    user_id: int,
+) -> MultiCoursePlan:
+    """Return the multi-plan or raise 404 (never leaks existence)."""
+    plan = (
+        db.query(MultiCoursePlan)
+        .filter(
+            MultiCoursePlan.id == multi_plan_id,
+            MultiCoursePlan.user_id == user_id,
+        )
+        .first()
+    )
+    if plan is None:
+        raise NotFoundException(message="多课程计划不存在")
+    return plan
+
+
+@router.get("/multi/{multi_plan_id}", response_model=MultiPlanDetailResponse)
+def get_multi_plan(
+    multi_plan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MultiPlanDetailResponse:
+    """Get a multi-course plan with all tasks and schedule."""
+    plan = _get_owned_multi_plan(db, multi_plan_id, current_user.id)
+    return _load_multi_plan_detail(db, plan)
+
+
+@router.patch("/multi/{multi_plan_id}", response_model=MultiPlanDetailResponse)
+def patch_multi_plan(
+    multi_plan_id: int,
+    payload: MultiPlanUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MultiPlanDetailResponse:
+    """Update a multi-course plan's status (active/archived/done)."""
+    plan = _get_owned_multi_plan(db, multi_plan_id, current_user.id)
+    if payload.status is not None:
+        plan.status = payload.status
+    db.commit()
+    db.refresh(plan)
+    return _load_multi_plan_detail(db, plan)
+
+
+@router.delete("/multi/{multi_plan_id}", status_code=204)
+def delete_multi_plan(
+    multi_plan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete a multi-course plan and all associated tasks/todos/goals."""
+    plan = _get_owned_multi_plan(db, multi_plan_id, current_user.id)
+
+    # Collect all StudyTask ids linked to this multi-plan.
+    plan_tasks = (
+        db.query(MultiCoursePlanTask)
+        .filter(MultiCoursePlanTask.multi_plan_id == plan.id)
+        .all()
+    )
+    task_ids = [pt.task_id for pt in plan_tasks if pt.task_id is not None]
+
+    # Collect StudyGoal ids from the tasks (to delete the per-course goals).
+    goal_ids: set[int] = set()
+    if task_ids:
+        goal_ids = {
+            row.goal_id
+            for row in db.query(StudyTask)
+            .filter(StudyTask.id.in_(task_ids))
+            .all()
+        }
+
+    # Delete todos, tasks, goals, and plan-task metadata.
+    if task_ids:
+        db.query(Todo).filter(Todo.task_id.in_(task_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(StudyTask).filter(StudyTask.id.in_(task_ids)).delete(
+            synchronize_session=False
+        )
+    if goal_ids:
+        db.query(StudyGoal).filter(StudyGoal.id.in_(goal_ids)).delete(
+            synchronize_session=False
+        )
+    db.query(MultiCoursePlanTask).filter(
+        MultiCoursePlanTask.multi_plan_id == plan.id
+    ).delete(synchronize_session=False)
+    db.query(MultiCoursePlan).filter(MultiCoursePlan.id == plan.id).delete(
+        synchronize_session=False
+    )
+    db.commit()
+
+
+@router.post("/multi/{multi_plan_id}/reschedule", response_model=MultiPlanResponse)
+def reschedule_multi_plan(
+    multi_plan_id: int,
+    payload: MultiPlanReschedule,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MultiPlanResponse:
+    """Recompute the schedule for an existing multi-plan with new constraints.
+
+    Reuses the original courses and deadlines, deletes the old
+    tasks/todos/goals, runs ``schedule_multi_courses`` with the new
+    ``daily_minutes``, and persists the new schedule.
+    """
+    plan = _get_owned_multi_plan(db, multi_plan_id, current_user.id)
+
+    # Recover the original course list (course_id + deadline) from the
+    # StudyGoals created by the initial POST.
+    old_plan_tasks = (
+        db.query(MultiCoursePlanTask)
+        .filter(MultiCoursePlanTask.multi_plan_id == plan.id)
+        .all()
+    )
+    old_task_ids = [pt.task_id for pt in old_plan_tasks if pt.task_id is not None]
+    old_goal_ids: set[int] = set()
+    if old_task_ids:
+        old_goal_ids = {
+            row.goal_id
+            for row in db.query(StudyTask)
+            .filter(StudyTask.id.in_(old_task_ids))
+            .all()
+        }
+
+    # Build courses_input from the existing goals' deadlines.
+    course_ids = list(dict.fromkeys(pt.course_id for pt in old_plan_tasks))
+    courses_input: list[dict] = []
+    if course_ids:
+        goals = (
+            db.query(StudyGoal)
+            .filter(
+                StudyGoal.user_id == current_user.id,
+                StudyGoal.id.in_(old_goal_ids) if old_goal_ids else False,
+            )
+            .all()
+        )
+        goal_by_course: dict[int, date] = {}
+        for g in goals:
+            # The goal title is "多课程学习计划 - {course_name}", so we
+            # match by the goal_id chain rather than parsing the title.
+            # Find which course this goal belongs to via its tasks.
+            for t in db.query(StudyTask).filter(StudyTask.goal_id == g.id).all():
+                goal_by_course.setdefault(t.course_id, g.deadline)
+        for cid in course_ids:
+            courses_input.append(
+                {
+                    "course_id": cid,
+                    "deadline": goal_by_course.get(cid, plan.deadline),
+                }
+            )
+
+    # Delete old tasks/todos/goals/plan-tasks.
+    if old_task_ids:
+        db.query(Todo).filter(Todo.task_id.in_(old_task_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(StudyTask).filter(StudyTask.id.in_(old_task_ids)).delete(
+            synchronize_session=False
+        )
+    if old_goal_ids:
+        db.query(StudyGoal).filter(StudyGoal.id.in_(old_goal_ids)).delete(
+            synchronize_session=False
+        )
+    db.query(MultiCoursePlanTask).filter(
+        MultiCoursePlanTask.multi_plan_id == plan.id
+    ).delete(synchronize_session=False)
+
+    # Update the plan's daily_minutes.
+    plan.daily_minutes = payload.daily_minutes
+    db.flush()
+
+    # Run the scheduler with the new daily_minutes.
+    active_config = get_active_config(db, current_user.id)
+    user_config = build_user_config(active_config) if active_config else None
+    schedule = schedule_multi_courses(
+        db=db,
+        user_id=current_user.id,
+        courses=courses_input,
+        daily_minutes=payload.daily_minutes,
+        user_config=user_config,
+    )
+    schedule_items_raw = schedule["schedule"]
+    overflow_warnings = schedule.get("overflow_warnings", [])
+    unscheduled_tasks = schedule.get("unscheduled_tasks", [])
+
+    # Look up course names for the response.
+    course_name_rows = (
+        db.query(Course)
+        .filter(
+            Course.user_id == current_user.id,
+            Course.id.in_(course_ids),
+        )
+        .all()
+    )
+    course_name_by_id = {c.id: c.name for c in course_name_rows}
+
+    goal_by_course_new: dict[int, StudyGoal] = {}
+    items: list[MultiScheduleItem] = []
+    used_target_ids: dict[tuple[int, str], set[int]] = {}
+
+    for item in schedule_items_raw:
+        course_id = item["course_id"]
+        course_name = item.get("course_name") or course_name_by_id.get(course_id, "")
+
+        if course_id not in goal_by_course_new:
+            goal = StudyGoal(
+                user_id=current_user.id,
+                title=f"多课程学习计划 - {course_name}",
+                deadline=item["scheduled_date"],
+                daily_minutes=payload.daily_minutes,
+                status="active",
+            )
+            # Use the recovered deadline for this course.
+            for ci in courses_input:
+                if ci["course_id"] == course_id:
+                    goal.deadline = ci["deadline"]
+                    break
+            db.add(goal)
+            db.flush()
+            goal_by_course_new[course_id] = goal
+
+        task_type = _normalise_task_type(item.get("task_type"))
+        key = (course_id, task_type)
+        target_type, target_id, target_spec = resolve_target(
+            db, course_id, task_type, item["title"],
+            used_target_ids.setdefault(key, set()),
+        )
+        if target_id is not None:
+            used_target_ids[key].add(target_id)
+        task = StudyTask(
+            goal_id=goal_by_course_new[course_id].id,
+            course_id=course_id,
+            title=item["title"],
+            task_type=task_type,
+            estimate_minutes=item["estimate_minutes"],
+            priority=int(item.get("priority", 3) or 3),
+            acceptance=item.get("acceptance", ""),
+            status="pending",
+            target_type=target_type,
+            target_id=target_id,
+            target_spec_json=json.dumps(target_spec, ensure_ascii=False),
+            execution_status="pending",
+        )
+        db.add(task)
+        db.flush()
+
+        db.add(MultiCoursePlanTask(
+            multi_plan_id=plan.id,
+            task_id=task.id,
+            course_id=course_id,
+            depends_on_json=json.dumps(item.get("depends_on", []), ensure_ascii=False),
+            scheduled_date=item["scheduled_date"],
+            estimate_minutes=item["estimate_minutes"],
+        ))
+
+        todo = Todo(
+            user_id=current_user.id,
+            task_id=task.id,
+            course_id=course_id,
+            title=item["title"],
+            scheduled_date=item["scheduled_date"],
+            scheduled_start=item.get("start_time"),
+            scheduled_end=item.get("end_time"),
+            estimate_minutes=item["estimate_minutes"],
+            status="pending",
+        )
+        db.add(todo)
+        db.flush()
+
+        items.append(
+            MultiScheduleItem(
+                scheduled_date=item["scheduled_date"],
+                course_name=course_name,
+                title=item["title"],
+                estimate_minutes=item["estimate_minutes"],
+                start_time=item.get("start_time"),
+                end_time=item.get("end_time"),
+            )
+        )
+
+    for item in unscheduled_tasks:
+        db.add(MultiCoursePlanTask(
+            multi_plan_id=plan.id,
+            task_id=None,
+            course_id=item["course_id"],
+            depends_on_json=json.dumps(item.get("depends_on", []), ensure_ascii=False),
+            scheduled_date=None,
+            estimate_minutes=item["estimate_minutes"],
+            unscheduled_reason=item["reason"],
+        ))
+    db.commit()
+
+    return MultiPlanResponse(
+        multi_plan_id=plan.id,
         schedule=items,
         overflow_warnings=overflow_warnings,
         unscheduled_tasks=unscheduled_tasks,

@@ -3,12 +3,10 @@
 These endpoints live under ``/api/v1/materials`` (note: not under
 ``/courses``) so chunks can be addressed directly by ``material_id``.
 
-* ``POST /materials/{material_id}/parse`` sets the material to
-  ``processing`` and schedules a background task that runs
-  :func:`app.services.material_parser.parse_with_retry`. The endpoint
-  returns immediately with ``status=processing`` so the frontend is not
-  blocked; the background task eventually flips the status to ``ready``
-  or ``failed``.
+* ``POST /materials/{material_id}/parse`` creates a queued
+  :class:`ParseJob` and returns immediately with ``status=processing``.
+  A persistent ``ParseWorker`` process polls the DB, claims the job,
+  and runs the actual parse with heartbeat + retry.
 * ``GET /materials/{material_id}/chunks`` returns paginated chunks.
 * ``DELETE /materials/{material_id}`` removes the material, its chunks,
   its security findings, and the original uploaded file from disk.
@@ -18,7 +16,7 @@ another user is invisible (returned as 404).
 """
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -36,11 +34,9 @@ from app.schemas.material import (
     ChunkResponse,
     ParseResponse,
 )
-from app.services.error_logger import log_error
-from app.services.material_parser import parse_with_retry
+from app.services.parse_job_service import create_or_get_job, recover_stale_jobs
 from app.models.parse_job import ParseJob
 from app.models.material_page import MaterialPage
-from app.services.parse_job_service import create_or_get_job, recover_stale_jobs, run_job
 from app.services.material_delete_service import delete_material as delete_material_service
 from app.services.material_image_service import image_integrity, image_state, reextract_images
 
@@ -107,83 +103,24 @@ def get_material_image_file(
     return FileResponse(path, filename=image.image_filename)
 
 
-def _run_parse_in_background(material_id: int, user_id: int) -> None:
-    """Background task: run parse_with_retry with an independent session.
-
-    Stability Task A: the background task must NOT reuse the request-level
-    ``db`` Session (which is closed after the response). Instead it creates
-    its own session via :data:`app.core.database.SessionLocal` and closes
-    it in a ``finally`` block. Any exception is caught so a material can
-    never get stuck in ``processing`` — it is flipped to ``failed`` and a
-    ``category=parse`` error log is written.
-    """
-    # Import lazily so tests can monkeypatch ``app.core.database.SessionLocal``.
-    from app.core.database import SessionLocal
-
-    db = SessionLocal()
-    material = None
-    try:
-        material = (
-            db.query(Material)
-            .filter(Material.id == material_id, Material.user_id == user_id)
-            .first()
-        )
-        if material is None:
-            return
-        parse_with_retry(db, material, user_id)
-    except Exception as exc:
-        # Fallback: prevent the material from staying in processing forever.
-        db.rollback()
-        material = (
-            db.query(Material)
-            .filter(Material.id == material_id, Material.user_id == user_id)
-            .first()
-        )
-        if material is not None:
-            material.status = "failed"
-            material.error_message = "后台解析任务异常，请查看日志中心"
-            material.last_parse_error = str(exc)
-            material.parse_finished_at = utc_now()
-            log_error(
-                db,
-                user_id,
-                category="parse",
-                level="error",
-                title="后台解析任务异常",
-                message=str(exc),
-                technical_detail=f"{exc.__class__.__name__}: {exc}",
-                course_id=material.course_id,
-                material_id=material.id,
-                retry_count=material.parse_attempts or 0,
-                max_retries=3,
-                commit=False,
-            )
-            db.commit()
-    finally:
-        db.close()
-
-
 @router.post(
     "/{material_id}/parse",
     response_model=ParseResponse,
 )
 def parse_material(
     material_id: int,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ParseResponse:
-    """Schedule a background parse task and return ``processing`` immediately.
+    """Create a queued ParseJob and return ``processing`` immediately.
 
-    If the material is already ``processing``, returns the current status
-    without scheduling a duplicate task. The actual parse (with retry)
-    runs in the background via :class:`fastapi.BackgroundTasks`.
+    V6-50: The API only creates the job; a persistent ``ParseWorker``
+    process polls the DB and runs the actual parse.  If the material
+    already has an active job, the existing job is returned without
+    creating a duplicate.
     """
     material = _get_owned_material(db, material_id, current_user.id)
-
-    job, created = create_or_get_job(db, material, current_user.id, include_created=True)
-    if created:
-        background_tasks.add_task(run_job, job.id, parse_with_retry)
+    create_or_get_job(db, material, current_user.id)
 
     return ParseResponse(
         material_id=material_id,
@@ -207,11 +144,11 @@ def list_parse_jobs(material_id: int, db: Session = Depends(get_db), current_use
     _get_owned_material(db, material_id, current_user.id)
     recover_stale_jobs(db)
     rows = db.query(ParseJob).filter(ParseJob.material_id == material_id, ParseJob.user_id == current_user.id).order_by(ParseJob.id.desc()).all()
-    return {"items": [{"id": row.id, "status": row.status, "attempt": row.attempt, "heartbeat_at": row.heartbeat_at, "error": row.error_message} for row in rows]}
+    return {"items": [{"id": row.id, "status": row.status, "attempt": row.attempt, "started_at": row.started_at, "heartbeat_at": row.heartbeat_at, "error": row.error_message} for row in rows]}
 
 
 @router.post("/{material_id}/parse-jobs/{job_id}/retry")
-def retry_parse_job(material_id: int, job_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+def retry_parse_job(material_id: int, job_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
     material = _get_owned_material(db, material_id, current_user.id)
     old = db.query(ParseJob).filter(ParseJob.id == job_id, ParseJob.material_id == material_id, ParseJob.user_id == current_user.id).first()
     if old is None:
@@ -219,7 +156,6 @@ def retry_parse_job(material_id: int, job_id: int, background_tasks: BackgroundT
     if old.status in {"queued", "running"}:
         return {"job_id": old.id, "status": old.status}
     job = create_or_get_job(db, material, current_user.id)
-    background_tasks.add_task(run_job, job.id, parse_with_retry)
     return {"job_id": job.id, "status": job.status}
 
 

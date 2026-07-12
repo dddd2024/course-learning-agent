@@ -13,7 +13,7 @@ Covers:
 import io
 
 from app.main import app
-from app.tests.conftest import auth_headers, create_course, upload_material
+from app.tests.conftest import auth_headers, create_course, upload_material, run_pending_parse_jobs
 
 # Diverse OS text that passes _is_low_quality_chunk filter
 from app.tests._test_data import DIVERSE_OS_TEXT
@@ -214,6 +214,7 @@ def test_delete_material_clears_chunks(client, tmp_path, monkeypatch) -> None:
         f"/api/v1/materials/{material_id}/parse", headers=headers
     )
     assert parse_resp.status_code == 200
+    run_pending_parse_jobs(client)
     # Background task: endpoint returns processing immediately, chunk_count=0.
     # Verify the background task completed and chunks exist.
     chunks_before = client.get(

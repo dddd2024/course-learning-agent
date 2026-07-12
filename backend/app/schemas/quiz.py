@@ -117,6 +117,8 @@ class QuizSubmit(BaseModel):
     """Payload for POST /quizzes/{id}/submit."""
 
     answers: List[QuizSubmitAnswer]
+    # V6-23: optional task_id to auto-verify a bound quiz task on submit.
+    task_id: Optional[int] = None
 
 
 class QuizResultItemOut(BaseModel):
@@ -183,6 +185,8 @@ class QuizResultOut(BaseModel):
     score: int
     total: int
     items: List[QuizResultItemOut]
+    # V6-32: explainable weak point changes from this submission.
+    weak_point_changes: List[dict] = []
 
 
 class WeakPointOut(BaseModel):

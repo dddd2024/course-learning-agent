@@ -15,7 +15,7 @@ from app.core.database import get_db
 from app.core.timezone import utc_now
 from app.models.general_error_log import ErrorLog
 from app.models.material import Material
-from app.tests.conftest import auth_headers, create_course, upload_material
+from app.tests.conftest import auth_headers, create_course, upload_material, run_pending_parse_jobs
 
 
 def _test_db(client):
@@ -119,6 +119,7 @@ def test_parse_retries_then_succeeds(client, tmp_path, monkeypatch) -> None:
     body = resp.json()
     # Background task: endpoint returns processing immediately.
     assert body["status"] == "processing"
+    run_pending_parse_jobs(client)
 
     # After the background task completes, check the final state.
     assert calls["n"] == 3  # 2 failures + 1 success
@@ -159,6 +160,7 @@ def test_parse_always_fails_ends_failed_with_log(
     # Background task: endpoint returns processing immediately.
     body = resp.json()
     assert body["status"] == "processing"
+    run_pending_parse_jobs(client)
 
     db = _test_db(client)
     try:
@@ -202,6 +204,7 @@ def test_reparse_failure_with_old_chunks_keeps_ready_warning(
     assert ok.status_code == 200
     # Background task: endpoint returns processing immediately.
     assert ok.json()["status"] == "processing"
+    run_pending_parse_jobs(client)
 
     # Second parse always fails.
     def always_fail(path, file_type):
@@ -216,6 +219,7 @@ def test_reparse_failure_with_old_chunks_keeps_ready_warning(
     # Background task: endpoint returns processing immediately.
     body = resp.json()
     assert body["status"] == "processing"
+    run_pending_parse_jobs(client)
 
     db = _test_db(client)
     try:

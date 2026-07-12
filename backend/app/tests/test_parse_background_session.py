@@ -8,7 +8,7 @@ The background parse task must:
    ``category=parse`` error log.
 """
 import app.core.database as db_module
-from app.tests.conftest import auth_headers, create_course, upload_material
+from app.tests.conftest import auth_headers, create_course, upload_material, run_pending_parse_jobs
 
 
 def test_background_parse_recovers_from_exception(
@@ -33,13 +33,16 @@ def test_background_parse_recovers_from_exception(
     def boom(*args, **kwargs):
         raise RuntimeError("simulated parse crash")
 
-    monkeypatch.setattr("app.api.v1.endpoints.parse.parse_with_retry", boom)
+    # V6-50: parse_with_retry is no longer imported in parse.py; patch
+    # the reference in parse_job_service (which run_job uses).
+    monkeypatch.setattr("app.services.parse_job_service.parse_with_retry", boom)
 
     resp = client.post(
         f"/api/v1/materials/{material_id}/parse", headers=headers
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "processing"
+    run_pending_parse_jobs(client)
 
     # Background task runs synchronously in TestClient. The exception
     # handler must flip the material to failed (not stuck processing).
@@ -93,8 +96,12 @@ def test_background_parse_uses_independent_session(
     )
     assert resp.status_code == 200
 
-    # The background task must have created at least one session via
-    # SessionLocal (proving it does not reuse the request-level db).
+    # V6-50: the API no longer runs parse in-process; run pending jobs
+    # so the material reaches ready state.
+    run_pending_parse_jobs(client)
+
+    # run_job creates its own session via SessionLocal (proving it does
+    # not reuse the request-level db).
     assert created_count["n"] >= 1
 
     # And the parse should have succeeded (material ready).

@@ -1,0 +1,28 @@
+{
+  "slides": 6,
+  "title": "操作系统原理",
+  "headings": [
+    "进程调度算法",
+    "内存管理策略",
+    "I/O 管理与设备驱动",
+    "网络子系统"
+  ],
+  "body_fragments": [
+    "进程调度概述",
+    "TLB 与地址转换",
+    "分页系统使用 TLB 加速地址转换"
+  ],
+  "technical_terms": [
+    "TLB",
+    "TCP/IP",
+    "CSMA/CD",
+    "I/O"
+  ],
+  "tables": 1,
+  "images": 1,
+  "shapes": 4,
+  "multi_level_bullets": true,
+  "two_column_text": true,
+  "image_only_slide": 4,
+  "sha256": "9fce6b581ffc621c9a2840d2c8b397628a4ef4a07b71a64c03b5fb965eb38cad"
+}

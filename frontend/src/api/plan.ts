@@ -181,6 +181,7 @@ export interface MultiPlanScheduleItem {
 }
 
 export interface MultiPlanResult {
+  multi_plan_id?: number | null
   schedule: MultiPlanScheduleItem[]
   overflow_warnings: string[]
   unscheduled_tasks: Array<{
@@ -196,6 +197,49 @@ export interface MultiPlanResult {
 
 export function createMultiPlan(payload: MultiPlanPayload): AxiosPromise<MultiPlanResult> {
   return request.post('/plans/multi', payload)
+}
+
+// V6-41: Multi-plan lifecycle types & API functions
+
+export interface MultiPlanTaskItem {
+  task_id: number | null
+  course_id: number
+  course_name: string
+  title: string
+  scheduled_date: string | null
+  estimate_minutes: number
+  unscheduled_reason: string | null
+}
+
+export interface MultiPlanDetail {
+  id: number
+  title: string
+  status: string
+  deadline: string
+  daily_minutes: number
+  tasks: MultiPlanTaskItem[]
+}
+
+export function getMultiPlan(id: number): AxiosPromise<MultiPlanDetail> {
+  return request.get(`/plans/multi/${id}`)
+}
+
+export function patchMultiPlan(
+  id: number,
+  payload: { status?: string },
+): AxiosPromise<MultiPlanDetail> {
+  return request.patch(`/plans/multi/${id}`, payload)
+}
+
+export function deleteMultiPlan(id: number): AxiosPromise<void> {
+  return request.delete(`/plans/multi/${id}`)
+}
+
+export function rescheduleMultiPlan(
+  id: number,
+  payload: { daily_minutes: number },
+): AxiosPromise<MultiPlanResult> {
+  return request.post(`/plans/multi/${id}/reschedule`, payload)
 }
 
 export function listTodos(params?: TodoListParams): AxiosPromise<TodoListResult> {

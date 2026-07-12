@@ -66,12 +66,57 @@ export function getMaterialPages(materialId: number): AxiosPromise<{ items: Mate
   return request.get(`/materials/${materialId}/pages`)
 }
 
-export function getImageIntegrity(materialId: number): AxiosPromise<{ total: number; ready: number; missing: number; status: string }> {
+export type ImageIntegrityStatus = 'ready' | 'partial' | 'missing' | 'unsupported'
+
+export interface ImageIntegrityResult {
+  material_id: number
+  total: number
+  ready: number
+  missing: number
+  status: string
+}
+
+export function getImageIntegrity(materialId: number): AxiosPromise<ImageIntegrityResult> {
   return request.get(`/materials/${materialId}/image-integrity`)
 }
 
-export function reextractImages(materialId: number): AxiosPromise<{ status: string; code?: string; extracted: number }> {
+export interface ReextractResult {
+  material_id: number
+  status: string
+  code?: string | null
+  found?: number
+  extracted: number
+}
+
+export function reextractImages(materialId: number): AxiosPromise<ReextractResult> {
   return request.post(`/materials/${materialId}/images/reextract`)
+}
+
+export type ParseJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+
+export interface ParseJob {
+  id: number
+  status: ParseJobStatus
+  attempt: number
+  started_at?: string | null
+  heartbeat_at?: string | null
+  error?: string | null
+}
+
+export interface ParseJobListResult {
+  items: ParseJob[]
+}
+
+export function getParseJobs(materialId: number): AxiosPromise<ParseJobListResult> {
+  return request.get(`/materials/${materialId}/parse-jobs`)
+}
+
+export function retryParseJob(materialId: number, jobId: number): AxiosPromise<{ job_id: number; status: ParseJobStatus }> {
+  return request.post(`/materials/${materialId}/parse-jobs/${jobId}/retry`)
+}
+
+export function cancelParseJob(materialId: number, jobId: number): AxiosPromise<{ job_id: number; status: ParseJobStatus }> {
+  return request.post(`/materials/${materialId}/parse-jobs/${jobId}/cancel`)
 }
 
 export interface Chunk {

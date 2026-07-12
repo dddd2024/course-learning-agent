@@ -55,6 +55,7 @@ from app.services.llm_config_service import (
     build_user_config,
     get_active_config,
 )
+from app.services.task_execution_service import verify_task as verify_task_service
 from app.services.weak_point_progress import apply_mastery_decay
 
 logger = logging.getLogger(__name__)
@@ -248,8 +249,13 @@ def _upsert_weak_point(
     course_id: int,
     knowledge_point_id: int,
     correct: bool,
-) -> None:
-    """Insert or increment a ``WeakPoint`` row."""
+) -> dict:
+    """Insert or increment a ``WeakPoint`` row.
+
+    V6-32: returns a change summary dict describing what changed, including
+    previous and current values for ``wrong_count``, ``correct_count``,
+    ``consecutive_correct``, ``mastery_score``, and ``status``.
+    """
     wp = (
         db.query(WeakPoint)
         .filter(
@@ -260,7 +266,18 @@ def _upsert_weak_point(
         .first()
     )
     now = datetime.now()
+
+    _FIELDS = ("wrong_count", "correct_count", "consecutive_correct", "mastery_score", "status")
+
     if wp is None:
+        # Snapshot defaults for the "previous" state.
+        previous = {
+            "wrong_count": 0,
+            "correct_count": 0,
+            "consecutive_correct": 0,
+            "mastery_score": 0,
+            "status": None,
+        }
         wp = WeakPoint(
             user_id=user_id,
             course_id=course_id,
@@ -274,7 +291,15 @@ def _upsert_weak_point(
             status="improving" if correct else "active",
         )
         db.add(wp)
+        action = "created"
     else:
+        previous = {
+            "wrong_count": wp.wrong_count,
+            "correct_count": wp.correct_count,
+            "consecutive_correct": wp.consecutive_correct,
+            "mastery_score": wp.mastery_score,
+            "status": wp.status,
+        }
         wp.last_practiced_at = now
         if correct:
             wp.correct_count += 1
@@ -289,7 +314,34 @@ def _upsert_weak_point(
             wp.consecutive_correct = 0
             wp.mastery_score = max(0, wp.mastery_score - 25)
             wp.status, wp.resolved_at, wp.last_wrong_at = "active", None, now
+        action = "updated"
+
     db.flush()
+
+    current = {
+        "wrong_count": wp.wrong_count,
+        "correct_count": wp.correct_count,
+        "consecutive_correct": wp.consecutive_correct,
+        "mastery_score": wp.mastery_score,
+        "status": wp.status,
+    }
+    changed_fields = [
+        field for field in _FIELDS if previous[field] != current[field]
+    ]
+    change_descriptions = [
+        f"{field}: {previous[field]} -> {current[field]}"
+        for field in changed_fields
+    ]
+
+    return {
+        "knowledge_point_id": knowledge_point_id,
+        "action": action,
+        "correct": correct,
+        "previous": previous,
+        "current": current,
+        "changed_fields": changed_fields,
+        "change_summary": "; ".join(change_descriptions) if change_descriptions else "no changes",
+    }
 
 
 @router.post("", response_model=QuizOut)
@@ -547,6 +599,8 @@ def submit_quiz(
             )
         )
 
+    # V6-32: collect explainable weak point change summaries.
+    weak_point_changes: list[dict] = []
     for knowledge_point_id, correct in practiced.items():
         if correct and not db.query(WeakPoint.id).filter(
             WeakPoint.user_id == current_user.id,
@@ -554,13 +608,14 @@ def submit_quiz(
             WeakPoint.knowledge_point_id == knowledge_point_id,
         ).first():
             continue
-        _upsert_weak_point(
+        change = _upsert_weak_point(
             db,
             user_id=current_user.id,
             course_id=quiz.course_id,
             knowledge_point_id=knowledge_point_id,
             correct=correct,
         )
+        weak_point_changes.append(change)
 
     quiz.score = score
     quiz.status = "submitted"
@@ -584,11 +639,26 @@ def submit_quiz(
         except Exception as exc:  # pragma: no cover - audit must not break flow
             logger.warning("AgentAudit.finish_run(quiz submit) failed: %s", exc)
 
+    # V6-23: auto-verify the bound quiz task if task_id is provided.
+    # If the score meets the threshold, the task is auto-completed; if
+    # not, the task stays in_progress.  Failures here are logged but
+    # do not break the quiz submission.
+    task_id = getattr(payload, "task_id", None)
+    if task_id is not None:
+        try:
+            verify_task_service(db, task_id, current_user.id)
+        except Exception:
+            logger.warning(
+                "Auto-verify for task %s after quiz %s submit failed",
+                task_id, quiz_id, exc_info=True,
+            )
+
     return QuizResultOut(
         id=quiz.id,
         score=score,
         total=len(items_by_id),
         items=result_items,
+        weak_point_changes=weak_point_changes,
     )
 
 

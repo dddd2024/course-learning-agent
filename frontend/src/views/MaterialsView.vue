@@ -3,20 +3,27 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadRequestOptions } from 'element-plus'
-import { ArrowLeft, Search, UploadFilled, View } from '@element-plus/icons-vue'
+import { ArrowLeft, Search, UploadFilled, View, RefreshRight, Close, PictureRounded } from '@element-plus/icons-vue'
 import { getCourse, type Course } from '../api/course'
 import {
   deleteMaterial,
   getChunks,
+  getImageIntegrity,
   getMaterialOverview,
+  getParseJobs,
   listMaterials,
   parseMaterial,
+  reextractImages,
+  retryParseJob,
+  cancelParseJob,
   search,
   uploadMaterial,
   type Chunk,
   type Material,
   type MaterialOverview,
   type MaterialStatus,
+  type ParseJob,
+  type ParseJobStatus,
   type SearchItem,
 } from '../api/material'
 import { listKnowledgePoints, type KnowledgePoint } from '../api/knowledge'
@@ -84,6 +91,54 @@ const currentMaterial = ref<Material | null>(null)
 // Phase 2 Task C/D: material overview (stats + security findings).
 const materialOverview = ref<MaterialOverview | null>(null)
 
+// V6-51: parse job state per material
+const parseJobsMap = ref<Record<number, ParseJob[]>>({})
+const parseJobsLoading = ref<Set<number>>(new Set())
+
+// V6-52: image integrity state per material
+const imageIntegrityMap = ref<Record<number, { total: number; ready: number; missing: number; status: string }>>({})
+const reextractLoading = ref<Set<number>>(new Set())
+
+// V6-51: parse job status labels and tag types
+const jobStatusLabel: Record<ParseJobStatus, string> = {
+  queued: '排队中',
+  running: '运行中',
+  succeeded: '成功',
+  failed: '失败',
+  cancelled: '已取消',
+}
+
+const jobStatusTagType: Record<ParseJobStatus, 'info' | 'warning' | 'success' | 'danger'> = {
+  queued: 'info',
+  running: 'warning',
+  succeeded: 'success',
+  failed: 'danger',
+  cancelled: 'info',
+}
+
+// V6-52: image integrity status labels and tag types
+const integrityStatusLabel: Record<string, string> = {
+  ready: '图片完整',
+  partial: '部分缺失',
+  missing: '图片缺失',
+  unsupported: '不支持',
+}
+
+const integrityStatusTagType: Record<string, 'success' | 'warning' | 'danger' | 'info'> = {
+  ready: 'success',
+  partial: 'warning',
+  missing: 'danger',
+  unsupported: 'info',
+}
+
+function integrityStatusForMaterial(m: Material): string {
+  const info = imageIntegrityMap.value[m.id]
+  if (!info) return ''
+  // Non-PDF materials are unsupported for image extraction
+  if (m.file_type.toLowerCase() !== 'pdf') return 'unsupported'
+  return info.status
+}
+
 const searchKeyword = ref('')
 const searchLoading = ref(false)
 const searchResults = ref<SearchItem[]>([])
@@ -128,6 +183,9 @@ async function fetchMaterials() {
       status: statusFilter.value || undefined,
     })
     materials.value = data.items
+    // V6-51/V6-52: fetch parse jobs and image integrity for all materials
+    fetchAllParseJobs()
+    fetchAllImageIntegrity()
     ensurePolling()
   } catch (err) {
     materialsLoadError.value = parseApiError(err, '获取资料列表失败')
@@ -166,7 +224,11 @@ function startPolling() {
         return fresh ?? m
       })
       materials.value = updated
+      // V6-51: refresh parse jobs for materials that are still processing
+      fetchAllParseJobs()
       if (!hasProcessing()) {
+        // Final refresh of image integrity when processing completes
+        fetchAllImageIntegrity()
         stopPolling()
         return
       }
@@ -291,6 +353,115 @@ async function handleParse(material: Material) {
 
 function goToLogs(material: Material) {
   router.push({ path: '/logs', query: { material_id: String(material.id) } })
+}
+
+// V6-51: fetch parse jobs for a single material
+async function fetchParseJobs(materialId: number) {
+  parseJobsLoading.value.add(materialId)
+  try {
+    const { data } = await getParseJobs(materialId)
+    parseJobsMap.value[materialId] = data.items
+  } catch {
+    // silent fail — parse jobs are supplementary info
+    parseJobsMap.value[materialId] = []
+  } finally {
+    parseJobsLoading.value.delete(materialId)
+  }
+}
+
+// V6-51: fetch parse jobs for all materials in the list
+async function fetchAllParseJobs() {
+  await Promise.allSettled(
+    materials.value.map((m) => fetchParseJobs(m.id)),
+  )
+}
+
+// V6-51: get the latest parse job for a material (first in desc-ordered list)
+function latestJob(materialId: number): ParseJob | null {
+  const jobs = parseJobsMap.value[materialId]
+  return jobs && jobs.length > 0 ? jobs[0] : null
+}
+
+// V6-51: retry a failed parse job
+async function handleRetryJob(material: Material, job: ParseJob) {
+  try {
+    await retryParseJob(material.id, job.id)
+    ElMessage.success('已重新提交解析任务')
+    await fetchParseJobs(material.id)
+    ensurePolling()
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '重试失败'))
+  }
+}
+
+// V6-51: cancel a queued or running parse job
+async function handleCancelJob(material: Material, job: ParseJob) {
+  try {
+    await cancelParseJob(material.id, job.id)
+    ElMessage.success('已取消解析任务')
+    await fetchParseJobs(material.id)
+    await fetchMaterials()
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '取消失败'))
+  }
+}
+
+// V6-52: fetch image integrity for a single material
+async function fetchImageIntegrity(materialId: number) {
+  try {
+    const { data } = await getImageIntegrity(materialId)
+    imageIntegrityMap.value[materialId] = {
+      total: data.total,
+      ready: data.ready,
+      missing: data.missing,
+      status: data.status,
+    }
+  } catch {
+    // silent fail
+  }
+}
+
+// V6-52: fetch image integrity for all ready materials
+async function fetchAllImageIntegrity() {
+  await Promise.allSettled(
+    materials.value
+      .filter((m) => m.status === 'ready' || m.status === 'failed')
+      .map((m) => fetchImageIntegrity(m.id)),
+  )
+}
+
+// V6-52: re-extract images for a material with detailed feedback
+async function handleReextractImages(material: Material) {
+  if (reextractLoading.value.has(material.id)) return
+  reextractLoading.value.add(material.id)
+  try {
+    const { data: result } = await reextractImages(material.id)
+    if (result.status === 'forbidden') {
+      ElMessage.warning('该资料类型不支持图片提取')
+    } else if (result.status === 'missing') {
+      ElMessage.error('原始文件缺失，无法提取图片')
+    } else {
+      const found = result.found ?? 0
+      const extracted = result.extracted ?? 0
+      // Reload integrity to get the current state
+      await fetchImageIntegrity(material.id)
+      const integrity = imageIntegrityMap.value[material.id]
+      const stillMissing = integrity ? integrity.missing : 0
+      if (stillMissing > 0) {
+        ElMessage.warning(
+          `重新提取完成：找到 ${found} 张图片，提取 ${extracted} 张，仍有 ${stillMissing} 张缺失（旧图片仍可用）`,
+        )
+      } else {
+        ElMessage.success(
+          `重新提取完成：找到 ${found} 张图片，成功提取 ${extracted} 张`,
+        )
+      }
+    }
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '重新提取图片失败，旧图片仍可使用'))
+  } finally {
+    reextractLoading.value.delete(material.id)
+  }
 }
 
 async function handleDelete(material: Material) {
@@ -651,13 +822,61 @@ onUnmounted(() => {
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="解析任务" width="220">
+          <template #default="{ row }">
+            <template v-if="latestJob(row.id)">
+              <div class="job-info">
+                <el-tag :type="jobStatusTagType[latestJob(row.id)!.status]" size="small">
+                  {{ jobStatusLabel[latestJob(row.id)!.status] }}
+                </el-tag>
+                <span class="job-attempt">第 {{ latestJob(row.id)!.attempt }} 次</span>
+                <el-tooltip
+                  v-if="latestJob(row.id)!.started_at"
+                  :content="`开始：${formatLocalDateTime(latestJob(row.id)!.started_at)}`"
+                  placement="top"
+                >
+                  <span class="job-time">{{ formatLocalDateTime(latestJob(row.id)!.started_at) }}</span>
+                </el-tooltip>
+                <el-tooltip
+                  v-if="latestJob(row.id)!.heartbeat_at"
+                  :content="`心跳：${formatLocalDateTime(latestJob(row.id)!.heartbeat_at)}`"
+                  placement="top"
+                >
+                  <span class="job-heartbeat">心跳 {{ secondsSince(latestJob(row.id)!.heartbeat_at) }}s</span>
+                </el-tooltip>
+                <el-tooltip
+                  v-if="latestJob(row.id)!.status === 'failed' && latestJob(row.id)!.error"
+                  :content="latestJob(row.id)!.error"
+                  placement="top"
+                >
+                  <span class="job-error-summary">错误详情</span>
+                </el-tooltip>
+              </div>
+            </template>
+            <span v-else class="job-empty">-</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="version" label="版本" width="80" align="center" />
+        <el-table-column label="图片完整性" width="120">
+          <template #default="{ row }">
+            <el-tooltip
+              v-if="integrityStatusForMaterial(row)"
+              :content="`共 ${imageIntegrityMap[row.id]?.total ?? 0} 张，就绪 ${imageIntegrityMap[row.id]?.ready ?? 0} 张，缺失 ${imageIntegrityMap[row.id]?.missing ?? 0} 张`"
+              placement="top"
+            >
+              <el-tag :type="integrityStatusTagType[integrityStatusForMaterial(row)]" size="small">
+                {{ integrityStatusLabel[integrityStatusForMaterial(row)] }}
+              </el-tag>
+            </el-tooltip>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="上传时间" width="180">
           <template #default="{ row }">
             {{ formatLocalDateTime(row.uploaded_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="340" fixed="right">
+        <el-table-column label="操作" width="440" fixed="right">
           <template #default="{ row }">
             <el-button
               size="small"
@@ -668,12 +887,39 @@ onUnmounted(() => {
               {{ row.status === 'uploaded' ? '处理' : '重新处理' }}
             </el-button>
             <el-button
+              v-if="latestJob(row.id) && latestJob(row.id)!.status === 'failed'"
+              size="small"
+              type="warning"
+              :icon="RefreshRight"
+              @click="handleRetryJob(row, latestJob(row.id)!)"
+            >
+              重试
+            </el-button>
+            <el-button
+              v-if="latestJob(row.id) && (latestJob(row.id)!.status === 'queued' || latestJob(row.id)!.status === 'running')"
+              size="small"
+              :icon="Close"
+              @click="handleCancelJob(row, latestJob(row.id)!)"
+            >
+              取消
+            </el-button>
+            <el-button
               size="small"
               :icon="View"
               :disabled="row.status !== 'ready'"
               @click="openChunksDialog(row)"
             >
               查看片段
+            </el-button>
+            <el-button
+              v-if="integrityStatusForMaterial(row) === 'partial' || integrityStatusForMaterial(row) === 'missing'"
+              size="small"
+              type="warning"
+              :loading="reextractLoading.has(row.id)"
+              :icon="PictureRounded"
+              @click="handleReextractImages(row)"
+            >
+              重新提取图片
             </el-button>
             <el-button
               v-if="row.status === 'failed' || isStaleReady(row)"
@@ -709,6 +955,28 @@ onUnmounted(() => {
             <span>版本 {{ row.version }}</span>
             <span>{{ formatLocalDateTime(row.uploaded_at) }}</span>
           </div>
+          <!-- V6-51: parse job info -->
+          <div v-if="latestJob(row.id)" class="material-mobile-job">
+            <el-tag :type="jobStatusTagType[latestJob(row.id)!.status]" size="small">
+              {{ jobStatusLabel[latestJob(row.id)!.status] }}
+            </el-tag>
+            <span class="job-attempt">第 {{ latestJob(row.id)!.attempt }} 次</span>
+            <span v-if="latestJob(row.id)!.started_at" class="job-time">
+              {{ formatLocalDateTime(latestJob(row.id)!.started_at) }}
+            </span>
+          </div>
+          <p v-if="latestJob(row.id) && latestJob(row.id)!.status === 'failed' && latestJob(row.id)!.error" class="material-mobile-error">
+            {{ latestJob(row.id)!.error }}
+          </p>
+          <!-- V6-52: image integrity -->
+          <div v-if="integrityStatusForMaterial(row)" class="material-mobile-integrity">
+            <el-tag :type="integrityStatusTagType[integrityStatusForMaterial(row)]" size="small">
+              {{ integrityStatusLabel[integrityStatusForMaterial(row)] }}
+            </el-tag>
+            <span class="integrity-detail">
+              共 {{ imageIntegrityMap[row.id]?.total ?? 0 }} 张，缺失 {{ imageIntegrityMap[row.id]?.missing ?? 0 }} 张
+            </span>
+          </div>
           <p v-if="row.status === 'processing' && row.parse_started_at" class="elapsed-hint">
             已解析 {{ secondsSince(row.parse_started_at) }} 秒
           </p>
@@ -723,12 +991,39 @@ onUnmounted(() => {
               {{ row.status === 'uploaded' ? '处理' : '重新处理' }}
             </el-button>
             <el-button
+              v-if="latestJob(row.id) && latestJob(row.id)!.status === 'failed'"
+              size="small"
+              type="warning"
+              :icon="RefreshRight"
+              @click="handleRetryJob(row, latestJob(row.id)!)"
+            >
+              重试
+            </el-button>
+            <el-button
+              v-if="latestJob(row.id) && (latestJob(row.id)!.status === 'queued' || latestJob(row.id)!.status === 'running')"
+              size="small"
+              :icon="Close"
+              @click="handleCancelJob(row, latestJob(row.id)!)"
+            >
+              取消
+            </el-button>
+            <el-button
               size="small"
               :icon="View"
               :disabled="row.status !== 'ready'"
               @click="openChunksDialog(row)"
             >
               查看片段
+            </el-button>
+            <el-button
+              v-if="integrityStatusForMaterial(row) === 'partial' || integrityStatusForMaterial(row) === 'missing'"
+              size="small"
+              type="warning"
+              :loading="reextractLoading.has(row.id)"
+              :icon="PictureRounded"
+              @click="handleReextractImages(row)"
+            >
+              重新提取图片
             </el-button>
             <el-button
               v-if="row.status === 'failed' || isStaleReady(row)"
@@ -975,6 +1270,64 @@ onUnmounted(() => {
   font-size: 12px;
   color: #e6a23c;
   margin-top: 4px;
+}
+
+/* V6-51: parse job info in table */
+.job-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.job-attempt {
+  font-size: 12px;
+  color: #909399;
+}
+
+.job-time {
+  font-size: 11px;
+  color: #909399;
+}
+
+.job-heartbeat {
+  font-size: 11px;
+  color: #67c23a;
+}
+
+.job-error-summary {
+  font-size: 11px;
+  color: #f56c6c;
+  cursor: help;
+  text-decoration: underline dashed;
+}
+
+.job-empty {
+  color: #c0c4cc;
+}
+
+/* V6-51/V6-52: mobile parse job and integrity info */
+.material-mobile-job {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #606266;
+}
+
+.material-mobile-integrity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.integrity-detail {
+  color: #909399;
+  font-size: 12px;
 }
 
 .header {

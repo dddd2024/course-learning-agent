@@ -236,4 +236,44 @@ def setup_course_with_material(
         f"/api/v1/materials/{material_id}/parse", headers=auth_headers
     )
     assert parse_resp.status_code == 200, parse_resp.text
+
+    # V6-50: the API no longer runs the parse in-process.  Run any
+    # queued jobs synchronously so subsequent test assertions see
+    # parsed chunks / ready status.
+    run_pending_parse_jobs(client)
+
     return course_id, material_id
+
+
+def run_pending_parse_jobs(client: TestClient) -> None:
+    """Process all queued ParseJobs synchronously (for tests).
+
+    V6-50: ``POST /materials/{id}/parse`` only creates a queued job; a
+    persistent ``ParseWorker`` does the actual parsing.  In tests there
+    is no worker process, so this helper runs ``run_job`` for every
+    queued job using the patched ``SessionLocal`` (which points at the
+    in-memory test DB).
+
+    ``parse_fn`` is intentionally NOT passed so that ``run_job`` uses
+    its module-level ``parse_with_retry`` — this allows tests to
+    monkeypatch ``app.services.parse_job_service.parse_with_retry``
+    and have the patch take effect.
+    """
+    from app.core.database import SessionLocal
+    from app.models.parse_job import ParseJob
+    from app.services.parse_job_service import run_job
+
+    db = SessionLocal()
+    try:
+        jobs = (
+            db.query(ParseJob)
+            .filter(ParseJob.status == "queued")
+            .order_by(ParseJob.created_at)
+            .all()
+        )
+        job_ids = [j.id for j in jobs]
+    finally:
+        db.close()
+
+    for jid in job_ids:
+        run_job(jid)

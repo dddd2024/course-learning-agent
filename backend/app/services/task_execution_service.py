@@ -210,6 +210,12 @@ def start_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
     if task.execution_status == "pending":
         task.execution_status = "in_progress"
 
+    # V6-21/V6-22: auto-record target_loaded when the user navigates to
+    # the learn/review resource.  This event is required by verify_task
+    # to confirm the user actually opened the target.
+    if task.task_type in ("learn", "review"):
+        _record_event(db, task, user_id, "target_loaded", {"target_id": task.target_id})
+
     db.commit()
     db.refresh(task)
 

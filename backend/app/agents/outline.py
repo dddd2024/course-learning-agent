@@ -188,11 +188,13 @@ def _is_valid_concept_title(title: str) -> bool:
     if len(title) > 20:
         return False
     # --- Stricter quality checks for large chunk sets ---
-    # Must contain at least 2 consecutive CJK chars OR a known English
-    # abbreviation (2+ uppercase letters like TCP, DNS, HTTP, ARP, VLAN)
-    has_cjk = bool(re.search(r"[\u4e00-\u9fff]{2,}", title))
+    # Must contain at least one CJK character, a known English abbreviation
+    # (2+ uppercase letters like TCP, DNS, HTTP, ARP, VLAN), or a technical
+    # term with a slash (I/O, TCP/IP, Client/Server, HTTP/2).
+    has_cjk = bool(re.search(r"[\u4e00-\u9fff]", title))
     has_abbr = bool(re.search(r"[A-Z]{2,}", title))
-    if not has_cjk and not has_abbr:
+    has_tech_slash = bool(re.search(r"[A-Za-z]/[A-Za-z0-9]", title))
+    if not (has_cjk or has_abbr or has_tech_slash):
         return False
     # Reject titles that look like raw data: IP addresses, email addresses
     if re.search(r"\d+\.\d+\.\d+\.\d+", title):
@@ -208,8 +210,14 @@ def _is_valid_concept_title(title: str) -> bool:
     # Reject titles starting with digits followed by space (table data)
     if re.match(r"^\d+\s+\S", title):
         return False
-    # Reject titles containing file paths or URLs
-    if re.search(r"[\\/]|www\.|\.com|\.cn|\.edu", title, re.IGNORECASE):
+    # Reject titles that look like URLs (http://, https://, ftp://, www.)
+    if re.match(r"^(?:https?://|ftp://|www\.)", title, re.IGNORECASE):
+        return False
+    # Reject file paths starting with drive letters (C:\, D:/, etc.)
+    if re.match(r"^[A-Za-z]:[\\/]", title):
+        return False
+    # Reject domain-like strings (example.com, site.cn, school.edu)
+    if re.search(r"\.(?:com|cn|edu|org|net)\b", title, re.IGNORECASE):
         return False
     # Reject titles that are just English words with numbers (like "Chapter1 Introduction 68")
     if re.match(r"^[A-Za-z]+\d*\s+[A-Za-z]+\s+\d+", title):
@@ -244,8 +252,9 @@ _NOISE_TITLE_PATTERNS = [
     re.compile(r"^R\d\s"),  # router labels like "R3 R2"
     re.compile(r"^[\d]+\s+更高层"),  # "13 更高层" style noise
     # Pure-English multi-word titles (likely OCR noise, not real concepts)
-    # Short English abbreviations like "CSMA/CD" or "TCP/IP" still pass
-    re.compile(r"^[A-Za-z][A-Za-z\s/]{10,}$"),
+    # Technical terms with slashes (CSMA/CD, TCP/IP, Client/Server) are NOT
+    # caught here because the slash marks them as a compound term.
+    re.compile(r"^[A-Za-z][A-Za-z\s]{10,}$"),
     # Diagram labels: single uppercase letters with spaces like "A YX B Z"
     re.compile(r"^[A-Z](\s+[A-Z])+"),
     # Titles starting with common OCR artifacts

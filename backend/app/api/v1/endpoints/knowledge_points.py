@@ -2,11 +2,19 @@
 
 ``POST /api/v1/courses/{course_id}/knowledge-points/generate`` runs the
 ``OutlineAgent`` over the course's ready-material chunks, persists the
-extracted points to the ``knowledge_points`` table (replacing any
-existing points for the course), and returns them.
+extracted points to the ``knowledge_points`` table, and returns them.
+
+V6-30: regeneration uses a generation-based versioning model.  Each
+call archives all currently-active KPs (``status='archived'``) and
+creates new active KPs with an incremented ``generation`` number.  Old
+KPs are never deleted, so historical quiz results, weak-point records,
+and graph links remain valid.  The response includes ``generation``
+(the new version number) and ``archived_count`` (how many old KPs were
+archived).
 
 ``GET /api/v1/courses/{course_id}/knowledge-points`` returns the
-persisted points for a course.
+persisted active points for a course.  Pass ``include_archived=true``
+to also see archived (historical) points.
 
 All queries are scoped by ``current_user.id`` so a course owned by
 another user is invisible (returned as 404) so existence is never
@@ -149,18 +157,41 @@ def generate_knowledge_points(
         duration_ms=generate_duration,
     )
 
-    # Merge by a stable course+normalised-title identity.  Historical quiz,
-    # weak-point and graph links therefore keep their original KP IDs.
-    existing = {
-        row.stable_key: row for row in db.query(KnowledgePoint).filter(
+    # --- V6-30: Generation-based versioning ---
+    # Archive ALL existing active KPs for this course before creating the
+    # new generation.  Old KPs are NOT deleted so historical quiz results
+    # and evidence references remain valid.
+    existing_active = (
+        db.query(KnowledgePoint)
+        .filter(
             KnowledgePoint.course_id == course_id,
             KnowledgePoint.user_id == current_user.id,
-        ) if row.stable_key
-    }
-    seen: set[str] = set()
+            KnowledgePoint.status == "active",
+        )
+        .all()
+    )
+    archived_count = len(existing_active)
+    for row in existing_active:
+        row.status = "archived"
+    db.flush()
+
+    # Compute the next generation number (max across all KPs for this
+    # course, including archived ones).
+    max_gen_row = (
+        db.query(KnowledgePoint)
+        .filter(
+            KnowledgePoint.course_id == course_id,
+            KnowledgePoint.user_id == current_user.id,
+        )
+        .order_by(KnowledgePoint.generation.desc())
+        .first()
+    )
+    next_generation = (max_gen_row.generation + 1) if max_gen_row else 1
+
     persisted: list[KnowledgePointResponse] = []
     dropped = 0
     drop_reasons: list[str] = []
+    seen: set[str] = set()  # dedup within this generation
     for point in points:
         source_ids = [int(value) for value in point.get("source_chunk_ids", []) if str(value).isdigit()]
         valid_source_ids = [row[0] for row in db.query(MaterialChunk.id).join(Material, Material.id == MaterialChunk.material_id).filter(
@@ -173,14 +204,19 @@ def generate_knowledge_points(
             continue
         normalized = re.sub(r"\s+", "", point["title"].strip().lower())
         stable_key = f"{course_id}:{normalized}"
+        # Dedup within this generation (same normalized title)
+        if stable_key in seen:
+            continue
         seen.add(stable_key)
-        row = existing.get(stable_key)
-        if row is None:
-            row = KnowledgePoint(
-                course_id=course_id, user_id=current_user.id,
-                stable_key=stable_key, title_normalized=normalized,
-            )
-            db.add(row)
+        # Always create a new KP row for the new generation.  Old rows
+        # are archived above and retain their original IDs so quiz
+        # items and weak-point references stay valid.
+        row = KnowledgePoint(
+            course_id=course_id, user_id=current_user.id,
+            stable_key=stable_key, title_normalized=normalized,
+            generation=next_generation,
+        )
+        db.add(row)
         row.title = point["title"]
         row.summary = point["summary"]
         row.importance = point["importance"]
@@ -196,10 +232,6 @@ def generate_knowledge_points(
         db.flush()
         persisted.append(KnowledgePointResponse.model_validate(row))
 
-    for key, row in existing.items():
-        if key not in seen:
-            row.status = "archived"
-
     db.commit()
 
     _safe_finish_run(
@@ -210,7 +242,16 @@ def generate_knowledge_points(
         duration_ms=int((time.monotonic() - run_started_at) * 1000),
     )
 
-    return GenerateKnowledgePointsResponse(knowledge_points=persisted, count=len(persisted), requested=len(points), generated=len(persisted), dropped=dropped, drop_reasons=sorted(set(drop_reasons)))
+    return GenerateKnowledgePointsResponse(
+        knowledge_points=persisted,
+        count=len(persisted),
+        requested=len(points),
+        generated=len(persisted),
+        dropped=dropped,
+        drop_reasons=sorted(set(drop_reasons)),
+        generation=next_generation,
+        archived_count=archived_count,
+    )
 
 
 @router.get(

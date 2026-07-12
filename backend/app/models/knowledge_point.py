@@ -36,6 +36,11 @@ class KnowledgePoint(Base, TimestampMixin):
     parent_id = Column(
         Integer, ForeignKey("knowledge_points.id"), nullable=True
     )  # supports tree structure
+    # V6-30: generation number for version tracking.  Each regeneration
+    # creates new active KPs with an incremented generation and archives
+    # the old ones.  This preserves historical quiz/evidence references
+    # while keeping the active outline up to date.
+    generation = Column(Integer, default=1, nullable=False, server_default="1")
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (

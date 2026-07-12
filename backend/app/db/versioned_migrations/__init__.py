@@ -42,6 +42,7 @@ MIGRATION_MODULES = [
     "011_v5_lifecycle",
     "012_v5_task_event_cascade",
     "013_v5_task_completion_fields",
+    "014_v6_kp_generation",
 ]
 
 

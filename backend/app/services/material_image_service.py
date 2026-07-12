@@ -21,19 +21,29 @@ def image_state(image: MaterialImage) -> tuple[str, str | None]:
 def image_integrity(db: Session, material: Material) -> dict:
     rows = db.query(MaterialImage).filter(MaterialImage.material_id == material.id).all()
     ready = sum(image_state(row)[0] == "ready" for row in rows)
-    return {"material_id": material.id, "total": len(rows), "ready": ready, "missing": len(rows) - ready,
-            "status": "ready" if ready == len(rows) else "missing" if rows else "ready"}
+    total = len(rows)
+    missing = total - ready
+    if total == 0:
+        status = "missing"
+    elif missing == 0:
+        status = "ready"
+    elif missing < total:
+        status = "partial"
+    else:
+        status = "missing"
+    return {"material_id": material.id, "total": total, "ready": ready, "missing": missing, "status": status}
 
 
 def reextract_images(db: Session, material: Material) -> dict:
     if material.file_type.lower() != "pdf":
-        return {"material_id": material.id, "status": "forbidden", "code": "IMAGE_EXTRACTION_UNSUPPORTED", "extracted": 0}
+        return {"material_id": material.id, "status": "forbidden", "code": "IMAGE_EXTRACTION_UNSUPPORTED", "found": 0, "extracted": 0}
     from app.retrieval.image_extractor import extract_images_from_pdf
 
     source = Path(settings.UPLOAD_DIR) / material.file_path
     if not source.is_file():
-        return {"material_id": material.id, "status": "missing", "code": "MATERIAL_FILE_MISSING", "extracted": 0}
+        return {"material_id": material.id, "status": "missing", "code": "MATERIAL_FILE_MISSING", "found": 0, "extracted": 0}
     extracted = extract_images_from_pdf(str(source))
+    found = len(extracted)
     db.query(MaterialImage).filter(MaterialImage.material_id == material.id).delete(synchronize_session=False)
     chunks = db.query(MaterialChunk).filter(MaterialChunk.material_id == material.id, MaterialChunk.is_active == 1).all()
     page_to_chunk = {}
@@ -59,4 +69,4 @@ def reextract_images(db: Session, material: Material) -> dict:
             perceptual_hash=image.perceptual_hash, color_variance=image.color_variance, coverage_ratio=image.coverage_ratio))
         count += 1
     db.commit()
-    return {"material_id": material.id, "status": "ready", "code": None, "extracted": count}
+    return {"material_id": material.id, "status": "ready", "code": None, "found": found, "extracted": count}

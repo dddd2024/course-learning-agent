@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable
+
+from sqlalchemy.orm import Session
 
 
 _PAGE_NUMBER = re.compile(r"^(?:page\s*)?\d{1,4}$", re.I)
 _LABEL = re.compile(r"^(?:图|表|figure|animation)\s*\d+[.:：]?$", re.I)
-_URL = re.compile(r"^(?:https?://|www\.)\S+$", re.I)
+# Only match actual URLs (http://, https://, ftp://, www.), not lines
+# that merely contain a forward slash.  This preserves technical terms
+# such as TCP/IP, CSMA/CD, HTTP/2, and I/O.
+_URL = re.compile(r"^(?:https?://|ftp://|www\.)\S+$", re.I)
 _COURSE_LABEL = re.compile(r"^(?:课程学院|教材版本|主讲教师|教师)\s*[:：]", re.I)
 
 
@@ -56,3 +61,78 @@ def clean_pages(page_texts: Iterable[str]) -> list[CleanPage]:
                 decisions.append({"raw_text": line, "decision": "kept", "reason": "semantic_content"})
         result.append(CleanPage("\n".join(kept), decisions))
     return result
+
+
+def get_cleaning_decisions(page: CleanPage) -> list[dict]:
+    """Return the cleaning decisions for a page in a user-friendly format.
+
+    Transforms the internal decision representation into a list of dicts
+    with the following keys:
+
+    - ``original_line``: the text before cleaning.
+    - ``action``: one of ``kept``, ``removed``, ``merged``.
+    - ``reason``: the decision type (e.g. ``standalone_url``,
+      ``isolated_page_number``, ``semantic_content``).
+    - ``cleaned_line``: the text after cleaning, or ``None`` if the line
+      was removed or merged into a previous line.
+    """
+    result: list[dict] = []
+    for d in page.decisions:
+        action = d.get("decision", "kept")
+        original = d.get("raw_text", "")
+        reason = d.get("reason", "")
+        if action == "kept":
+            cleaned_line: str | None = original
+        else:
+            cleaned_line = None
+        result.append({
+            "original_line": original,
+            "action": action,
+            "reason": reason,
+            "cleaned_line": cleaned_line,
+        })
+    return result
+
+
+def get_raw_pages(material_id: int, db: Session) -> list[dict]:
+    """Return the raw (uncleaned) page text for a material.
+
+    Queries the ``material_pages`` table and returns a list of dicts
+    with ``page_no`` and ``text`` (the ``raw_text`` column), ordered
+    by page number.  This provides the "original mode" view where the
+    user can see text exactly as extracted before cleaning.
+    """
+    from app.models.material_page import MaterialPage
+
+    rows = (
+        db.query(MaterialPage)
+        .filter(MaterialPage.material_id == material_id)
+        .order_by(MaterialPage.page_no.asc())
+        .all()
+    )
+    return [
+        {"page_no": r.page_no, "text": r.raw_text or ""}
+        for r in rows
+    ]
+
+
+def get_clean_pages(material_id: int, db: Session) -> list[dict]:
+    """Return the cleaned page text for a material.
+
+    Queries the ``material_pages`` table and returns a list of dicts
+    with ``page_no`` and ``text`` (the ``clean_text`` column), ordered
+    by page number.  This is the text used for retrieval and display
+    after noise (URLs, page numbers, headers/footers) has been removed.
+    """
+    from app.models.material_page import MaterialPage
+
+    rows = (
+        db.query(MaterialPage)
+        .filter(MaterialPage.material_id == material_id)
+        .order_by(MaterialPage.page_no.asc())
+        .all()
+    )
+    return [
+        {"page_no": r.page_no, "text": r.clean_text or ""}
+        for r in rows
+    ]

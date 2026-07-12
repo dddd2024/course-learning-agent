@@ -86,8 +86,58 @@ class MultiUnscheduledTask(BaseModel):
 
 
 class MultiPlanResponse(BaseModel):
-    """Result of POST /plans/multi."""
+    """Result of POST /plans/multi.
 
+    V6-40: ``multi_plan_id`` is returned so the client can subsequently
+    GET / PATCH / DELETE / reschedule the created plan.
+    """
+
+    multi_plan_id: Optional[int] = None
     schedule: List[MultiScheduleItem]
     overflow_warnings: List[str] = Field(default_factory=list)
     unscheduled_tasks: List[MultiUnscheduledTask] = Field(default_factory=list)
+
+
+class MultiPlanTaskItem(BaseModel):
+    """A task belonging to a multi-course plan (GET detail response).
+
+    Combines the ``MultiCoursePlanTask`` schedule metadata with the
+    ``StudyTask`` title so the frontend can render the full plan without
+    extra round-trips.
+    """
+
+    task_id: Optional[int] = None
+    course_id: int
+    course_name: str = ""
+    title: str = ""
+    scheduled_date: Optional[date] = None
+    estimate_minutes: int = 0
+    unscheduled_reason: Optional[str] = None
+
+
+class MultiPlanDetailResponse(BaseModel):
+    """Response for GET /plans/multi/{multi_plan_id}.
+
+    Includes the plan metadata (id, title, status, deadline,
+    daily_minutes) and a flat list of all tasks with their schedule
+    info.
+    """
+
+    id: int
+    title: str
+    status: str
+    deadline: date
+    daily_minutes: int
+    tasks: List[MultiPlanTaskItem] = Field(default_factory=list)
+
+
+class MultiPlanUpdate(BaseModel):
+    """Payload for PATCH /plans/multi/{multi_plan_id}."""
+
+    status: Optional[str] = None
+
+
+class MultiPlanReschedule(BaseModel):
+    """Payload for POST /plans/multi/{multi_plan_id}/reschedule."""
+
+    daily_minutes: int = Field(..., gt=0)

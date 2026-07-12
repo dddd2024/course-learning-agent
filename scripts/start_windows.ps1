@@ -544,6 +544,48 @@ function Invoke-Main {
         Write-Ok "Backend is up (PID $($backendProc.Id))."
     }
 
+    # --- Parse worker (V6-50) ----------------------------------------------
+    # Persistent background worker that polls the DB for queued parse
+    # jobs and processes them with heartbeat + retry.  Started after
+    # the backend is healthy so the DB schema is guaranteed to exist.
+    $workerPidFile = Join-Path $logDir "parse_worker.pid"
+    $workerLog = Join-Path $logDir "parse_worker.log"
+    $workerScript = Join-Path $repoRoot "scripts\run_parse_worker.py"
+    $workerProc = $null
+
+    if (-not $backendHealthOk) {
+        Write-Bad "Backend is not healthy. Refusing to start parse worker."
+        Show-BackendFailure $backendLog
+        Write-LaunchStatus @{
+            launched        = $false
+            reason          = "backend_not_healthy_before_worker"
+            backend         = @{ ok = $false; pid = $backendPidValue; log = $backendLog }
+            last_start_time = (Get-Date).ToString("o")
+        }
+        exit 1
+    }
+
+    if (Test-Path $workerPidFile) {
+        $oldWorkerPid = (Get-Content $workerPidFile -ErrorAction SilentlyContinue).Trim()
+        if ($oldWorkerPid -and (Get-Process -Id $oldWorkerPid -ErrorAction SilentlyContinue)) {
+            Write-Step "Stopping stale parse worker (PID $oldWorkerPid)..."
+            Stop-Process -Id $oldWorkerPid -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 1
+        }
+        Remove-Item $workerPidFile -Force -ErrorAction SilentlyContinue
+    }
+
+    Write-Step "Starting parse worker..."
+    $workerProc = Start-Process -FilePath $venvPython `
+        -ArgumentList $workerScript `
+        -WorkingDirectory $repoRoot `
+        -WindowStyle Hidden `
+        -RedirectStandardError $workerLog `
+        -RedirectStandardOutput (Join-Path $logDir "parse_worker.out.log") `
+        -PassThru
+    $workerProc.Id | Out-File -FilePath $workerPidFile -Encoding ascii -Force
+    Write-Ok "Parse worker started (PID $($workerProc.Id))."
+
     # --- Frontend port 5173 -------------------------------------------------
     if (-not $backendHealthOk) {
         Write-Bad "Backend is not healthy. Refusing to start frontend."
@@ -750,6 +792,7 @@ function Invoke-Main {
         reason          = "ok"
         backend         = @{ ok = $true; pid = $backendPidValue; url = "http://127.0.0.1:$backendPort"; log = $backendLog }
         frontend        = @{ ok = $true; pid = $frontendPidValue; url = $frontendUrl; log = $frontendLog }
+        worker          = @{ ok = $true; pid = $workerProc.Id; log = $workerLog }
         repo_root       = $repoRoot
         last_start_time = (Get-Date).ToString("o")
     }

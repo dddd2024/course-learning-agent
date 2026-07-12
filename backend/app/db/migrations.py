@@ -104,6 +104,7 @@ _FIRST_ROUND_COLUMNS = {
         "title_normalized": "VARCHAR(255)",
         "status": "VARCHAR(20) DEFAULT 'active' NOT NULL",
         "source_version_ids": "TEXT DEFAULT '[]'",
+        "generation": "INTEGER DEFAULT 1 NOT NULL",
     },
     "quiz_items": {
         "difficulty": "INTEGER",

@@ -1,14 +1,20 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, type TableInstance } from 'element-plus'
+import { ElMessage, ElMessageBox, type TableInstance } from 'element-plus'
 import { listCourses, type Course } from '../api/course'
 import {
   createMultiPlan,
+  deleteMultiPlan,
+  getMultiPlan,
+  patchMultiPlan,
+  rescheduleMultiPlan,
   type MultiPlanConstraints,
+  type MultiPlanDetail,
   type MultiPlanPayload,
   type MultiPlanResult,
   type MultiPlanScheduleItem,
+  type MultiPlanTaskItem,
 } from '../api/plan'
 import { MAX_PAGE_SIZE } from '../constants/pagination'
 import { parseApiError } from '../utils/error'
@@ -32,6 +38,19 @@ const constraints = ref<MultiPlanConstraints>({})
 
 const result = ref<MultiPlanResult | null>(null)
 const schedule = ref<MultiPlanScheduleItem[]>([])
+
+// V6-41: Multi-plan lifecycle state
+const mode = ref<'create' | 'detail'>('create')
+const multiPlanList = ref<Array<{ id: number; title: string }>>([])
+const selectedMultiPlanId = ref<number | null>(null)
+const multiPlanDetail = ref<MultiPlanDetail | null>(null)
+const detailLoading = ref(false)
+const statusPatching = ref(false)
+
+// Reschedule dialog state
+const rescheduleDialogVisible = ref(false)
+const rescheduleDailyMinutes = ref(120)
+const rescheduleLoading = ref(false)
 
 function toDateString(d: Date): string {
   const y = d.getFullYear()
@@ -210,6 +229,22 @@ const courseListForLegend = computed<string[]>(() => {
   return Array.from(set)
 })
 
+// V6-41: Detail-view computed properties
+const detailTasksByCourse = computed<Array<{ course: string; tasks: MultiPlanTaskItem[] }>>(() => {
+  if (!multiPlanDetail.value) return []
+  const map: Record<string, MultiPlanTaskItem[]> = {}
+  for (const task of multiPlanDetail.value.tasks) {
+    if (!map[task.course_name]) map[task.course_name] = []
+    map[task.course_name].push(task)
+  }
+  return Object.entries(map).map(([course, tasks]) => ({ course, tasks }))
+})
+
+const detailUnscheduledTasks = computed<MultiPlanTaskItem[]>(() => {
+  if (!multiPlanDetail.value) return []
+  return multiPlanDetail.value.tasks.filter((t) => t.unscheduled_reason)
+})
+
 function validate(): string | null {
   if (selectedCourses.value.length === 0) {
     return '请至少选择一门课程'
@@ -256,6 +291,11 @@ async function handleGenerate() {
     } else {
       ElMessage.success(`已生成综合计划，共 ${data.schedule.length} 条日程`)
     }
+    // V6-41: If a multi_plan_id was returned, load the detail view
+    if (data.multi_plan_id) {
+      addMultiPlanToList(data.multi_plan_id, `多课程计划 #${data.multi_plan_id}`)
+      await loadMultiPlanDetail(data.multi_plan_id)
+    }
   } catch (e) {
     ElMessage.error(parseApiError(e, '生成综合计划失败'))
   } finally {
@@ -276,8 +316,245 @@ function goBack() {
   router.push('/plans')
 }
 
-onMounted(() => {
-  fetchCourses()
+// ---------------------------------------------------------------------------
+// V6-41: Multi-plan lifecycle helpers
+// ---------------------------------------------------------------------------
+
+const MULTI_PLAN_LIST_KEY = 'multiPlan:list'
+const MULTI_PLAN_SELECTED_KEY = 'multiPlan:selectedId'
+
+function loadMultiPlanList(): Array<{ id: number; title: string }> {
+  try {
+    const raw = sessionStorage.getItem(MULTI_PLAN_LIST_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function saveMultiPlanList(list: Array<{ id: number; title: string }>) {
+  sessionStorage.setItem(MULTI_PLAN_LIST_KEY, JSON.stringify(list))
+}
+
+function addMultiPlanToList(id: number, title: string) {
+  const list = loadMultiPlanList()
+  if (!list.some((p) => p.id === id)) {
+    list.push({ id, title })
+    saveMultiPlanList(list)
+  }
+  multiPlanList.value = list
+}
+
+function removeMultiPlanFromList(id: number) {
+  const list = loadMultiPlanList().filter((p) => p.id !== id)
+  saveMultiPlanList(list)
+  multiPlanList.value = list
+}
+
+function saveSelectedMultiPlanId(id: number | null) {
+  if (id !== null) {
+    sessionStorage.setItem(MULTI_PLAN_SELECTED_KEY, String(id))
+  } else {
+    sessionStorage.removeItem(MULTI_PLAN_SELECTED_KEY)
+  }
+}
+
+function loadSelectedMultiPlanId(): number | null {
+  const raw = sessionStorage.getItem(MULTI_PLAN_SELECTED_KEY)
+  const id = Number(raw)
+  return Number.isInteger(id) && id > 0 ? id : null
+}
+
+function multiPlanStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    active: '进行中',
+    done: '已完成',
+    archived: '已归档',
+  }
+  return labels[status] || status
+}
+
+function multiPlanStatusType(status: string): 'success' | 'info' | 'warning' {
+  if (status === 'active') return 'success'
+  if (status === 'archived') return 'info'
+  if (status === 'done') return 'warning'
+  return 'info'
+}
+
+/**
+ * Convert a MultiPlanDetail into the schedule/result structures so the
+ * existing load-chart and schedule sections render without duplication.
+ */
+function applyMultiPlanDetail(detail: MultiPlanDetail) {
+  multiPlanDetail.value = detail
+  dailyMinutes.value = detail.daily_minutes
+  // Build schedule items from detail tasks for the load chart
+  schedule.value = detail.tasks
+    .filter((t) => t.scheduled_date)
+    .map((t) => ({
+      scheduled_date: t.scheduled_date as string,
+      course_name: t.course_name,
+      title: t.title,
+      estimate_minutes: t.estimate_minutes,
+      start_time: null,
+      end_time: null,
+    }))
+  // Build a result-like object so the existing chart/schedule sections render
+  result.value = {
+    multi_plan_id: detail.id,
+    schedule: schedule.value,
+    overflow_warnings: [],
+    unscheduled_tasks: detail.tasks
+      .filter((t) => t.unscheduled_reason)
+      .map((t) => ({
+        course_name: t.course_name,
+        title: t.title,
+        estimate_minutes: t.estimate_minutes,
+        deadline: detail.deadline,
+        remaining_budget: 0,
+        reason: t.unscheduled_reason as string,
+        suggestion: t.unscheduled_reason as string,
+      })),
+  }
+}
+
+async function loadMultiPlanDetail(id: number) {
+  detailLoading.value = true
+  try {
+    const { data } = await getMultiPlan(id)
+    applyMultiPlanDetail(data)
+    selectedMultiPlanId.value = id
+    mode.value = 'detail'
+    saveSelectedMultiPlanId(id)
+    // Keep the title in the selector list up-to-date
+    const item = multiPlanList.value.find((p) => p.id === id)
+    if (item && item.title !== data.title) {
+      item.title = data.title
+      saveMultiPlanList(multiPlanList.value)
+    } else if (!item) {
+      addMultiPlanToList(id, data.title)
+    }
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '读取多课程计划失败'))
+    // If the plan no longer exists, clean up the stale reference
+    removeMultiPlanFromList(id)
+    saveSelectedMultiPlanId(null)
+    selectedMultiPlanId.value = null
+    mode.value = 'create'
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+async function handleMultiPlanSelect(id: number | null) {
+  if (id === null) {
+    mode.value = 'create'
+    saveSelectedMultiPlanId(null)
+    return
+  }
+  await loadMultiPlanDetail(id)
+}
+
+function startNewMultiPlan() {
+  mode.value = 'create'
+  result.value = null
+  schedule.value = []
+  multiPlanDetail.value = null
+  selectedMultiPlanId.value = null
+  saveSelectedMultiPlanId(null)
+  tableRef.value?.clearSelection()
+  for (const id of Object.keys(courseConfigs)) {
+    delete courseConfigs[Number(id)]
+  }
+}
+
+async function handleDeleteMultiPlan() {
+  if (!multiPlanDetail.value) return
+  const planId = multiPlanDetail.value.id
+  try {
+    await ElMessageBox.confirm(
+      '确定要删除该多课程计划吗？关联的任务和待办也将被删除。',
+      '删除计划',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteMultiPlan(planId)
+    ElMessage.success('多课程计划已删除')
+    removeMultiPlanFromList(planId)
+    saveSelectedMultiPlanId(null)
+    selectedMultiPlanId.value = null
+    multiPlanDetail.value = null
+    result.value = null
+    schedule.value = []
+    mode.value = 'create'
+    tableRef.value?.clearSelection()
+    for (const id of Object.keys(courseConfigs)) {
+      delete courseConfigs[Number(id)]
+    }
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '删除多课程计划失败'))
+  }
+}
+
+async function handlePatchStatus(status: string) {
+  if (!multiPlanDetail.value) return
+  statusPatching.value = true
+  try {
+    const { data } = await patchMultiPlan(multiPlanDetail.value.id, { status })
+    applyMultiPlanDetail(data)
+    ElMessage.success('计划状态已更新')
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '更新计划状态失败'))
+  } finally {
+    statusPatching.value = false
+  }
+}
+
+function openRescheduleDialog() {
+  if (!multiPlanDetail.value) return
+  rescheduleDailyMinutes.value = multiPlanDetail.value.daily_minutes
+  rescheduleDialogVisible.value = true
+}
+
+async function handleReschedule() {
+  if (!multiPlanDetail.value) return
+  if (rescheduleDailyMinutes.value < 10 || rescheduleDailyMinutes.value > 1440) {
+    ElMessage.warning('每日可用时间应在 10-1440 分钟之间')
+    return
+  }
+  rescheduleLoading.value = true
+  try {
+    await rescheduleMultiPlan(multiPlanDetail.value.id, {
+      daily_minutes: rescheduleDailyMinutes.value,
+    })
+    ElMessage.success('已重新调度')
+    rescheduleDialogVisible.value = false
+    // Reload the detail to reflect the new schedule
+    await loadMultiPlanDetail(multiPlanDetail.value.id)
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '重新调度失败'))
+  } finally {
+    rescheduleLoading.value = false
+  }
+}
+
+onMounted(async () => {
+  await fetchCourses()
+  // V6-41: Restore multi-plan session from sessionStorage
+  multiPlanList.value = loadMultiPlanList()
+  const savedId = loadSelectedMultiPlanId()
+  if (savedId !== null && multiPlanList.value.some((p) => p.id === savedId)) {
+    await loadMultiPlanDetail(savedId)
+  }
 })
 </script>
 
@@ -287,11 +564,102 @@ onMounted(() => {
       <h2 class="title">多课程综合规划</h2>
       <div class="actions">
         <el-button @click="goBack">返回计划</el-button>
-        <el-button v-if="result" @click="handleReset">重新规划</el-button>
+        <el-button v-if="mode === 'detail'" @click="startNewMultiPlan">新建计划</el-button>
+        <el-button v-if="mode === 'create' && result" @click="handleReset">重新规划</el-button>
       </div>
     </div>
 
-    <el-card class="section-card" shadow="never">
+    <el-card
+      v-if="multiPlanList.length > 0"
+      class="section-card plan-picker-card"
+      shadow="never"
+      v-loading="detailLoading"
+    >
+      <div class="plan-picker">
+        <label class="picker-label" for="multi-plan-select">已保存的多课程计划</label>
+        <el-select
+          id="multi-plan-select"
+          :model-value="selectedMultiPlanId"
+          placeholder="选择要查看的计划"
+          clearable
+          :disabled="detailLoading"
+          style="width: 100%"
+          @change="handleMultiPlanSelect"
+        >
+          <el-option
+            v-for="p in multiPlanList"
+            :key="p.id"
+            :label="p.title"
+            :value="p.id"
+          />
+        </el-select>
+      </div>
+    </el-card>
+
+    <!-- V6-41: Detail info card (shown in detail mode) -->
+    <el-card
+      v-if="mode === 'detail' && multiPlanDetail"
+      class="section-card"
+      shadow="never"
+    >
+      <template #header>
+        <div class="section-title-bar">
+          <span class="section-title">{{ multiPlanDetail.title }}</span>
+          <div class="header-actions">
+            <el-tag :type="multiPlanStatusType(multiPlanDetail.status)">
+              {{ multiPlanStatusLabel(multiPlanDetail.status) }}
+            </el-tag>
+            <el-button
+              v-if="multiPlanDetail.status !== 'done'"
+              type="success"
+              size="small"
+              plain
+              :loading="statusPatching"
+              @click="handlePatchStatus('done')"
+            >
+              标记完成
+            </el-button>
+            <el-button
+              v-if="multiPlanDetail.status === 'done'"
+              size="small"
+              plain
+              :loading="statusPatching"
+              @click="handlePatchStatus('active')"
+            >
+              重新激活
+            </el-button>
+            <el-button
+              type="primary"
+              size="small"
+              plain
+              @click="openRescheduleDialog"
+            >
+              重新调度
+            </el-button>
+            <el-button
+              type="danger"
+              size="small"
+              plain
+              @click="handleDeleteMultiPlan"
+            >
+              删除计划
+            </el-button>
+          </div>
+        </div>
+      </template>
+      <div class="goal-info">
+        <div class="goal-meta">
+          <span>计划 ID：{{ multiPlanDetail.id }}</span>
+          <span>截止日期：{{ multiPlanDetail.deadline }}</span>
+          <span>每日时间：{{ multiPlanDetail.daily_minutes }} 分钟</span>
+          <span>任务总数：{{ multiPlanDetail.tasks.length }}</span>
+          <span>未排期：{{ detailUnscheduledTasks.length }}</span>
+        </div>
+      </div>
+    </el-card>
+
+    <!-- Creation form (only in create mode) -->
+    <el-card v-if="mode === 'create'" class="section-card" shadow="never">
       <template #header>
         <div class="section-title">选择课程并配置</div>
       </template>
@@ -608,13 +976,118 @@ onMounted(() => {
             </div>
           </div>
         </el-card>
+
+        <!-- V6-41: Detail-mode task table grouped by course -->
+        <template v-if="mode === 'detail' && multiPlanDetail">
+          <el-card class="section-card" shadow="never">
+            <template #header>
+              <div class="section-title">按课程分组任务</div>
+            </template>
+            <div
+              v-for="group in detailTasksByCourse"
+              :key="group.course"
+              class="course-group"
+            >
+              <div class="course-group-header">
+                <span
+                  class="course-tag"
+                  :style="{ backgroundColor: getCourseColor(group.course) }"
+                >
+                  {{ group.course }}
+                </span>
+                <span class="course-group-count">
+                  {{ group.tasks.length }} 个任务
+                </span>
+              </div>
+              <el-table :data="group.tasks" border size="small" empty-text="暂无任务">
+                <el-table-column prop="title" label="任务标题" min-width="200" show-overflow-tooltip />
+                <el-table-column label="日期" width="130">
+                  <template #default="{ row }">
+                    <span v-if="row.scheduled_date">{{ row.scheduled_date }}</span>
+                    <span v-else class="text-muted">未排期</span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="estimate_minutes" label="预计分钟" width="110" align="center" />
+                <el-table-column label="未排期原因" min-width="200" show-overflow-tooltip>
+                  <template #default="{ row }">
+                    <span v-if="row.unscheduled_reason" class="text-warning">
+                      {{ row.unscheduled_reason }}
+                    </span>
+                    <span v-else class="text-muted">-</span>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </el-card>
+
+          <el-card
+            v-if="detailUnscheduledTasks.length > 0"
+            class="section-card"
+            shadow="never"
+          >
+            <template #header>
+              <div class="section-title">未排期任务</div>
+            </template>
+            <el-table :data="detailUnscheduledTasks" stripe empty-text="暂无未排期任务">
+              <el-table-column label="课程" min-width="120">
+                <template #default="{ row }">
+                  <span
+                    class="course-tag"
+                    :style="{ backgroundColor: getCourseColor(row.course_name) }"
+                  >
+                    {{ row.course_name }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="title" label="任务标题" min-width="200" show-overflow-tooltip />
+              <el-table-column prop="estimate_minutes" label="预计分钟" width="110" align="center" />
+              <el-table-column prop="unscheduled_reason" label="原因" min-width="250" show-overflow-tooltip />
+            </el-table>
+          </el-card>
+        </template>
       </template>
     </template>
 
     <el-empty
-      v-else
+      v-else-if="mode === 'create'"
       description="选择多门课程并配置截止日期，生成跨课程综合学习计划"
     />
+
+    <!-- V6-41: Reschedule dialog -->
+    <el-dialog
+      v-model="rescheduleDialogVisible"
+      title="重新调度"
+      width="min(420px, calc(100vw - 32px))"
+    >
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="调整每日可用时间后，计划将重新调度所有任务。"
+        style="margin-bottom: 16px;"
+      />
+      <el-form label-position="top">
+        <el-form-item label="每日可用时间（分钟）">
+          <el-input-number
+            v-model="rescheduleDailyMinutes"
+            :min="10"
+            :max="1440"
+            :step="10"
+            style="width: 100%"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="rescheduleDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="rescheduleLoading"
+          @click="handleReschedule"
+        >
+          重新调度
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -936,5 +1409,67 @@ onMounted(() => {
 
 .text-muted {
   color: #c0c4cc;
+}
+
+.text-warning {
+  color: #e6a23c;
+}
+
+/* V6-41: Plan picker and detail card styles */
+.plan-picker-card {
+  background: #f8fbff;
+  border-color: #d9ecff;
+}
+
+.plan-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.picker-label {
+  color: #303133;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.goal-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.goal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 13px;
+  color: #606266;
+}
+
+.course-group {
+  margin-bottom: 20px;
+}
+
+.course-group:last-child {
+  margin-bottom: 0;
+}
+
+.course-group-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.course-group-count {
+  font-size: 13px;
+  color: #909399;
 }
 </style>

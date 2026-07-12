@@ -104,8 +104,18 @@
             @keydown.enter="scrollToPage(page.page_no)"
             @keydown.space.prevent="scrollToPage(page.page_no)"
           >
-            <span class="toc-num">{{ idx + 1 }}</span>
-            <span class="toc-title">第 {{ page.page_no }} 页</span>
+            <span class="toc-num">{{ page.page_no }}</span>
+            <div class="toc-text">
+              <span class="toc-title">{{ derivePageTitle(page) }}</span>
+              <el-tag
+                size="small"
+                :type="pageTypeTagType(page.page_type)"
+                effect="plain"
+                class="toc-type-tag"
+              >
+                {{ pageTypeLabel(page.page_type) }}
+              </el-tag>
+            </div>
           </div>
         </div>
       </div>
@@ -127,6 +137,23 @@
               active-text="显示已过滤图片"
               @change="loadChunks"
             />
+          </div>
+
+          <!-- V6-14: image error banner with re-extract button -->
+          <div v-if="brokenImageIds.size > 0" class="image-error-banner">
+            <el-alert type="warning" :closable="false" show-icon>
+              <template #title>
+                <span>检测到 {{ brokenImageIds.size }} 张图片缺失</span>
+              </template>
+              <el-button
+                type="warning"
+                size="small"
+                :loading="reextractingImages"
+                @click="handleReextractImages"
+              >
+                重新提取图片
+              </el-button>
+            </el-alert>
           </div>
 
           <!-- AI Study Guide -->
@@ -236,12 +263,16 @@
                     fit="contain"
                     style="max-width: 100%; max-height: 400px; border-radius: 6px;"
                     loading="lazy"
+                    @error="handleImageError(img.id)"
                   >
                     <template #placeholder>
                       <div class="image-placeholder">图片加载中...</div>
                     </template>
                     <template #error>
-                      <div class="image-error">图片加载失败</div>
+                      <div class="image-error image-missing">
+                        <el-icon><PictureRounded /></el-icon>
+                        <span>图片缺失</span>
+                      </div>
                     </template>
                   </el-image>
                 </div>
@@ -343,11 +374,11 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, ref, computed } from 'vue'
+import { nextTick, onMounted, ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, ChatDotRound, CopyDocument, InfoFilled, Loading, MagicStick, Aim } from '@element-plus/icons-vue'
-import { listMaterials, getChunks, getMaterialPages, generateMaterialStudyGuide, type Material, type Chunk, type MaterialPage } from '../api/material'
+import { ArrowLeft, ChatDotRound, CopyDocument, InfoFilled, Loading, MagicStick, Aim, PictureRounded } from '@element-plus/icons-vue'
+import { listMaterials, getChunks, getMaterialPages, generateMaterialStudyGuide, reextractImages, getImageIntegrity, type Material, type Chunk, type MaterialPage } from '../api/material'
 import { listCourses, type Course } from '../api/course'
 import {
   createConversation,
@@ -410,6 +441,53 @@ const kpFilterActive = ref(false)
 // TOC + progress state
 const activeChunkIndex = ref(0)
 const readProgress = ref(0)
+
+// V6-14: image error isolation + re-extraction
+const brokenImageIds = ref<Set<number>>(new Set())
+const reextractingImages = ref(false)
+const imageIntegrityStatus = ref<string>('')
+
+// V6-14: derive a human-readable page title from the first heading block
+function derivePageTitle(page: MaterialPage): string {
+  try {
+    const blocks = JSON.parse(page.blocks || '[]')
+    if (Array.isArray(blocks)) {
+      const heading = blocks.find(
+        (b: { block_type?: string; text?: string }) => b.block_type === 'heading' && b.text,
+      )
+      if (heading && heading.text) {
+        return heading.text.trim().substring(0, 40)
+      }
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return `第 ${page.page_no} 页`
+}
+
+function pageTypeLabel(pageType: string): string {
+  switch (pageType) {
+    case 'image_only':
+      return '纯图'
+    case 'mixed':
+      return '图文'
+    case 'text':
+    default:
+      return '文本'
+  }
+}
+
+function pageTypeTagType(pageType: string): 'info' | 'warning' | 'success' {
+  switch (pageType) {
+    case 'image_only':
+      return 'warning'
+    case 'mixed':
+      return 'success'
+    case 'text':
+    default:
+      return 'info'
+  }
+}
 
 function getQualityClass(score: number): string {
   if (score >= 0.7) return 'quality-high'
@@ -635,6 +713,7 @@ async function loadChunks() {
   if (!selectedMaterialId.value) return
   Object.values(imageUrls.value).forEach((url) => URL.revokeObjectURL(url))
   imageUrls.value = {}
+  brokenImageIds.value.clear()
   docLoading.value = true
   chunks.value = []
   studyGuide.value = ''
@@ -676,6 +755,8 @@ async function loadChunks() {
       materialPages.value = (await getMaterialPages(selectedMaterialId.value)).data.items
     }
     await preloadImages(chunks.value)
+    // V6-52: load image integrity status (best-effort, non-blocking)
+    loadImageIntegrity()
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取资料内容失败'))
   } finally {
@@ -700,10 +781,82 @@ async function preloadImages(source: Chunk[]) {
   const images = source.flatMap((chunk) => chunk.images || [])
   await Promise.allSettled(images.map(async (image) => {
     if (!image.file_url || imageUrls.value[image.id]) return
-    const { data } = await request.get(image.file_url, { responseType: 'blob' })
-    imageUrls.value[image.id] = URL.createObjectURL(data)
+    try {
+      const { data } = await request.get(image.file_url, { responseType: 'blob' })
+      imageUrls.value[image.id] = URL.createObjectURL(data)
+      brokenImageIds.value.delete(image.id)
+    } catch {
+      brokenImageIds.value.add(image.id)
+    }
   }))
 }
+
+// V6-14: handle individual image load errors from el-image
+function handleImageError(imgId: number) {
+  brokenImageIds.value.add(imgId)
+}
+
+// V6-14/V6-52: re-extract images when broken images are detected
+async function handleReextractImages() {
+  if (!selectedMaterialId.value || reextractingImages.value) return
+  reextractingImages.value = true
+  try {
+    const { data: result } = await reextractImages(selectedMaterialId.value)
+    if (result.status === 'forbidden') {
+      ElMessage.warning('该资料类型不支持图片提取')
+    } else if (result.status === 'missing') {
+      ElMessage.error('原始文件缺失，无法提取图片')
+    } else {
+      const found = result.found ?? 0
+      const extracted = result.extracted ?? 0
+      // Reload integrity to get current missing count
+      let stillMissing = 0
+      try {
+        const { data: integrity } = await getImageIntegrity(selectedMaterialId.value)
+        stillMissing = integrity.missing
+        imageIntegrityStatus.value = integrity.status
+      } catch {
+        // integrity fetch is best-effort
+      }
+      if (stillMissing > 0) {
+        ElMessage.warning(
+          `重新提取完成：找到 ${found} 张图片，提取 ${extracted} 张，仍有 ${stillMissing} 张缺失（旧图片仍可用）`,
+        )
+      } else {
+        ElMessage.success(
+          `重新提取完成：找到 ${found} 张图片，成功提取 ${extracted} 张`,
+        )
+      }
+      // Reload chunks to show the new images
+      brokenImageIds.value.clear()
+      await loadChunks()
+    }
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '重新提取图片失败，旧图片仍可使用'))
+  } finally {
+    reextractingImages.value = false
+  }
+}
+
+// V6-52: load image integrity status for the selected material
+async function loadImageIntegrity() {
+  if (!selectedMaterialId.value) return
+  try {
+    const { data } = await getImageIntegrity(selectedMaterialId.value)
+    imageIntegrityStatus.value = data.status
+  } catch {
+    imageIntegrityStatus.value = ''
+  }
+}
+
+// V6-14: preserve scroll position when switching reader modes
+watch(readerMode, async () => {
+  const reader = document.querySelector('.doc-reader') as HTMLElement | null
+  if (!reader) return
+  const savedScrollTop = reader.scrollTop
+  await nextTick()
+  reader.scrollTop = savedScrollTop
+})
 function scrollToPage(pageNo: number) {
   document.getElementById(`page-${pageNo}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
@@ -953,6 +1106,54 @@ async function confirmTaskLearning() {
 .toc-item.active .toc-title {
   color: #409eff;
   font-weight: 600;
+}
+
+.toc-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.toc-type-tag {
+  align-self: flex-start;
+  font-size: 10px;
+  height: 18px;
+  line-height: 16px;
+  padding: 0 4px;
+}
+
+/* V6-14: image error banner */
+.image-error-banner {
+  margin-bottom: 16px;
+}
+
+.image-error-banner .el-alert__content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+/* V6-14: missing image placeholder */
+.image-missing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 20px;
+  color: #909399;
+  background: #f5f7fa;
+  border: 1px dashed #dcdfe6;
+  border-radius: 6px;
+}
+
+.image-missing .el-icon {
+  font-size: 32px;
+  color: #c0c4cc;
 }
 
 /* Document reader */

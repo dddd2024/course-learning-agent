@@ -21,6 +21,7 @@ The agent:
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import datetime
@@ -52,6 +53,9 @@ _TYPE_MAP = {
     "true_false": "true_false",
     "short_answer": "short_answer",
 }
+
+# V6-31: only these question types are allowed after normalisation.
+_ALLOWED_QUESTION_TYPES = frozenset(_TYPE_MAP.values())
 
 
 def _format_knowledge_points(knowledge_points: list[KnowledgePoint]) -> str:
@@ -180,6 +184,138 @@ def _validate_schema(output: dict) -> None:
                 raise ValueError(f"Question {i} missing field '{field}'")
 
 
+def _process_llm_output(
+    output: dict,
+    db: Session,
+    course_id: int,
+    knowledge_points: list[KnowledgePoint],
+) -> list[dict[str, Any]]:
+    """Process raw LLM output into a list of validated quiz items.
+
+    V6-31 constraints enforced here:
+      - Question types must be in the allowed set (choice,
+        multiple_choice, true_false, short_answer); others are dropped.
+      - Every question must have non-empty ``source_evidence``
+        (chunk_id + quote_text); items without it are dropped.
+      - Every question must have a valid ``knowledge_point_id``;
+        items with invalid KP references are dropped.
+      - Items that fail ``verify_quiz_item`` grounding checks are dropped.
+    """
+    from app.models.material_chunk import MaterialChunk
+    from app.services.quiz_item_verifier import verify_quiz_item
+
+    # QUIZ-V3-02: fetch chunk texts for verification.
+    all_evidence_ids: set[int] = set()
+    for q in output.get("questions", []):
+        for raw_id in q.get("source_chunk_ids", []):
+            if str(raw_id).isdigit():
+                all_evidence_ids.add(int(raw_id))
+    chunk_rows: list = []
+    if all_evidence_ids:
+        chunk_rows = (
+            db.query(MaterialChunk)
+            .filter(MaterialChunk.id.in_(all_evidence_ids))
+            .all()
+        )
+    chunk_texts = [
+        {"id": r.id, "text": r.text or ""} for r in chunk_rows
+    ]
+
+    items: list[dict[str, Any]] = []
+
+    for i, q in enumerate(output.get("questions", [])):
+        # V6-31: validate question type — drop items with invalid types.
+        qtype = _normalise_question_type(q.get("question_type", ""))
+        if qtype not in _ALLOWED_QUESTION_TYPES:
+            logger.warning(
+                "Skipping quiz item %s: invalid question type '%s'", i, qtype
+            )
+            continue
+
+        evidence_ids = _valid_evidence_ids(
+            db, course_id, q.get("source_chunk_ids", []), knowledge_points
+        )
+        # A quiz item without a course-material anchor cannot be reviewed or
+        # safely used to update weak points. Drop it instead of persisting an
+        # apparently authoritative but untraceable question.
+        if not evidence_ids:
+            logger.warning("Skipping quiz item %s because it has no valid evidence", i)
+            continue
+
+        # QUIZ-V3-01: carry source_evidence (chunk_id + quote_text) so the
+        # grounding can be independently verified against the original chunks.
+        source_evidence = q.get("source_evidence", [])
+        if not isinstance(source_evidence, list):
+            source_evidence = []
+        # Filter source_evidence to only include entries whose chunk_id is
+        # in the valid evidence_ids set.
+        valid_eid_set = set(evidence_ids)
+        filtered_source_evidence = [
+            {
+                "chunk_id": ev.get("chunk_id"),
+                "quote_text": ev.get("quote_text", ""),
+            }
+            for ev in source_evidence
+            if isinstance(ev, dict)
+            and ev.get("chunk_id") in valid_eid_set
+        ]
+
+        # V6-31: drop items that have no source_evidence after filtering.
+        if not filtered_source_evidence:
+            logger.warning(
+                "Skipping quiz item %s: no source_evidence with valid chunk_id", i
+            )
+            continue
+
+        rubric = _normalise_rubric(q.get("rubric"))
+        if any(not set(criterion.get("evidence_ids", [])) <= set(evidence_ids) for criterion in rubric):
+            logger.warning("Skipping quiz item %s: rubric references evidence outside the item", i)
+            continue
+
+        mapped_kp = _map_knowledge_point_id(q.get("knowledge_point_ids", []), i, knowledge_points)
+        if mapped_kp is not None:
+            point = next((kp for kp in knowledge_points if kp.id == mapped_kp), None)
+            try:
+                point_evidence = set(json.loads(point.source_chunk_ids or "[]")) if point else set()
+            except Exception:
+                point_evidence = set()
+            if not point_evidence.intersection(evidence_ids):
+                mapped_kp = None
+
+        # V6-31: every question must have a valid knowledge_point_id.
+        if mapped_kp is None:
+            logger.warning(
+                "Skipping quiz item %s: could not map to a valid knowledge_point_id", i
+            )
+            continue
+
+        item_data = {
+            "question_type": qtype,
+            "question_text": q.get("stem", ""),
+            "options": _prefix_options(q.get("options", [])),
+            "answer": str(q.get("answer", "")),
+            "rubric": rubric,
+            "explanation": q.get("explanation", ""),
+            "difficulty": q.get("difficulty"),
+            "source_evidence_ids": evidence_ids,
+            "source_evidence": filtered_source_evidence,
+            "knowledge_point_id": mapped_kp,
+            "order_index": i,
+        }
+
+        # QUIZ-V3-02: verify the quiz item against source evidence.
+        is_valid, reason = verify_quiz_item(item_data, chunk_texts)
+        if not is_valid:
+            logger.warning(
+                "Skipping quiz item %s: verification failed — %s", i, reason
+            )
+            continue
+        item_data["verification_status"] = "verified"
+        items.append(item_data)
+
+    return items
+
+
 def generate_quiz(
     db: Session,
     user_id: int,
@@ -289,100 +425,55 @@ def generate_quiz(
         duration_ms=generate_duration,
     )
 
-    items: list[dict[str, Any]] = []
-    # QUIZ-V3-02: fetch chunk texts for verification.
-    from app.models.material_chunk import MaterialChunk
-    all_evidence_ids: set[int] = set()
-    for q in output.get("questions", []):
-        for raw_id in q.get("source_chunk_ids", []):
-            if str(raw_id).isdigit():
-                all_evidence_ids.add(int(raw_id))
-    chunk_rows: list = []
-    if all_evidence_ids:
-        chunk_rows = (
-            db.query(MaterialChunk)
-            .filter(MaterialChunk.id.in_(all_evidence_ids))
-            .all()
+    # V6-31: process the LLM output into validated items.
+    items = _process_llm_output(output, db, course_id, knowledge_points)
+
+    # V6-31: if we got some valid items but fewer than requested, retry
+    # once with a stronger prompt before settling for a partial result.
+    # When zero items survived (e.g. insufficient evidence), retrying
+    # with the same material won't help, so skip the retry.
+    retried = False
+    if 0 < len(items) < question_count:
+        retry_prompt = (
+            prompt
+            + f"\n\n重要提示：上次只生成了 {len(items)} 道符合条件的题目，"
+            f"请务必生成 {question_count} 道题目。每道题必须包含有效的 "
+            f"source_evidence（chunk_id 和 quote_text）和正确的 "
+            f"knowledge_point_ids。"
         )
-    chunk_texts = [
-        {"id": r.id, "text": r.text or ""} for r in chunk_rows
-    ]
-
-    from app.services.quiz_item_verifier import verify_quiz_item
-
-    for i, q in enumerate(output.get("questions", [])):
-        evidence_ids = _valid_evidence_ids(
-            db, course_id, q.get("source_chunk_ids", []), knowledge_points
-        )
-        # A quiz item without a course-material anchor cannot be reviewed or
-        # safely used to update weak points. Drop it instead of persisting an
-        # apparently authoritative but untraceable question.
-        if not evidence_ids:
-            logger.warning("Skipping quiz item %s because it has no valid evidence", i)
-            continue
-        # QUIZ-V3-01: carry source_evidence (chunk_id + quote_text) so the
-        # grounding can be independently verified against the original chunks.
-        source_evidence = q.get("source_evidence", [])
-        if not isinstance(source_evidence, list):
-            source_evidence = []
-        # Filter source_evidence to only include entries whose chunk_id is
-        # in the valid evidence_ids set.
-        valid_eid_set = set(evidence_ids)
-        filtered_source_evidence = [
-            {
-                "chunk_id": ev.get("chunk_id"),
-                "quote_text": ev.get("quote_text", ""),
-            }
-            for ev in source_evidence
-            if isinstance(ev, dict)
-            and ev.get("chunk_id") in valid_eid_set
-        ]
-
-        rubric = _normalise_rubric(q.get("rubric"))
-        if any(not set(criterion.get("evidence_ids", [])) <= set(evidence_ids) for criterion in rubric):
-            logger.warning("Skipping quiz item %s: rubric references evidence outside the item", i)
-            continue
-        mapped_kp = _map_knowledge_point_id(q.get("knowledge_point_ids", []), i, knowledge_points)
-        if mapped_kp is not None:
-            point = next((kp for kp in knowledge_points if kp.id == mapped_kp), None)
-            try:
-                point_evidence = set(json.loads(point.source_chunk_ids or "[]")) if point else set()
-            except Exception:
-                point_evidence = set()
-            if not point_evidence.intersection(evidence_ids):
-                mapped_kp = None
-        item_data = {
-            "question_type": _normalise_question_type(
-                q.get("question_type", "")
-            ),
-            "question_text": q.get("stem", ""),
-            "options": _prefix_options(q.get("options", [])),
-            "answer": str(q.get("answer", "")),
-            "rubric": rubric,
-            "explanation": q.get("explanation", ""),
-            "difficulty": q.get("difficulty"),
-            "source_evidence_ids": evidence_ids,
-            "source_evidence": filtered_source_evidence,
-            "knowledge_point_id": mapped_kp,
-            "order_index": i,
-        }
-
-        # QUIZ-V3-02: verify the quiz item against source evidence.
-        is_valid, reason = verify_quiz_item(item_data, chunk_texts)
-        if not is_valid:
-            logger.warning(
-                "Skipping quiz item %s: verification failed — %s", i, reason
+        try:
+            retry_output, retry_meta = call_llm_with_meta(
+                retry_prompt,
+                agent_type="quiz_generate",
+                user_config=user_config,
             )
-            continue
-        item_data["verification_status"] = "verified"
-        items.append(item_data)
+            _validate_schema(retry_output)
+            retry_items = _process_llm_output(
+                retry_output, db, course_id, knowledge_points
+            )
+            if len(retry_items) > len(items):
+                items = retry_items
+            retried = True
+            _safe_add_step(
+                db,
+                run_id=run_id,
+                step_name="retry_generate",
+                step_index=1,
+                input_data={"reason": "insufficient_questions"},
+                output_data={"question_count": len(items)},
+            )
+        except Exception as exc:
+            logger.warning("Retry quiz generation failed: %s", exc)
 
-    # QUIZ-V3-01: when no questions have valid evidence, return empty items
-    # with an insufficient_evidence flag instead of raising an error.
-    # QUIZ-V3-02: when some items were dropped by verification, set
-    # partial_generation=True.
+    # V6-31: truncate to the requested question_count if the LLM returned
+    # more than asked.
+    if len(items) > question_count:
+        items = items[:question_count]
+
+    # V6-31: partial_generation when we couldn't fill the requested count
+    # even after retry.
     total_questions_from_llm = len(output.get("questions", []))
-    partial_generation = total_questions_from_llm > len(items)
+    partial_generation = len(items) < question_count
 
     if not items:
         _safe_finalize_run(db, run_id=run_id, evidence_status="insufficient", output_summary={"item_count": 0, "insufficient_evidence": True}, started_at=run_started_at)
@@ -403,7 +494,7 @@ def generate_quiz(
         run_id=run_id,
         fallback_used=bool(meta.get("fallback_used", False)),
         evidence_status="insufficient" if not items else None,
-        output_summary={"item_count": len(items)},
+        output_summary={"item_count": len(items), "retried": retried},
         started_at=run_started_at,
     )
 
@@ -418,6 +509,12 @@ def generate_quiz(
     else:
         title = f"{course_name} 测验 ({timestamp})"
 
+    drop_reasons: list[str] = []
+    if partial_generation:
+        drop_reasons.append("insufficient_questions")
+    if total_questions_from_llm > len(items):
+        drop_reasons.append("item_verification_failed")
+
     return {
         "title": title,
         "items": items,
@@ -425,7 +522,7 @@ def generate_quiz(
         "requested_count": question_count,
         "generated_count": len(items),
         "dropped_count": total_questions_from_llm - len(items),
-        "drop_reasons": ["item_verification_failed"] if partial_generation else [],
+        "drop_reasons": drop_reasons,
     }
 
 

@@ -8,7 +8,7 @@ returned by the materials API MUST carry an explicit UTC offset.
 """
 from datetime import datetime
 
-from app.tests.conftest import auth_headers, create_course, upload_material
+from app.tests.conftest import auth_headers, create_course, upload_material, run_pending_parse_jobs
 
 
 def _assert_tz_aware(iso_str: str) -> None:
@@ -57,6 +57,7 @@ def test_parse_response_exposes_tz_aware_parse_times(
         f"/api/v1/materials/{material_id}/parse", headers=headers
     )
     assert parse_resp.status_code == 200
+    run_pending_parse_jobs(client)
 
     resp = client.get(f"/api/v1/courses/{course_id}/materials", headers=headers)
     item = next(m for m in resp.json()["items"] if m["id"] == material_id)

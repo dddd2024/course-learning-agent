@@ -1,0 +1,78 @@
+#!/usr/bin/env python
+"""Start the parse worker with a minimal HTTP health-check endpoint.
+
+Used by ``playwright.config.ts`` as a ``webServer`` entry so Playwright
+can detect when the worker is ready.  The worker polls the DB for queued
+``ParseJob`` rows; the health server listens on port 8001 and always
+returns 200 OK.
+
+Usage::
+
+    python scripts/start_parse_worker_with_health.py
+"""
+from __future__ import annotations
+
+import http.server
+import logging
+import signal
+import sys
+import threading
+
+# Ensure the backend package is importable when running from the
+# project root.
+sys.path.insert(0, "backend")
+
+from app.core.database import SessionLocal  # noqa: E402
+from app.workers.parse_worker import ParseWorker  # noqa: E402
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("parse_worker_health")
+
+
+class _HealthHandler(http.server.BaseHTTPRequestHandler):
+    """Always return 200 OK so Playwright detects readiness."""
+
+    def do_GET(self):  # noqa: N802 – http.server convention
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def log_message(self, *args):  # noqa: D401 – silence access log
+        pass
+
+
+def main() -> None:
+    # Start health-check HTTP server on port 8001.
+    health_server = http.server.HTTPServer(
+        ("127.0.0.1", 8001), _HealthHandler
+    )
+    threading.Thread(
+        target=health_server.serve_forever, daemon=True
+    ).start()
+    logger.info("Health check listening on http://127.0.0.1:8001")
+
+    # Start the parse worker.
+    worker = ParseWorker(
+        session_factory=SessionLocal,
+        poll_interval=2.0,
+        heartbeat_interval=5.0,
+    )
+
+    def _shutdown(signum, frame):
+        logger.info("Received signal %s, shutting down...", signum)
+        health_server.shutdown()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+
+    logger.info("Parse worker started - polling for queued jobs...")
+    worker.run_forever()
+
+
+if __name__ == "__main__":
+    main()

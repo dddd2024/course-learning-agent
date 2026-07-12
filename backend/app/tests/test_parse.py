@@ -27,7 +27,7 @@ from app.retrieval.chunker import (
     clean_keyword_text,
 )
 from app.retrieval.parsers import parse_file, parse_pdf, parse_txt
-from app.tests.conftest import auth_headers, create_course, upload_material
+from app.tests.conftest import auth_headers, create_course, upload_material, run_pending_parse_jobs
 
 
 # A long Chinese paragraph (~3000 chars) used to exercise the chunker.
@@ -67,6 +67,7 @@ def test_parse_txt_material(client, tmp_path, monkeypatch) -> None:
     body = parse_resp.json()
     # Background task: endpoint returns processing immediately.
     assert body["status"] == "processing"
+    run_pending_parse_jobs(client)
 
     # After the background task completes, the material should be ready.
     list_resp = client.get(
@@ -118,6 +119,7 @@ def test_parse_pdf_material(client, tmp_path, monkeypatch) -> None:
     assert parse_resp.status_code == 200
     # Background task: endpoint returns processing immediately.
     assert parse_resp.json()["status"] == "processing"
+    run_pending_parse_jobs(client)
 
     # After the background task completes, the material should be ready.
     list_resp = client.get(
@@ -173,6 +175,7 @@ def test_chunks_pagination(client, tmp_path, monkeypatch) -> None:
         LONG_TEXT.encode("utf-8"),
     )
     client.post(f"/api/v1/materials/{material_id}/parse", headers=headers)
+    run_pending_parse_jobs(client)
 
     resp = client.get(
         f"/api/v1/materials/{material_id}/chunks?page=1&page_size=5",
@@ -211,6 +214,7 @@ def test_parse_failed_status(client, tmp_path, monkeypatch) -> None:
     # Background task: endpoint returns processing immediately.
     body = response.json()
     assert body["status"] == "processing"
+    run_pending_parse_jobs(client)
 
     # After the background task completes, the material should be failed.
     list_resp = client.get(
@@ -255,6 +259,7 @@ def test_parse_scanner_failure_rolls_back_and_preserves_old_chunks(
     assert first.status_code == 200
     # Background task: endpoint returns processing immediately.
     assert first.json()["status"] == "processing"
+    run_pending_parse_jobs(client)
     # After the background task completes, the material should be ready.
     list_after_first = client.get(
         f"/api/v1/courses/{course_id}/materials", headers=headers
@@ -305,6 +310,7 @@ def test_parse_scanner_failure_rolls_back_and_preserves_old_chunks(
     assert second.status_code == 200
     # Background task: endpoint returns processing immediately.
     assert second.json()["status"] == "processing"
+    run_pending_parse_jobs(client)
 
     # After the failed re-parse background task, check material state.
     # P0: when old chunks exist, a failed re-parse must keep status="ready"
@@ -365,6 +371,7 @@ def test_parse_failure_without_old_chunks_still_failed(
     # Background task: endpoint returns processing immediately.
     body = resp.json()
     assert body["status"] == "processing"
+    run_pending_parse_jobs(client)
 
     list_resp = client.get(
         f"/api/v1/courses/{course_id}/materials", headers=headers
@@ -468,6 +475,7 @@ def test_chunk_images_are_not_duplicated_and_decorative_images_are_opt_in(
         client, headers, course_id, "notes.txt", LONG_TEXT.encode("utf-8")
     )
     client.post(f"/api/v1/materials/{material_id}/parse", headers=headers)
+    run_pending_parse_jobs(client)
 
     db_generator = app.dependency_overrides[get_db]()
     db = next(db_generator)

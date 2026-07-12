@@ -6,7 +6,7 @@ parse → create conversation → ask question → single-course plan →
 multi-course plan. Runs against the in-memory test DB with the mock
 LLM provider, so it is deterministic and fast.
 """
-from app.tests.conftest import auth_headers, create_course
+from app.tests.conftest import auth_headers, create_course, run_pending_parse_jobs
 
 
 def test_full_learning_flow(client) -> None:
@@ -41,6 +41,7 @@ def test_full_learning_flow(client) -> None:
     assert parse_resp.status_code == 200, parse_resp.text
     # Background task: endpoint returns processing immediately.
     assert parse_resp.json()["status"] == "processing"
+    run_pending_parse_jobs(client)
     # Verify the background task completed and material is ready.
     mat_resp = client.get(
         f"/api/v1/courses/{os_course_id}/materials", headers=headers

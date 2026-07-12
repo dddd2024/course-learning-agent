@@ -14,4 +14,6 @@ def test_parse_job_is_idempotent_and_stale_job_recovers(db_session, sample_user,
     first.status, first.heartbeat_at = "running", utc_now() - timedelta(seconds=601)
     db_session.commit()
     assert recover_stale_jobs(db_session) == 1
-    assert db_session.get(ParseJob, first.id).status == "failed"
+    # V6-50: stale running jobs are re-queued (not failed) so the
+    # persistent worker can pick them up again.
+    assert db_session.get(ParseJob, first.id).status == "queued"
