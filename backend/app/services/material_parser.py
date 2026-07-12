@@ -43,6 +43,7 @@ from app.retrieval.semantic_chunker import semantic_chunk_document
 from app.retrieval.parsers import parse_file
 from app.retrieval.search import update_fts_index
 from app.services.material_cleaner import clean_pages
+from app.services.document_cleaning_pipeline import clean_document_pages
 from app.services import security_scanner
 from app.services.chunk_quality import evaluate_chunks_quality
 from app.services.error_logger import log_error
@@ -144,7 +145,8 @@ def parse_with_retry(
             # parse_file's V7 production contract is Document IR; no tuple
             # or fixed-window compatibility path is permitted here.
             clean_results = clean_pages([page.text for page in pages])
-            chunks = semantic_chunk_document(pages)
+            cleaned_pages = clean_document_pages(pages)
+            chunks = semantic_chunk_document(cleaned_pages)
             check_cancelled()  # before creating a staging version
 
             # Preserve old evidence: a successful parse creates a new
@@ -263,6 +265,7 @@ def parse_with_retry(
                     page_start=chunk.get("page_start"),
                     page_end=chunk.get("page_end"),
                     source_block_ids_json=json.dumps(chunk.get("source_block_ids", []), ensure_ascii=False),
+                    source_fragments_json=json.dumps(chunk.get("source_fragments_json", []), ensure_ascii=False),
                     split_reason=chunk.get("split_reason"),
                     chunker_version=chunk.get("chunker_version"),
                     text=text,

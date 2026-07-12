@@ -10,7 +10,8 @@ def test_real_parse_service_uses_document_ir_semantic_chunker() -> None:
     source = inspect.getsource(material_parser.parse_with_retry)
 
     assert "pages = parse_fn(" in source
-    assert "semantic_chunk_document(pages)" in source
+    assert "semantic_chunk_document(" in source
+    assert "clean_document_pages" in source
     assert "MaterialPage(" in source
     assert "source_block_ids_json" in source
     assert "chunker_version" in source

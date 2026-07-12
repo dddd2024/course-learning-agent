@@ -34,6 +34,8 @@ class MaterialChunk(Base, TimestampMixin):
     page_start = Column(Integer, nullable=True)
     page_end = Column(Integer, nullable=True)
     source_block_ids_json = Column(Text, nullable=True)
+    # V7.3-01: per-block text range provenance for precise citation.
+    source_fragments_json = Column(Text, nullable=True)
     split_reason = Column(String(40), nullable=True)
     chunker_version = Column(String(40), nullable=True)
     text = Column(Text, nullable=False)

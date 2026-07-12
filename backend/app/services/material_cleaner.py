@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 
 _PAGE_NUMBER = re.compile(r"^(?:page\s*)?\d{1,4}$", re.I)
+_CN_PAGE_NUMBER = re.compile(r"^第\s*\d+\s*页$")
 _LABEL = re.compile(r"^(?:图|表|figure|animation)\s*\d+[.:：]?$", re.I)
 # Only match actual URLs (http://, https://, ftp://, www.), not lines
 # that merely contain a forward slash.  This preserves technical terms
@@ -45,6 +46,8 @@ def clean_pages(page_texts: Iterable[str]) -> list[CleanPage]:
             if edge_counts.get(line, 0) > 1 and (line == lines[0] or line == lines[-1]):
                 reason = "repeated_header_footer"
             elif _PAGE_NUMBER.fullmatch(line):
+                reason = "isolated_page_number"
+            elif _CN_PAGE_NUMBER.fullmatch(line):
                 reason = "isolated_page_number"
             elif _COURSE_LABEL.match(line):
                 reason = "course_label"

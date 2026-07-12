@@ -131,6 +131,7 @@ def _build_chunk(
     page_nos: set,
     chunk_index: int,
     split_reason: str,
+    fragments: list[dict] | None = None,
 ) -> dict:
     """Build a chunk dictionary."""
     page_nos_sorted = sorted(page_nos)
@@ -140,10 +141,38 @@ def _build_chunk(
         "page_start": page_nos_sorted[0] if page_nos_sorted else None,
         "page_end": page_nos_sorted[-1] if page_nos_sorted else None,
         "source_block_ids": list(block_ids),
+        "source_fragments_json": fragments or [],
         "split_reason": split_reason,
         "chunk_index": chunk_index,
         "chunker_version": CHUNKER_VERSION,
     }
+
+
+def _split_fragments(fragments: list[dict], split_pos: int) -> tuple[list[dict], list[dict]]:
+    """Divide fragment ranges at *split_pos*.
+
+    Returns (first_part_fragments, second_part_fragments) where each
+    fragment's text_start/text_end are adjusted to be relative to the
+    respective part's text.
+    """
+    first: list[dict] = []
+    second: list[dict] = []
+    for frag in fragments:
+        start = frag["text_start"]
+        end = frag["text_end"]
+        if start < split_pos:
+            first.append({
+                "block_id": frag["block_id"],
+                "text_start": start,
+                "text_end": min(end, split_pos),
+            })
+        if end > split_pos:
+            second.append({
+                "block_id": frag["block_id"],
+                "text_start": max(0, start - split_pos),
+                "text_end": end - split_pos,
+            })
+    return first, second
 
 
 def semantic_chunk(
@@ -173,9 +202,10 @@ def semantic_chunk(
     current_title = ""
     current_block_ids: list[str] = []
     current_page_nos: set = set()
+    current_fragments: list[dict] = []
 
     def _flush(reason: str = "paragraph"):
-        nonlocal current_text, current_title, current_block_ids, current_page_nos, chunk_index
+        nonlocal current_text, current_title, current_block_ids, current_page_nos, current_fragments, chunk_index
         if current_text.strip() and current_block_ids:
             chunks.append(
                 _build_chunk(
@@ -185,6 +215,7 @@ def semantic_chunk(
                     current_page_nos,
                     chunk_index,
                     reason,
+                    current_fragments,
                 )
             )
             chunk_index += 1
@@ -192,6 +223,7 @@ def semantic_chunk(
         current_title = ""
         current_block_ids = []
         current_page_nos = set()
+        current_fragments = []
 
     for page in pages:
         page_no = page.page_no
@@ -207,6 +239,7 @@ def semantic_chunk(
                 current_text = block.text + "\n"
                 current_block_ids = [block.block_id]
                 current_page_nos = {page_no}
+                current_fragments = [{"block_id": block.block_id, "text_start": 0, "text_end": len(current_text)}]
                 i += 1
                 continue
 
@@ -216,29 +249,54 @@ def semantic_chunk(
                 if len(current_text) + 200 > max_length and current_text.strip():
                     _flush("paragraph")
 
-                list_text = ""
-                list_ids = []
                 while i < len(blocks) and _is_list(blocks[i]):
                     b = blocks[i]
-                    list_text += b.text + "\n"
-                    list_ids.append(b.block_id)
+                    item_text = b.text + "\n"
+                    # If the single list block itself exceeds max_length,
+                    # split it at newline boundaries
+                    if len(item_text) > max_length:
+                        # Flush current content first
+                        if current_text.strip():
+                            _flush("list")
+                        # Split the list block text at newline boundaries
+                        lines = b.text.split("\n")
+                        for line in lines:
+                            if not line.strip():
+                                continue
+                            if len(current_text) + len(line) + 1 > max_length and current_text.strip():
+                                _flush("list")
+                            block_start = len(current_text)
+                            current_text += line + "\n"
+                            block_end = len(current_text)
+                            current_block_ids.append(b.block_id)
+                            current_page_nos.add(page_no)
+                            current_fragments.append({"block_id": b.block_id, "text_start": block_start, "text_end": block_end})
+                        i += 1
+                        continue
+                    # If adding this item exceeds max_length, flush and start new
+                    if len(current_text) + len(item_text) > max_length and current_text.strip():
+                        _flush("list")
+                    block_start = len(current_text)
+                    current_text += item_text
+                    block_end = len(current_text)
+                    current_block_ids.append(b.block_id)
+                    current_page_nos.add(page_no)
+                    current_fragments.append({"block_id": b.block_id, "text_start": block_start, "text_end": block_end})
                     i += 1
-
-                current_text += list_text
-                current_block_ids.extend(list_ids)
-                current_page_nos.add(page_no)
-                if len(current_text) > max_length:
-                    _flush("list")
                 continue
 
             # Table → collect all consecutive table blocks, keep together
             if _is_table(block):
                 table_text = ""
                 table_ids = []
+                table_start = len(current_text)
                 while i < len(blocks) and _is_table(blocks[i]):
                     b = blocks[i]
+                    item_start = table_start + len(table_text)
                     table_text += b.text + "\n"
+                    item_end = table_start + len(table_text)
                     table_ids.append(b.block_id)
+                    current_fragments.append({"block_id": b.block_id, "text_start": item_start, "text_end": item_end})
                     i += 1
 
                 if len(current_text) + len(table_text) > max_length and current_text.strip():
@@ -263,6 +321,7 @@ def semantic_chunk(
                     current_text = block_text + "\n"
                     current_block_ids = [block.block_id]
                     current_page_nos = {page_no}
+                    current_fragments = [{"block_id": block.block_id, "text_start": 0, "text_end": len(current_text)}]
                 else:
                     # Current text is under target but adding block exceeds max.
                     # Split the combined text at a safe point.
@@ -274,23 +333,45 @@ def semantic_chunk(
                     first_part = combined[:split_pos]
                     second_part = combined[split_pos:]
 
+                    # Split fragments at the boundary
+                    first_frags, second_frags = _split_fragments(current_fragments, split_pos)
+                    # The new block's text is appended after current_text, so
+                    # its fragment starts at len(current_text) and ends at len(combined).
+                    new_block_start = len(current_text)
+                    new_block_end = len(combined)
+                    if new_block_start < split_pos:
+                        first_frags.append({"block_id": block.block_id, "text_start": new_block_start, "text_end": min(new_block_end, split_pos)})
+                    if new_block_end > split_pos:
+                        second_frags.append({"block_id": block.block_id, "text_start": max(0, new_block_start - split_pos), "text_end": new_block_end - split_pos})
+
+                    # Determine which block IDs are in each part
+                    first_block_ids = list({f["block_id"] for f in first_frags})
+                    second_block_ids = list({f["block_id"] for f in second_frags})
+
                     current_text = first_part
+                    current_fragments = first_frags
+                    current_block_ids = first_block_ids if first_block_ids else current_block_ids
                     _flush(reason)
 
                     current_text = second_part
-                    current_block_ids = [block.block_id]
+                    current_block_ids = second_block_ids if second_block_ids else [block.block_id]
                     current_page_nos = {page_no}
+                    current_fragments = second_frags
             elif current_exceeds_target and current_text.strip():
                 # Current text exceeds target_length — split at this block boundary
                 _flush("paragraph")
                 current_text = block_text + "\n"
                 current_block_ids = [block.block_id]
                 current_page_nos = {page_no}
+                current_fragments = [{"block_id": block.block_id, "text_start": 0, "text_end": len(current_text)}]
             else:
                 # Add block to current chunk
+                block_start = len(current_text)
                 current_text += block_text + "\n"
+                block_end = len(current_text)
                 current_block_ids.append(block.block_id)
                 current_page_nos.add(page_no)
+                current_fragments.append({"block_id": block.block_id, "text_start": block_start, "text_end": block_end})
 
                 # If current text exceeds target_length, check if we should
                 # split at a sentence boundary. Only do this when there are
@@ -321,11 +402,17 @@ def semantic_chunk(
                         if split_pos > target_length:
                             first_part = text_so_far[:split_pos]
                             second_part = text_so_far[split_pos:]
+                            first_frags, second_frags = _split_fragments(current_fragments, split_pos)
+                            first_block_ids = list({f["block_id"] for f in first_frags})
+                            second_block_ids = list({f["block_id"] for f in second_frags})
                             current_text = first_part
+                            current_fragments = first_frags
+                            current_block_ids = first_block_ids if first_block_ids else current_block_ids
                             _flush("sentence")
                             current_text = second_part
-                            current_block_ids = [block.block_id]
+                            current_block_ids = second_block_ids if second_block_ids else current_block_ids
                             current_page_nos = {page_no}
+                            current_fragments = second_frags
 
             i += 1
 
@@ -344,6 +431,15 @@ def semantic_chunk(
         if _is_protected_at_boundary(end_text, start_text):
             merged_text = end_text + "\n" + start_text
             merged_ids = list(chunks[idx]["source_block_ids"]) + list(chunks[idx + 1]["source_block_ids"])
+            merged_frags = list(chunks[idx].get("source_fragments_json", []))
+            # Adjust second chunk's fragments to be relative to the merged text
+            offset = len(end_text) + 1  # +1 for the newline
+            for frag in chunks[idx + 1].get("source_fragments_json", []):
+                merged_frags.append({
+                    "block_id": frag["block_id"],
+                    "text_start": frag["text_start"] + offset,
+                    "text_end": frag["text_end"] + offset,
+                })
             merged_pages = set()
             if chunks[idx]["page_start"]:
                 for p in range(chunks[idx]["page_start"], chunks[idx]["page_end"] + 1):
@@ -358,6 +454,7 @@ def semantic_chunk(
                 "page_start": merged_pages_sorted[0] if merged_pages_sorted else None,
                 "page_end": merged_pages_sorted[-1] if merged_pages_sorted else None,
                 "source_block_ids": merged_ids,
+                "source_fragments_json": merged_frags,
                 "split_reason": "paragraph",
                 "chunk_index": chunks[idx]["chunk_index"],
                 "chunker_version": CHUNKER_VERSION,
@@ -372,12 +469,11 @@ def semantic_chunk(
 
 # Public production name.  Keep ``semantic_chunk`` for V6 callers and tests.
 def semantic_chunk_document(
-    pages: List[DocumentPage], *, config: dict | None = None
+    pages: List[DocumentPage], *, config: dict | None = None,
+    target_length: int | None = None, max_length: int | None = None,
 ) -> List[dict]:
     """Chunk a cleaned Document IR using the V7 production contract."""
-    config = config or {}
-    return semantic_chunk(
-        pages,
-        target_length=int(config.get("target_length", 600)),
-        max_length=int(config.get("max_length", 1000)),
-    )
+    cfg = config or {}
+    tl = target_length if target_length is not None else int(cfg.get("target_length", 600))
+    ml = max_length if max_length is not None else int(cfg.get("max_length", 1000))
+    return semantic_chunk(pages, target_length=tl, max_length=ml)
