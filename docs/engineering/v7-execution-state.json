@@ -2,11 +2,11 @@
   "version": "v7.1",
   "branch": "codex/v7-production-integration",
   "base_commit": "53a1221",
-  "current_head": "aa608956b568078d0510eb4b7f071cc52fd91838",
+  "current_head": "871a387d3ad441c4bf8113e3ab84fb8555017d96",
   "started_at": "2026-07-12T00:00:00+08:00",
   "updated_at": "2026-07-12T00:00:00+08:00",
   "overall_status": "in_progress",
-  "current_task": "V7-CONT-06",
+  "current_task": "V7-CONT-12",
   "tasks": {
     "V7-CONT-00": {
       "status": "verified",
@@ -90,12 +90,13 @@
       "notes": ""
     },
     "V7-CONT-06": {
-      "status": "implemented_unverified",
+      "status": "verified",
       "evidence": [
         "Explicit quiz constraints validate requested active KP scope, question count, supported types, difficulty distribution and pass score; unsatisfied requests return structured QUIZ_CONSTRAINT_UNSATISFIED without persisting a partial quiz."
       ],
       "commits": [
-        "180d511 feat(v7): enforce strict quiz creation contract"
+        "180d511 feat(v7): enforce strict quiz creation contract",
+        "29bc98d feat(v7): persist quiz pass score contract"
       ],
       "tests": [
         "python -m pytest backend/app/tests/test_quizzes.py backend/app/tests/test_v3_quiz_grounding.py backend/app/tests/test_v6_quiz_constraints.py -q --tb=short",
@@ -104,12 +105,13 @@
       "notes": ""
     },
     "V7-CONT-07": {
-      "status": "implemented_unverified",
+      "status": "verified",
       "evidence": [
         "Quiz submission validates bound task before mutations and runs scoring, weak points, task verification, todos and goals in one transaction."
       ],
       "commits": [
-        "562efc6 fix(v7): submit quiz and task transition atomically"
+        "562efc6 fix(v7): submit quiz and task transition atomically",
+        "eac158c test(v7): prove atomic quiz submission rollback"
       ],
       "tests": [
         "python -m pytest backend/app/tests/test_v6_task_flows.py backend/app/tests/test_quizzes.py -q --tb=short"
@@ -130,12 +132,13 @@
       "notes": ""
     },
     "V7-CONT-09": {
-      "status": "implemented_unverified",
+      "status": "verified",
       "evidence": [
         "Reschedule retains completed and in-progress StudyTask rows, supersedes only pending schedule rows, and creates a new plan generation."
       ],
       "commits": [
-        "e5c0179 feat(v7): preserve history during multi-plan reschedule"
+        "e5c0179 feat(v7): preserve history during multi-plan reschedule",
+        "871a387 fix(v7): expose active multi-plan generation by default"
       ],
       "tests": [
         "python -m pytest backend/app/tests/test_v6_multi_plan.py -q --tb=short"
@@ -169,7 +172,7 @@
       "tests": [
         "python -m pytest backend/app/tests/test_v6_parse_worker.py -q --tb=short"
       ],
-      "notes": "Requires a final strict-contract audit for persisted pass-score semantics and legacy request compatibility."
+      "notes": ""
     },
     "V7-CONT-12": {
       "status": "not_started",
