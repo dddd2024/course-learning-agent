@@ -107,6 +107,31 @@ def _mock_generate_quiz(**kwargs: Any) -> dict[str, Any]:
     }
 
 
+def _ensure_kp(db, user_id, course_id):
+    """Create a knowledge point if none exists, return it."""
+    kp = (
+        db.query(KnowledgePoint)
+        .filter(
+            KnowledgePoint.course_id == course_id,
+            KnowledgePoint.user_id == user_id,
+            KnowledgePoint.status == "active",
+        )
+        .first()
+    )
+    if kp is None:
+        kp = KnowledgePoint(
+            user_id=user_id,
+            course_id=course_id,
+            title="Test KP",
+            summary="Test summary",
+            status="active",
+            generation=1,
+        )
+        db.add(kp)
+        db.flush()
+    return kp
+
+
 def test_override_uses_state_machine_and_records_event(
     db_session, sample_user, sample_course
 ):
@@ -341,6 +366,11 @@ def test_quiz_task_auto_verify_on_submit(db_session, sample_user, sample_course,
         "app.services.task_execution_service.generate_quiz",
         _mock_generate_quiz,
     )
+    monkeypatch.setattr(
+        "app.services.quiz_creation_service.generate_quiz",
+        _mock_generate_quiz,
+    )
+    _ensure_kp(db_session, sample_user.id, sample_course.id)
 
     goal = _make_goal(db_session, sample_user)
     task = _make_task(
@@ -421,6 +451,11 @@ def test_quiz_task_low_score_stays_in_progress(
         "app.services.task_execution_service.generate_quiz",
         _mock_generate_quiz,
     )
+    monkeypatch.setattr(
+        "app.services.quiz_creation_service.generate_quiz",
+        _mock_generate_quiz,
+    )
+    _ensure_kp(db_session, sample_user.id, sample_course.id)
 
     goal = _make_goal(db_session, sample_user, title="V6 Low Score Goal")
     task = _make_task(
@@ -482,6 +517,10 @@ def test_quiz_submit_rolls_back_when_bound_task_transition_fails(
     monkeypatch.setattr(
         "app.services.task_execution_service.generate_quiz", _mock_generate_quiz
     )
+    monkeypatch.setattr(
+        "app.services.quiz_creation_service.generate_quiz", _mock_generate_quiz
+    )
+    _ensure_kp(db_session, sample_user.id, sample_course.id)
     goal = _make_goal(db_session, sample_user, title="Atomic submit goal")
     task = _make_task(
         db_session, goal, sample_course, "quiz", "quiz", None,

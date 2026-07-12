@@ -141,7 +141,7 @@ async function handleGenerate() {
   if (!courseId.value) return
   const replacingExisting = knowledgePoints.value.length > 0
   const confirmationMessage = replacingExisting
-    ? `将删除并替换现有 ${knowledgePoints.value.length} 个知识点。原提纲无法恢复，是否继续？`
+    ? `将删除并替换现有 ${knowledgePoints.value.length} 个知识点及其关联的测验薄弱点记录。原提纲无法恢复，是否继续？`
     : '将基于课程资料自动生成知识点提纲，可能需要一些时间，是否继续？'
   try {
     await ElMessageBox.confirm(

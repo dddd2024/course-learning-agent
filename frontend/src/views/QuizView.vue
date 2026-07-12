@@ -43,6 +43,11 @@ const knowledgePointsLoading = ref(false)
 const genForm = reactive({
   question_count: 5,
   knowledge_point_ids: [] as number[],
+  question_types: ['choice', 'multiple_choice', 'true_false', 'short_answer'] as string[],
+  difficulty_easy: 0,
+  difficulty_medium: 5,
+  difficulty_hard: 0,
+  pass_score: 60,
 })
 
 const activeQuiz = ref<Quiz | null>(null)
@@ -261,6 +266,11 @@ function openGenerateDialog() {
   }
   genForm.question_count = 5
   genForm.knowledge_point_ids = []
+  genForm.question_types = ['choice', 'multiple_choice', 'true_false', 'short_answer']
+  genForm.difficulty_easy = 0
+  genForm.difficulty_medium = 5
+  genForm.difficulty_hard = 0
+  genForm.pass_score = 60
   dialogVisible.value = true
   fetchKnowledgePoints()
 }
@@ -274,9 +284,13 @@ async function handleGenerate() {
         genForm.knowledge_point_ids.length > 0 ? genForm.knowledge_point_ids : undefined,
         genForm.question_count,
         {
-          question_types: ['choice', 'multiple_choice', 'true_false', 'short_answer'],
-          difficulty_distribution: { easy: 0, medium: genForm.question_count, hard: 0 },
-          pass_score: 60,
+          question_types: genForm.question_types.length > 0 ? genForm.question_types : undefined,
+          difficulty_distribution: {
+            easy: genForm.difficulty_easy,
+            medium: genForm.difficulty_medium,
+            hard: genForm.difficulty_hard,
+          },
+          pass_score: genForm.pass_score,
         },
       )
     dialogVisible.value = false
@@ -972,6 +986,57 @@ onUnmounted(() => {
               :value="Number(kp.id)"
             />
           </el-select>
+        </el-form-item>
+        <el-form-item label="题型（可多选）">
+          <el-checkbox-group v-model="genForm.question_types">
+            <el-checkbox label="choice">单选题</el-checkbox>
+            <el-checkbox label="multiple_choice">多选题</el-checkbox>
+            <el-checkbox label="true_false">判断题</el-checkbox>
+            <el-checkbox label="short_answer">简答题</el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+        <el-form-item label="难度分布">
+          <div style="display: flex; gap: 12px; width: 100%">
+            <el-input-number
+              v-model="genForm.difficulty_easy"
+              :min="0"
+              :max="20"
+              :step="1"
+              style="flex: 1"
+            >
+              <template #prefix>简单</template>
+            </el-input-number>
+            <el-input-number
+              v-model="genForm.difficulty_medium"
+              :min="0"
+              :max="20"
+              :step="1"
+              style="flex: 1"
+            >
+              <template #prefix>中等</template>
+            </el-input-number>
+            <el-input-number
+              v-model="genForm.difficulty_hard"
+              :min="0"
+              :max="20"
+              :step="1"
+              style="flex: 1"
+            >
+              <template #prefix>困难</template>
+            </el-input-number>
+          </div>
+          <div v-if="genForm.difficulty_easy + genForm.difficulty_medium + genForm.difficulty_hard !== genForm.question_count" style="color: var(--el-color-warning); font-size: 12px; margin-top: 4px">
+            提示：难度分布总数（{{ genForm.difficulty_easy + genForm.difficulty_medium + genForm.difficulty_hard }}）与题目数量（{{ genForm.question_count }}）不一致
+          </div>
+        </el-form-item>
+        <el-form-item label="及格分数（0-100）">
+          <el-input-number
+            v-model="genForm.pass_score"
+            :min="0"
+            :max="100"
+            :step="5"
+            style="width: 100%"
+          />
         </el-form-item>
       </el-form>
       <template #footer>

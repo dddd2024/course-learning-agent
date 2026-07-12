@@ -31,6 +31,7 @@ from app.models.material import Material
 from app.models.plan import StudyGoal, StudyTask, TaskExecutionEvent
 from app.models.quiz import Quiz, QuizItem
 from app.services.llm_config_service import build_user_config, get_active_config
+from app.services.quiz_creation_service import QuizCreationService
 from app.services.task_target_resolver import ensure_target_spec
 from app.services.task_state_machine import transition_task
 
@@ -62,9 +63,8 @@ def _create_quiz_for_task(
 ) -> int:
     """Create a quiz for the task's course and return the quiz_id.
 
-    Replicates the logic from the ``POST /quizzes`` endpoint: resolves
-    knowledge points, calls ``generate_quiz``, persists ``Quiz`` +
-    ``QuizItem`` rows.
+    Delegates to QuizCreationService so that the strict contract
+    (no partial quizzes) is enforced uniformly.
     """
     spec = ensure_target_spec(db, task)
     course = (
@@ -88,62 +88,25 @@ def _create_quiz_for_task(
         .all()
     )
 
-    # When no knowledge points exist yet, create an empty quiz with
-    # insufficient_evidence flag rather than raising. The frontend can
-    # show a remediation tip.
-    active_config = get_active_config(db, user_id)
-    user_config = build_user_config(active_config) if active_config else None
+    if not rows:
+        raise BusinessException(message="课程暂无知识点，请先生成知识点", status_code=422)
 
-    quiz_output = generate_quiz(
+    question_count = max(1, int(spec.get("question_count", 5)))
+    pass_score = int(spec.get("pass_score", _DEFAULT_PASS_SCORE))
+    question_types = spec.get("question_types")
+    difficulty_distribution = spec.get("difficulty_distribution")
+
+    quiz = QuizCreationService.create_quiz(
         db=db,
         user_id=user_id,
         course_id=task.course_id,
-        knowledge_points=rows,
         course_name=course.name,
-        question_count=max(1, int(spec.get("question_count", 5))),
-        user_config=user_config,
+        knowledge_points=rows,
+        question_count=question_count,
+        pass_score=pass_score,
+        question_types=question_types,
+        difficulty_distribution=difficulty_distribution,
     )
-
-    # ``generate_quiz`` has already verified every item against an active
-    # source chunk and reconciled its point reference.  Preserve its partial
-    # generation result rather than turning a valid evidence-backed question
-    # into an empty planned quiz merely because a model omitted a label.
-    items = quiz_output.get("items", [])
-    if not items:
-        raise BusinessException(message="资料证据不足，无法生成有效测验；请补充并解析课程资料后重试", status_code=422)
-    quiz = Quiz(
-        user_id=user_id,
-        course_id=task.course_id,
-        title=quiz_output.get("title", f"{course.name} 测验"),
-        question_count=len(items),
-        pass_score=int(spec.get("pass_score", _DEFAULT_PASS_SCORE)),
-        status="draft",
-    )
-    db.add(quiz)
-    db.flush()
-
-    for item_data in items:
-        item = QuizItem(
-            quiz_id=quiz.id,
-            knowledge_point_id=item_data.get("knowledge_point_id"),
-            question_type=item_data.get("question_type", "short_answer"),
-            question_text=item_data.get("question_text", ""),
-            options=json.dumps(item_data.get("options", []), ensure_ascii=False),
-            answer=item_data.get("answer", ""),
-            explanation=item_data.get("explanation", ""),
-            difficulty=item_data.get("difficulty"),
-            source_evidence_ids=json.dumps(item_data.get("source_evidence_ids", [])),
-            evidence_snapshot=json.dumps(item_data.get("source_evidence_ids", [])),
-            source_evidence=json.dumps(
-                item_data.get("source_evidence", []), ensure_ascii=False
-            ),
-            verification_status=item_data.get("verification_status", "verified"),
-            rubric_json=json.dumps(item_data.get("rubric", []), ensure_ascii=False),
-            order_index=item_data.get("order_index", 0),
-        )
-        db.add(item)
-
-    db.flush()
     return quiz.id
 
 
