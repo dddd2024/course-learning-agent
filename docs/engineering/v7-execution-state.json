@@ -2,11 +2,11 @@
   "version": "v7.1",
   "branch": "codex/v7-production-integration",
   "base_commit": "53a1221",
-  "current_head": "871a387d3ad441c4bf8113e3ab84fb8555017d96",
+  "current_head": "4e546c4ab61d3fdd70d050930d9ab466609baf98",
   "started_at": "2026-07-12T00:00:00+08:00",
   "updated_at": "2026-07-12T00:00:00+08:00",
   "overall_status": "in_progress",
-  "current_task": "V7-CONT-12",
+  "current_task": "V7-CONT-13",
   "tasks": {
     "V7-CONT-00": {
       "status": "verified",
@@ -175,10 +175,16 @@
       "notes": ""
     },
     "V7-CONT-12": {
-      "status": "not_started",
-      "evidence": [],
-      "commits": [],
-      "tests": [],
+      "status": "verified",
+      "evidence": [
+        "Incremental FTS maintenance removes inactive version chunks, material deletion removes indexed chunks, and keyword retrieval remains available when SQLite FTS cannot run."
+      ],
+      "commits": [
+        "4e546c4 test(v7): cover FTS version lifecycle and fallback"
+      ],
+      "tests": [
+        "python -m pytest backend/app/tests/test_v6_fts_index.py backend/app/tests/test_v5_retrieval.py -q --tb=short"
+      ],
       "notes": ""
     },
     "V7-CONT-13": {
