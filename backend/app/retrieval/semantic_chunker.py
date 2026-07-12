@@ -18,7 +18,7 @@ from typing import List
 
 from app.retrieval.document_ir import DocumentBlock, DocumentPage
 
-CHUNKER_VERSION = "semantic-v6"
+CHUNKER_VERSION = "semantic-v7"
 
 # Terms that must never be split across a chunk boundary.
 _PROTECTED_TERMS = [
@@ -368,3 +368,16 @@ def semantic_chunk(
             break
 
     return chunks
+
+
+# Public production name.  Keep ``semantic_chunk`` for V6 callers and tests.
+def semantic_chunk_document(
+    pages: List[DocumentPage], *, config: dict | None = None
+) -> List[dict]:
+    """Chunk a cleaned Document IR using the V7 production contract."""
+    config = config or {}
+    return semantic_chunk(
+        pages,
+        target_length=int(config.get("target_length", 600)),
+        max_length=int(config.get("max_length", 1000)),
+    )

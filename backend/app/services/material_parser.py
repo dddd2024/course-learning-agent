@@ -35,7 +35,8 @@ from app.models.material import Material, MaterialVersion
 from app.models.material_chunk import MaterialChunk
 from app.models.material_page import MaterialPage
 from app.models.security_finding import MaterialSecurityFinding
-from app.retrieval.chunker import build_chunks, clean_keyword_text
+from app.retrieval.chunker import clean_keyword_text
+from app.retrieval.semantic_chunker import semantic_chunk_document
 from app.retrieval.parsers import parse_file
 from app.retrieval.search import update_fts_index
 from app.services.material_cleaner import clean_pages
@@ -109,12 +110,10 @@ def parse_with_retry(
         try:
             file_path = Path(settings.UPLOAD_DIR) / material.file_path
             pages = parse_fn(str(file_path), material.file_type)
-            clean_results = clean_pages([page.text if hasattr(page, "text") else page[1] for page in pages])
-            clean_pages_for_chunks = [
-                (page.page_no if hasattr(page, "page_no") else page[0], cleaned.text)
-                for page, cleaned in zip(pages, clean_results)
-            ]
-            chunks = build_chunks(clean_pages_for_chunks, chunk_size=600, overlap=100)
+            # parse_file's V7 production contract is Document IR; no tuple
+            # or fixed-window compatibility path is permitted here.
+            clean_results = clean_pages([page.text for page in pages])
+            chunks = semantic_chunk_document(pages)
 
             # Preserve old evidence: a successful parse creates a new
             # immutable version and only the active version participates in
@@ -174,11 +173,9 @@ def parse_with_retry(
             db.add(version_row)
             db.flush()
             # Preserve page/block provenance before semantic chunks are built.
-            db.query(MaterialPage).filter(MaterialPage.material_id == material_id).delete(synchronize_session=False)
             for page, cleaned in zip(pages, clean_results):
-                if hasattr(page, "page_no"):
-                    raw = page.text
-                    db.add(MaterialPage(material_id=material_id, material_version_id=version_row.id, page_no=page.page_no or 1, page_type=page.source_kind, parser_version=page.parser_version, raw_text=raw, clean_text=cleaned.text, blocks_json=json.dumps([block.__dict__ for block in page.blocks], ensure_ascii=False), decisions_json=json.dumps(cleaned.decisions, ensure_ascii=False)))
+                raw = page.text
+                db.add(MaterialPage(material_id=material_id, material_version_id=version_row.id, page_no=page.page_no, page_type=page.page_type, parser_version=page.parser_version, raw_text=raw, clean_text=cleaned.text, blocks_json=json.dumps([block.to_dict() for block in page.blocks], ensure_ascii=False), decisions_json=json.dumps(cleaned.decisions, ensure_ascii=False)))
             # Collect old active chunk ids before deactivating so we can
             # update the FTS index after the commit.
             old_chunk_ids_new = [
@@ -228,13 +225,18 @@ def parse_with_retry(
                     course_id=material.course_id,
                     chunk_index=chunk["chunk_index"],
                     title=chunk.get("title"),
-                    page_no=chunk.get("page_no"),
+                    page_no=chunk.get("page_start"),
+                    page_start=chunk.get("page_start"),
+                    page_end=chunk.get("page_end"),
+                    source_block_ids_json=json.dumps(chunk.get("source_block_ids", []), ensure_ascii=False),
+                    split_reason=chunk.get("split_reason"),
+                    chunker_version=chunk.get("chunker_version"),
                     text=text,
                     raw_text=raw_text,
                     cleaner_version="v1",
                     noise_score=0.0 if chunk.get("is_indexable", True) else 1.0,
                     is_indexable=1 if chunk.get("is_indexable", True) else 0,
-                    stable_key=f"{material_id}:{chunk.get('page_no') or 0}:{hashlib.sha256(' '.join(text.split()).encode('utf-8')).hexdigest()[:24]}",
+                    stable_key=f"{material_id}:{chunk.get('page_start') or 0}:{hashlib.sha256(' '.join(text.split()).encode('utf-8')).hexdigest()[:24]}",
                     content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
                     is_active=1,
                     # ``token_count`` is kept for legacy clients; it now

@@ -1,10 +1,13 @@
 """Page-level parsed material state retained alongside retrieval chunks."""
-from sqlalchemy import Column, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, ForeignKey, Integer, String, Text, UniqueConstraint
 from app.models.base import Base, TimestampMixin
 
 
 class MaterialPage(Base, TimestampMixin):
     __tablename__ = "material_pages"
+    __table_args__ = (
+        UniqueConstraint("material_version_id", "page_no", name="uq_material_page_version_page"),
+    )
     id = Column(Integer, primary_key=True)
     material_id = Column(Integer, ForeignKey("materials.id"), nullable=False, index=True)
     material_version_id = Column(Integer, ForeignKey("material_versions.id"), nullable=True, index=True)

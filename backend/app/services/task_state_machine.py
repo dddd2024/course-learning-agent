@@ -133,6 +133,7 @@ def transition_task(
     actor_user_id: int,
     evidence: dict[str, Any] | None = None,
     reason: str | None = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
     """Unified state transition for a ``StudyTask``.
 
@@ -344,9 +345,11 @@ def transition_task(
         )
         events_created.append(ev.event_type)
 
-    # Invariant 8: single commit at the end.
-    db.commit()
-    db.refresh(task)
+    # The outer orchestration service can include this transition in a
+    # broader transaction (for example Quiz submission) by passing False.
+    if commit:
+        db.commit()
+        db.refresh(task)
 
     return {
         "action": action,

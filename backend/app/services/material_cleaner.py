@@ -104,9 +104,13 @@ def get_raw_pages(material_id: int, db: Session) -> list[dict]:
     """
     from app.models.material_page import MaterialPage
 
+    from app.models.material import Material
+    material = db.get(Material, material_id)
+    query = db.query(MaterialPage).filter(MaterialPage.material_id == material_id)
+    if material and material.active_version_id is not None:
+        query = query.filter(MaterialPage.material_version_id == material.active_version_id)
     rows = (
-        db.query(MaterialPage)
-        .filter(MaterialPage.material_id == material_id)
+        query
         .order_by(MaterialPage.page_no.asc())
         .all()
     )
@@ -126,9 +130,13 @@ def get_clean_pages(material_id: int, db: Session) -> list[dict]:
     """
     from app.models.material_page import MaterialPage
 
+    from app.models.material import Material
+    material = db.get(Material, material_id)
+    query = db.query(MaterialPage).filter(MaterialPage.material_id == material_id)
+    if material and material.active_version_id is not None:
+        query = query.filter(MaterialPage.material_version_id == material.active_version_id)
     rows = (
-        db.query(MaterialPage)
-        .filter(MaterialPage.material_id == material_id)
+        query
         .order_by(MaterialPage.page_no.asc())
         .all()
     )

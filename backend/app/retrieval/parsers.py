@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from typing import Any, List, Optional, Tuple
 
 from app.core.exceptions import BusinessException
+from app.retrieval.document_ir import DocumentPage, to_document_pages
 
 
 @dataclass(frozen=True)
@@ -607,19 +608,23 @@ def parse_file(
 ) -> list:
     """Dispatch to the right parser by ``file_type`` (extension).
 
-    Returns a list of ``(page_no, text)`` tuples. For non-paginated
-    formats (txt, docx, md) ``page_no`` is ``None`` and the list has a
-    single entry. Raises :class:`BusinessException` for unsupported types.
+    Returns the production Document IR contract: ``list[DocumentPage]``.
+    Direct format parsers retain their legacy return types for compatibility.
     """
     normalised = (file_type or "").lower().lstrip(".")
     if normalised == "txt":
-        return [(None, parse_txt(file_path))]
-    if normalised == "pdf":
-        return parse_pdf(file_path)
-    if normalised == "docx":
-        return [(None, parse_docx(file_path))]
-    if normalised == "md":
-        return [(None, parse_md(file_path))]
-    if normalised == "pptx":
-        return parse_pptx(file_path)
-    raise BusinessException(message=f"不支持的文件类型: {normalised}")
+        parsed = [ParsedPage(1, [TextBlock(parse_txt(file_path), source_kind="txt")], "txt")]
+    elif normalised == "pdf":
+        parsed = parse_pdf(file_path)
+    elif normalised == "docx":
+        parsed = [ParsedPage(1, [TextBlock(parse_docx(file_path), source_kind="docx")], "docx")]
+    elif normalised == "md":
+        parsed = [ParsedPage(1, [TextBlock(parse_md(file_path), source_kind="md")], "md")]
+    elif normalised == "pptx":
+        parsed = parse_pptx(file_path)
+    else:
+        raise BusinessException(message=f"不支持的文件类型: {normalised}")
+    pages = to_document_pages(parsed)
+    for page in pages:
+        page.parser_version = "layout-v7"
+    return pages

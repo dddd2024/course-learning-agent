@@ -30,6 +30,12 @@ class MaterialChunk(Base, TimestampMixin):
     chunk_index = Column(Integer, nullable=False)
     title = Column(String(255))
     page_no = Column(Integer)
+    # V7 provenance.  ``page_no`` remains the first page for legacy clients.
+    page_start = Column(Integer, nullable=True)
+    page_end = Column(Integer, nullable=True)
+    source_block_ids_json = Column(Text, nullable=True)
+    split_reason = Column(String(40), nullable=True)
+    chunker_version = Column(String(40), nullable=True)
     text = Column(Text, nullable=False)
     raw_text = Column(Text, nullable=True)
     cleaner_version = Column(String(32), nullable=True)

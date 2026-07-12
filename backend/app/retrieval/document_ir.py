@@ -177,6 +177,11 @@ class DocumentPage:
     images: List[DocumentImageAnchor] = field(default_factory=list)
     parser_version: str = "layout-v6"
 
+    @property
+    def text(self) -> str:
+        """Read-only compatibility view for legacy consumers."""
+        return "\n".join(block.text for block in self.blocks if block.text.strip())
+
     def to_dict(self) -> dict:
         return {
             "page_no": self.page_no,

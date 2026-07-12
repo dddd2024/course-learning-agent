@@ -210,12 +210,6 @@ def start_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
     if task.execution_status == "pending":
         task.execution_status = "in_progress"
 
-    # V6-21/V6-22: auto-record target_loaded when the user navigates to
-    # the learn/review resource.  This event is required by verify_task
-    # to confirm the user actually opened the target.
-    if task.task_type in ("learn", "review"):
-        _record_event(db, task, user_id, "target_loaded", {"target_id": task.target_id})
-
     db.commit()
     db.refresh(task)
 
@@ -283,6 +277,8 @@ def record_task_event(db: Session, task_id: int, user_id: int, event_type: str, 
     allowed = {"learn": {"target_loaded", "user_confirmed"}, "review": {"target_loaded", "review_confirmed"}}
     if event_type not in allowed.get(task.task_type, set()):
         raise BusinessException(message="该任务不接受此执行事件", status_code=422)
+    if task.execution_status != "in_progress":
+        raise BusinessException(message="任务未开始，不能记录加载证据", status_code=409)
     spec = ensure_target_spec(db, task)
     payload = {"note": note} if note else {}
     expected = spec.get("material_id") if task.task_type == "learn" else spec.get("knowledge_point_id")
@@ -294,6 +290,15 @@ def record_task_event(db: Session, task_id: int, user_id: int, event_type: str, 
     if expected_version is not None and material_version_id != expected_version:
         raise BusinessException(message="资料版本与任务目标不一致", status_code=409)
     payload.update({"target_id": target_id, "material_version_id": material_version_id})
+    # Reloads must not manufacture additional target_loaded evidence.
+    if event_type == "target_loaded":
+        existing = db.query(TaskExecutionEvent).filter(
+            TaskExecutionEvent.task_id == task.id,
+            TaskExecutionEvent.user_id == user_id,
+            TaskExecutionEvent.event_type == "target_loaded",
+        ).first()
+        if existing:
+            return {"recorded": False, "event_type": event_type}
     _record_event(db, task, user_id, event_type, payload)
     task.last_action_at = datetime.now()
     db.commit()
