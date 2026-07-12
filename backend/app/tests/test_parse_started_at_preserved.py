@@ -51,7 +51,17 @@ def test_parse_with_retry_preserves_parse_started_at(
         # Capture the value visible to the parse function.
         captured["started_at"] = material.parse_started_at
         from app.tests._test_data import DIVERSE_OS_TEXT
-        return [(1, DIVERSE_OS_TEXT * 2)]
+        from app.retrieval.document_ir import DocumentPage, DocumentBlock
+        text = DIVERSE_OS_TEXT * 2
+        block = DocumentBlock(
+            block_id="p1b0",
+            page_no=1,
+            block_type="body",
+            reading_order=0,
+            text=text,
+            source_kind="txt",
+        )
+        return [DocumentPage(page_no=1, blocks=[block])]
 
     status, count = parse_with_retry(
         db_session, material, sample_user.id, parse_fn=fake_parse

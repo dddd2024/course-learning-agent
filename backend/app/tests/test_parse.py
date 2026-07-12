@@ -274,16 +274,17 @@ def test_parse_scanner_failure_rolls_back_and_preserves_old_chunks(
     original_texts = [c["text"][:40] for c in first_chunks.json()["items"]]
     assert len(original_texts) > 0
 
-    # Now monkeypatch build_chunks to produce DIFFERENT text on re-parse,
-    # so we can tell old chunks from new ones even when SQLite reuses rowids.
-    from app.retrieval import chunker as chunker_mod
+    # Now monkeypatch semantic_chunk_document to produce DIFFERENT text on
+    # re-parse, so we can tell old chunks from new ones even when SQLite
+    # reuses rowids.
+    from app.retrieval import semantic_chunker as chunker_mod
 
-    real_build = chunker_mod.build_chunks
+    real_build = chunker_mod.semantic_chunk_document
     call_count = {"n": 0}
 
-    def marker_build(pages, chunk_size=600, overlap=100):
+    def marker_build(pages, **kwargs):
         call_count["n"] += 1
-        chunks = real_build(pages, chunk_size, overlap)
+        chunks = real_build(pages, **kwargs)
         # marker_build is only installed AFTER the first parse, so every
         # call here is a re-parse. Prefix every chunk's text so we can
         # detect whether the new (uncommitted-then-rolled-back) chunks
@@ -293,7 +294,7 @@ def test_parse_scanner_failure_rolls_back_and_preserves_old_chunks(
         return chunks
 
     monkeypatch.setattr(
-        "app.services.material_parser.build_chunks", marker_build
+        "app.services.material_parser.semantic_chunk_document", marker_build
     )
 
     # Scanner raises during the re-parse.
@@ -526,7 +527,7 @@ def test_chunk_images_are_not_duplicated_and_decorative_images_are_opt_in(
 
 
 def test_parse_md_file(tmp_path) -> None:
-    """parse_file on a .md file returns [(None, text)] with full content."""
+    """parse_file on a .md file returns DocumentPage with full content."""
     content = (
         "# 操作系统笔记\n"
         "\n"
@@ -544,7 +545,10 @@ def test_parse_md_file(tmp_path) -> None:
     path.write_text(content, encoding="utf-8")
 
     pages = parse_file(str(path), "md")
-    assert pages == [(None, content)]
+    assert isinstance(pages, list)
+    assert len(pages) == 1
+    assert "操作系统笔记" in pages[0].text
+    assert "进程管理" in pages[0].text
 
 
 def test_parse_pptx_file(tmp_path) -> None:
@@ -576,25 +580,28 @@ def test_parse_pptx_file(tmp_path) -> None:
 
     pages = parse_file(str(path), "pptx")
     assert len(pages) == 2
-    assert pages[0][0] == 1
-    assert "操作系统" in pages[0][1]
-    assert "进程管理" in pages[0][1]
-    assert pages[1][0] == 2
-    assert "内存管理" in pages[1][1]
-    assert "虚拟内存" in pages[1][1]
+    assert pages[0].page_no == 1
+    assert "操作系统" in pages[0].text
+    assert "进程管理" in pages[0].text
+    assert pages[1].page_no == 2
+    assert "内存管理" in pages[1].text
+    assert "虚拟内存" in pages[1].text
 
 
 def test_parse_file_md_dispatch(tmp_path) -> None:
-    """parse_file dispatches by file_type='md' and returns [(None, text)]."""
+    """parse_file dispatches by file_type='md' and returns DocumentPage list."""
     path = tmp_path / "notes.md"
     path.write_text("# 标题\n正文", encoding="utf-8")
 
     pages = parse_file(str(path), "md")
-    assert pages == [(None, "# 标题\n正文")]
+    assert isinstance(pages, list)
+    assert len(pages) == 1
+    assert "# 标题" in pages[0].text
+    assert "正文" in pages[0].text
 
 
 def test_parse_file_pptx_dispatch(tmp_path) -> None:
-    """parse_file dispatches by file_type='pptx' and returns paginated list."""
+    """parse_file dispatches by file_type='pptx' and returns DocumentPage list."""
     try:
         from pptx import Presentation
     except ImportError:
@@ -610,9 +617,8 @@ def test_parse_file_pptx_dispatch(tmp_path) -> None:
     pages = parse_file(str(path), "pptx")
     assert isinstance(pages, list)
     assert len(pages) == 1
-    page_no, text = pages[0]
-    assert page_no == 1
-    assert "封面" in text
+    assert pages[0].page_no == 1
+    assert "封面" in pages[0].text
 
 
 def test_parse_file_unsupported_still_raises(tmp_path) -> None:

@@ -17,6 +17,7 @@ import {
   type QuizResult,
   type QuizResultItem,
   type QuizStatus,
+  type QuestionType,
   type WeakPoint,
 } from '../api/quiz'
 import { verifyTask } from '../api/plan'
@@ -284,7 +285,7 @@ async function handleGenerate() {
         genForm.knowledge_point_ids.length > 0 ? genForm.knowledge_point_ids : undefined,
         genForm.question_count,
         {
-          question_types: genForm.question_types.length > 0 ? genForm.question_types : undefined,
+          question_types: genForm.question_types.length > 0 ? genForm.question_types as QuestionType[] : undefined,
           difficulty_distribution: {
             easy: genForm.difficulty_easy,
             medium: genForm.difficulty_medium,

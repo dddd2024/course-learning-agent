@@ -5,7 +5,7 @@ import pytest
 
 from app.core.exceptions import BusinessException
 from app.models.plan import StudyGoal, StudyTask
-from app.services.task_execution_service import record_task_event
+from app.services.task_execution_service import record_task_event, start_task
 
 
 def test_review_target_loaded_rejects_another_knowledge_point(db_session, sample_user, sample_course):
@@ -14,6 +14,8 @@ def test_review_target_loaded_rejects_another_knowledge_point(db_session, sample
     task = StudyTask(goal_id=goal.id, course_id=sample_course.id, title="r", task_type="review", target_type="knowledge_point", target_id=41,
                      target_spec_json=json.dumps({"knowledge_point_id": 41}))
     db_session.add(task); db_session.commit()
+    # V7: task must be started before recording events
+    start_task(db_session, task.id, sample_user.id)
     with pytest.raises(BusinessException) as error:
         record_task_event(db_session, task.id, sample_user.id, "target_loaded", 42)
     assert error.value.status_code == 409

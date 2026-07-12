@@ -34,5 +34,8 @@ def test_verify_rejects_client_score_and_reads_submitted_bound_quiz(db_session, 
     db_session.add(quiz); db_session.flush()
     db_session.add(QuizItem(quiz_id=quiz.id, question_type="choice", question_text="q", answer="A", order_index=0))
     task = _task(db_session, sample_user, sample_course, "quiz", "quiz", quiz.id, {"pass_score": 60})
+    # V7: task must be started before verification
+    from app.services.task_execution_service import start_task
+    start_task(db_session, task.id, sample_user.id)
     assert verify_task(db_session, task.id, sample_user.id, confirmation=True)["verified"] is True
 

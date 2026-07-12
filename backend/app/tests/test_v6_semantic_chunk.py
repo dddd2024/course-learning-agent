@@ -7,7 +7,7 @@ provenance tracking.
 from app.retrieval.document_ir import DocumentBlock, DocumentPage
 from app.retrieval.semantic_chunker import semantic_chunk
 
-CHUNKER_VERSION = "semantic-v6"
+CHUNKER_VERSION = "semantic-v7"
 
 
 # ---------------------------------------------------------------------------

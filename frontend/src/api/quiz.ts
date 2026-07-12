@@ -45,9 +45,9 @@ export interface QuizSubmitPayload {
 }
 
 export interface QuizCreateConstraints {
-  question_types: QuestionType[]
-  difficulty_distribution: { easy: number; medium: number; hard: number }
-  pass_score: number
+  question_types?: QuestionType[]
+  difficulty_distribution?: { easy: number; medium: number; hard: number }
+  pass_score?: number
 }
 
 export interface RubricFeedbackEntry {
