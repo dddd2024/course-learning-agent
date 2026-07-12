@@ -13,6 +13,7 @@ from app.models.citation import Citation
 from app.models.knowledge_point import KnowledgePoint
 from app.models.quiz import QuizItem
 from app.models.security_finding import MaterialSecurityFinding
+from app.retrieval.search import remove_from_fts_index
 
 
 def delete_material(db: Session, material: Material) -> dict[str, int]:
@@ -23,6 +24,10 @@ def delete_material(db: Session, material: Material) -> dict[str, int]:
         folder.replace(staged)
     try:
         chunk_ids = [row[0] for row in db.query(MaterialChunk.id).filter(MaterialChunk.material_id == material.id).all()]
+        # Remove retrieval rows before deleting ORM rows; the operation is
+        # idempotent and prevents deleted evidence from surviving in FTS.
+        if chunk_ids:
+            remove_from_fts_index(db, chunk_ids)
         counts = {"citations": 0, "knowledge_point_sources": 0, "quiz_evidence": 0}
         if chunk_ids:
             counts["citations"] = db.query(Citation).filter(Citation.chunk_id.in_(chunk_ids)).delete(synchronize_session=False)
