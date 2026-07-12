@@ -233,6 +233,7 @@ def test_create_quiz_strict_contract_never_persists_partial_quiz(
     created = client.post("/api/v1/quizzes", json=payload, headers=headers)
     assert created.status_code == 200, created.text
     assert created.json()["question_count"] == 3
+    assert created.json()["pass_score"] == 75
 
     impossible = client.post(
         "/api/v1/quizzes",

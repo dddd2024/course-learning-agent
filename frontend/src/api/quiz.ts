@@ -21,6 +21,7 @@ export interface Quiz {
   course_id: number
   title: string
   question_count: number
+  pass_score: number
   status: QuizStatus
   score: number | null
   created_at: string

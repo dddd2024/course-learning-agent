@@ -104,6 +104,7 @@ def _quiz_to_response(
         course_id=quiz.course_id,
         title=quiz.title,
         question_count=quiz.question_count,
+        pass_score=quiz.pass_score,
         status=quiz.status,
         score=quiz.score,
         created_at=quiz.created_at,
@@ -450,6 +451,7 @@ def create_quiz(
         course_id=payload.course_id,
         title=quiz_output.get("title", f"{course.name} 测验"),
         question_count=payload.question_count if strict_contract else len(items),
+        pass_score=payload.pass_score,
         status="draft",
     )
     db.add(quiz)

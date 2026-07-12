@@ -42,6 +42,9 @@ class Quiz(Base, TimestampMixin):
     )
     title = Column(String(255), nullable=False)
     question_count = Column(Integer, nullable=False, default=0)
+    # Required percentage to pass this generated assessment.  It is durable
+    # so the creation contract remains auditable after the task is submitted.
+    pass_score = Column(Integer, nullable=False, default=60)
     # Total score, filled on submit (number of correct items).
     score = Column(Integer, nullable=True)
     # draft / submitted

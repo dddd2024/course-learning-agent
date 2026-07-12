@@ -118,6 +118,7 @@ class QuizOut(BaseModel):
     course_id: int
     title: str
     question_count: int
+    pass_score: int = 60
     status: str
     score: Optional[int] = None
     created_at: Optional[datetime] = None

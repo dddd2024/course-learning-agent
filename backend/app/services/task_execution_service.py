@@ -116,6 +116,7 @@ def _create_quiz_for_task(
         course_id=task.course_id,
         title=quiz_output.get("title", f"{course.name} 测验"),
         question_count=len(items),
+        pass_score=int(spec.get("pass_score", _DEFAULT_PASS_SCORE)),
         status="draft",
     )
     db.add(quiz)
