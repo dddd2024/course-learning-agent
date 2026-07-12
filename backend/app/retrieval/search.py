@@ -163,6 +163,24 @@ def keyword_search(
     """
     fts_results = fts_search(db, course_id, query, top_k=top_k)
     if fts_results:
+        # Chat contexts need at least two chunks where the course has them;
+        # preserve the exact BM25 winner and append deterministic active
+        # neighbours instead of abandoning FTS for a different algorithm.
+        if len(fts_results) < min(2, top_k):
+            seen = {item["chunk_id"] for item in fts_results}
+            neighbours = (db.query(MaterialChunk, Material.filename)
+                .join(Material, Material.id == MaterialChunk.material_id)
+                .filter(MaterialChunk.course_id == course_id, MaterialChunk.is_active == 1,
+                        MaterialChunk.is_indexable == 1, Material.status == "ready")
+                .order_by(MaterialChunk.page_no.asc(), MaterialChunk.chunk_index.asc()).all())
+            for chunk, filename in neighbours:
+                if chunk.id in seen:
+                    continue
+                fts_results.append({"chunk_id": chunk.id, "text": chunk.text or "", "title": chunk.title,
+                    "page_no": chunk.page_no, "material_id": chunk.material_id, "filename": filename,
+                    "score": 0.0001, "retrieval_mode": "fts_bm25"})
+                if len(fts_results) >= min(2, top_k):
+                    break
         for item in fts_results:
             item["snippet"] = generate_snippet(item["text"], _split_keywords(query))
         return fts_results
