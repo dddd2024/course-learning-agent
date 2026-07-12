@@ -16,7 +16,10 @@ def test_pdf_layout_parser_preserves_page_order_and_footer_cleaning(tmp_path):
     pages = parse_pdf(str(path))
     cleaned = clean_pages([page.text for page in pages])
     assert [page.page_no for page in pages] == [1, 2]
-    assert pages[0].parser_version == "pypdf-legacy"
+    # CI installs PyMuPDF and exercises layout-v5; constrained local
+    # environments exercise the documented pypdf fallback.  Both must keep
+    # the same page/content contract.
+    assert pages[0].parser_version in {"layout-v5", "pypdf-legacy"}
     assert "TCP/IP" in cleaned[0].text
     assert clean_pages(["课程页眉\n正文\n1", "课程页眉\n第二页\n2"])[0].text == "正文"
 
