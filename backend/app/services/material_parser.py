@@ -33,6 +33,7 @@ from app.core.config import settings
 from app.core.timezone import utc_now
 from app.models.material import Material, MaterialVersion
 from app.models.material_chunk import MaterialChunk
+from app.models.material_page import MaterialPage
 from app.models.security_finding import MaterialSecurityFinding
 from app.retrieval.chunker import build_chunks, clean_keyword_text, clean_material_text
 from app.retrieval.parsers import parse_file
@@ -142,6 +143,13 @@ def parse_with_retry(
             )
             db.add(version_row)
             db.flush()
+            # Preserve page/block provenance before semantic chunks are built.
+            db.query(MaterialPage).filter(MaterialPage.material_id == material_id).delete(synchronize_session=False)
+            for page in pages:
+                if hasattr(page, "page_no"):
+                    raw = page.text
+                    decisions = [{"raw_text": line, "decision": "kept", "reason": "layout_block"} for line in raw.splitlines()]
+                    db.add(MaterialPage(material_id=material_id, material_version_id=version_row.id, page_no=page.page_no or 1, page_type=page.source_kind, parser_version=page.parser_version, raw_text=raw, clean_text=clean_material_text(raw), blocks_json=json.dumps([block.__dict__ for block in page.blocks], ensure_ascii=False), decisions_json=json.dumps(decisions, ensure_ascii=False)))
             db.query(MaterialChunk).filter(MaterialChunk.material_id == material_id).update(
                 {MaterialChunk.is_active: 0}, synchronize_session=False
             )

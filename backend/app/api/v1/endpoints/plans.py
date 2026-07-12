@@ -74,6 +74,7 @@ from app.services.task_execution_service import (
     verify_task as verify_task_service,
 )
 from app.services.task_target_resolver import resolve_target
+from app.services.plan_state_service import todo_update_allowed
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -940,6 +941,10 @@ def update_todo(
 
     update_data = payload.model_dump(exclude_unset=True)
     if "status" in update_data and update_data["status"] is not None:
+        try:
+            todo_update_allowed(todo, update_data["status"])
+        except ValueError as exc:
+            raise BusinessException(message=str(exc), status_code=409)
         todo.status = update_data["status"]
         if update_data["status"] == "completed":
             todo.completed_at = datetime.now()

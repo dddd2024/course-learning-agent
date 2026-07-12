@@ -38,6 +38,7 @@ MIGRATION_MODULES = [
     "007_plan_targets",
     "008_orphan_goals",
     "009_task_execution_events",
+    "010_v5_pages",
 ]
 
 

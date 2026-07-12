@@ -275,7 +275,11 @@ def build_chunks(
     """
     all_chunks: List[dict] = []
     chunk_index = 0
-    for page_no, text in pages:
+    for page in pages:
+        if hasattr(page, "page_no") and hasattr(page, "text"):
+            page_no, text = page.page_no, page.text
+        else:
+            page_no, text = page
         page_chunks = chunk_text(
             text, chunk_size=chunk_size, overlap=overlap
         )

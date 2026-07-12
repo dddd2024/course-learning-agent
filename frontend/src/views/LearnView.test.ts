@@ -90,7 +90,7 @@ describe('LearnView', () => {
     mockRoute.query = {}
   })
 
-  it('filtered chunks count displayed in filter hint', async () => {
+  it('keeps backend-provided short and cited chunks instead of UI filtering them', async () => {
     const { listMaterials, getChunks } = await import('../api/material')
     vi.mocked(listMaterials).mockResolvedValue({ data: { items: mockMaterials, total: 1 } } as any)
 
@@ -114,10 +114,10 @@ describe('LearnView', () => {
 
     const html = wrapper.html()
 
-    // Filter hint should show filteredCount = 1
-    expect(html).toContain('已自动过滤')
-    expect(html).toContain('1')
-    expect(html).toContain('无关片段')
+    // Cleaning is a backend contract: a short page is still navigable and
+    // may be an evidence source, so the UI must not hide it heuristically.
+    expect(html).toContain('短')
+    expect(html).not.toContain('已自动过滤')
   })
 
   it('decorative image toggle works and reloads chunks', async () => {

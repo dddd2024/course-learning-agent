@@ -21,6 +21,7 @@ from app.models.material import Material
 from app.models.user import User
 from app.schemas.material import MaterialListResponse, MaterialResponse
 from app.services.error_logger import log_error
+from app.services.material_delete_service import delete_material
 
 router = APIRouter()
 
@@ -271,3 +272,11 @@ def list_materials(
         items=[_material_response(m) for m in items],
         total=len(items),
     )
+
+
+@router.delete("/materials/{material_id}", status_code=204)
+def delete_owned_material(material_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> None:
+    material = db.query(Material).filter(Material.id == material_id, Material.user_id == current_user.id).first()
+    if material is None:
+        raise NotFoundException(message="资料不存在")
+    delete_material(db, material)

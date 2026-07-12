@@ -12,7 +12,13 @@ from app.models.material import Material
 
 
 def _tokens(value: str) -> set[str]:
-    return {token.lower() for token in re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]{2,}", value or "")}
+    text = value or ""
+    tokens = {token.lower() for token in re.findall(r"[A-Za-z0-9_]+", text)}
+    cjk = "".join(re.findall(r"[\u4e00-\u9fff]", text))
+    # Chinese has no word separators; overlapping n-grams make “进程同步与
+    # 信号量” and “信号量机制” share a meaningful, explainable signal.
+    tokens.update(cjk[i:i + width] for width in (2, 3, 4) for i in range(max(0, len(cjk) - width + 1)))
+    return {token for token in tokens if token}
 
 
 def _choose(rows: list[Any], title: str, used_ids: set[int]) -> Any | None:
@@ -27,7 +33,13 @@ def _choose(rows: list[Any], title: str, used_ids: set[int]) -> Any | None:
             row.id,
         ),
     )
-    return ranked[0]
+    candidate = ranked[0]
+    candidate_tokens = _tokens(getattr(candidate, "title", "") or getattr(candidate, "filename", ""))
+    # Do not silently choose the first row when the task text has no
+    # meaningful overlap with the proposed target.
+    if wanted and not (wanted & candidate_tokens):
+        return None
+    return candidate
 
 
 def resolve_target(
@@ -42,12 +54,13 @@ def resolve_target(
             used_ids,
         )
         if material is None:
-            return "material", None, {"material_id": None, "completion_mode": "opened_and_confirmed", "remediation": "请先上传并解析课程资料"}
+            return "material", None, {"material_id": None, "resolution_status": "unresolved", "completion_mode": "loaded_and_confirmed", "remediation": "请先上传并解析课程资料或选择目标"}
         return "material", material.id, {
             "material_id": material.id,
             "material_version_id": material.active_version_id,
             "chunk_range": [],
-            "completion_mode": "opened_and_confirmed",
+            "resolution_status": "resolved",
+            "completion_mode": "loaded_and_confirmed",
         }
     if task_type == "review":
         point = _choose(
@@ -56,7 +69,7 @@ def resolve_target(
             used_ids,
         )
         if point is None:
-            return "knowledge_point", None, {"knowledge_point_id": None, "source_chunk_ids": [], "review_mode": "viewed_and_confirmed", "remediation": "请先生成知识点"}
+            return "knowledge_point", None, {"knowledge_point_id": None, "source_chunk_ids": [], "resolution_status": "unresolved", "review_mode": "loaded_and_confirmed", "remediation": "请先生成知识点或选择目标"}
         try:
             source_ids = json.loads(point.source_chunk_ids or "[]")
         except (json.JSONDecodeError, TypeError):
@@ -64,7 +77,8 @@ def resolve_target(
         return "knowledge_point", point.id, {
             "knowledge_point_id": point.id,
             "source_chunk_ids": source_ids,
-            "review_mode": "viewed_and_confirmed",
+            "resolution_status": "resolved",
+            "review_mode": "loaded_and_confirmed",
         }
     return "quiz", None, {
         "knowledge_point_ids": [],
