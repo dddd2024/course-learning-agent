@@ -254,7 +254,13 @@ def list_chunks(
 def list_material_pages(material_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
     """Reader contract: page catalogue plus raw/clean text and decisions."""
     material = _get_owned_material(db, material_id, current_user.id)
-    rows = db.query(MaterialPage).filter(MaterialPage.material_id == material.id).order_by(MaterialPage.page_no).all()
+    query = db.query(MaterialPage).filter(MaterialPage.material_id == material.id)
+    # The reader always opens the active material version.  Historical pages
+    # stay intact for evidence and old quiz citations but must never be mixed
+    # into the current page catalogue after a successful re-parse.
+    if material.active_version_id is not None:
+        query = query.filter(MaterialPage.material_version_id == material.active_version_id)
+    rows = query.order_by(MaterialPage.page_no).all()
     return {"items": [{"id": row.id, "page_no": row.page_no, "page_type": row.page_type, "parser_version": row.parser_version, "raw_text": row.raw_text or "", "clean_text": row.clean_text or "", "removed_lines": row.decisions_json or "[]", "blocks": row.blocks_json or "[]"} for row in rows]}
 
 

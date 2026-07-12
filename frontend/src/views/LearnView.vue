@@ -201,16 +201,19 @@
           </div>
 
           <!-- Document chunks -->
-          <div v-if="readerMode !== 'page'" class="doc-chunks" @mouseup="handleSelection">
+          <!-- Raw mode deliberately renders only stored page text. -->
+          <div v-if="readerMode === 'raw'" class="doc-chunks" @mouseup="handleSelection">
             <div v-for="page in materialPages" :id="`page-${page.page_no}`" :key="`reader-${page.id}`" class="doc-chunk">
               <div class="doc-chunk-head"><span class="doc-chunk-page">第 {{ page.page_no }} 页</span></div>
               <div class="doc-chunk-text">{{ readerMode === 'raw' ? page.raw_text : page.clean_text }}</div>
             </div>
           </div>
-          <div v-else class="doc-chunks">
+          <!-- Native-file preview is intentionally separate from extracted text. -->
+          <div v-else-if="readerMode === 'page'" class="doc-chunks">
             <iframe v-if="selectedMaterial?.file_url" :src="selectedMaterial.file_url" title="资料原页预览" class="material-page-preview" />
           </div>
-          <div v-if="readerMode === 'clean'" class="doc-chunks" @mouseup="handleSelection">
+          <!-- Clean mode renders semantic chunks once; do not duplicate page.clean_text. -->
+          <div v-else class="doc-chunks" @mouseup="handleSelection">
             <div
               v-for="(chunk, idx) in chunks"
               :key="chunk.id"
