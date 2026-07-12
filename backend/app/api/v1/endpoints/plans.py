@@ -44,6 +44,8 @@ from app.schemas.multi_plan import (
     MultiPlanHistoryItem,
     MultiPlanListItem,
     MultiPlanReschedule,
+    MultiPlanRescheduleDiff,
+    MultiPlanRescheduleResponse,
     MultiPlanResponse,
     MultiPlanTaskItem,
     MultiPlanUpdate,
@@ -954,6 +956,8 @@ def create_multi_plan(
             scheduled_date=None,
             estimate_minutes=item["estimate_minutes"],
             unscheduled_reason=item["reason"],
+            title_snapshot=item.get("title", ""),
+            generation=parent.generation_version,
         ))
     db.commit()
 
@@ -1019,13 +1023,18 @@ def _load_multi_plan_detail(
                 )
             )
         else:
-            # Unscheduled task — include with empty title/status
+            # V7.4-04: Filter unscheduled tasks by generation too.
+            pt_gen = pt.generation if pt.generation is not None else multi_plan.generation_version
+            if pt_gen != multi_plan.generation_version:
+                continue
+            # V7.4-04: Use title_snapshot instead of placeholder text.
+            title = pt.title_snapshot or "（未排程任务）"
             task_items.append(
                 MultiPlanTaskItem(
                     task_id=None,
                     course_id=pt.course_id,
                     course_name=course_name_by_id.get(pt.course_id, ""),
-                    title="（未排程任务）",
+                    title=title,
                     scheduled_date=pt.scheduled_date,
                     estimate_minutes=pt.estimate_minutes,
                     unscheduled_reason=pt.unscheduled_reason,
@@ -1108,15 +1117,17 @@ def get_multi_plan_history(
     result: list[MultiPlanHistoryItem] = []
     for pt in plan_tasks:
         task = task_by_id.get(pt.task_id) if pt.task_id else None
+        # V7.4-04: Use title_snapshot for unscheduled tasks.
+        title = task.title if task else (pt.title_snapshot or "（未排程任务）")
         result.append(MultiPlanHistoryItem(
             task_id=pt.task_id,
             course_id=pt.course_id,
             course_name=course_name_by_id.get(pt.course_id, ""),
-            title=task.title if task else "（未排程任务）",
+            title=title,
             scheduled_date=pt.scheduled_date,
             estimate_minutes=pt.estimate_minutes,
             task_status=task.status if task else "unscheduled",
-            generation=task.generation if task else None,
+            generation=task.generation if task else pt.generation,
             unscheduled_reason=pt.unscheduled_reason,
         ))
     return result
@@ -1141,10 +1152,16 @@ def patch_multi_plan(
 @router.delete("/multi/{multi_plan_id}", status_code=204)
 def delete_multi_plan(
     multi_plan_id: int,
+    force: bool = Query(False, description="Bypass execution history check"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
-    """Delete a multi-course plan and all associated tasks/todos/goals."""
+    """Delete a multi-course plan and all associated tasks/todos/goals.
+
+    V7.4-04: Safe delete — rejects (409) when any linked task has
+    execution history (started, completed, or has events). Pass
+    ``?force=true`` to bypass this check.
+    """
     plan = _get_owned_multi_plan(db, multi_plan_id, current_user.id)
 
     # Collect all StudyTask ids linked to this multi-plan.
@@ -1154,6 +1171,25 @@ def delete_multi_plan(
         .all()
     )
     task_ids = [pt.task_id for pt in plan_tasks if pt.task_id is not None]
+
+    # V7.4-04: Safe delete — check execution history before deleting.
+    if not force and task_ids:
+        tasks_with_history = (
+            db.query(StudyTask)
+            .filter(
+                StudyTask.id.in_(task_ids),
+                StudyTask.execution_status != "pending",
+            )
+            .all()
+        )
+        if tasks_with_history:
+            raise BusinessException(
+                message=(
+                    f"无法删除：{len(tasks_with_history)} 个任务已有执行记录。"
+                    "请先完成或取消这些任务，或使用 force=true 强制删除。"
+                ),
+                status_code=409,
+            )
 
     # Collect StudyGoal ids from the tasks (to delete the per-course goals).
     goal_ids: set[int] = set()
@@ -1186,23 +1222,24 @@ def delete_multi_plan(
     db.commit()
 
 
-@router.post("/multi/{multi_plan_id}/reschedule", response_model=MultiPlanResponse)
+@router.post("/multi/{multi_plan_id}/reschedule", response_model=MultiPlanRescheduleResponse)
 def reschedule_multi_plan(
     multi_plan_id: int,
     payload: MultiPlanReschedule,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> MultiPlanResponse:
+) -> MultiPlanRescheduleResponse:
     """Recompute the schedule for an existing multi-plan with new constraints.
 
     Reuses the original courses and deadlines, deletes the old
     tasks/todos/goals, runs ``schedule_multi_courses`` with the new
     ``daily_minutes``, and persists the new schedule.
+
+    V7.4-04: Returns a diff showing added/removed/changed tasks.
     """
     plan = _get_owned_multi_plan(db, multi_plan_id, current_user.id)
 
-    # Recover the original course list (course_id + deadline) from the
-    # StudyGoals created by the initial POST.
+    # Snapshot old schedule for diff calculation.
     old_plan_tasks = (
         db.query(MultiCoursePlanTask)
         .filter(MultiCoursePlanTask.multi_plan_id == plan.id)
@@ -1217,6 +1254,25 @@ def reschedule_multi_plan(
             .filter(StudyTask.id.in_(old_task_ids))
             .all()
         }
+
+    # V7.4-04: Build old schedule snapshot for diff.
+    old_task_by_id: dict[int, StudyTask] = {}
+    if old_task_ids:
+        for t in db.query(StudyTask).filter(StudyTask.id.in_(old_task_ids)).all():
+            old_task_by_id[t.id] = t
+    old_course_names = _load_course_names(
+        db, {pt.course_id for pt in old_plan_tasks}
+    )
+    old_items: list[dict] = []
+    for pt in old_plan_tasks:
+        task = old_task_by_id.get(pt.task_id) if pt.task_id else None
+        old_items.append({
+            "title": task.title if task else (pt.title_snapshot or ""),
+            "course_name": old_course_names.get(pt.course_id, ""),
+            "scheduled_date": str(pt.scheduled_date) if pt.scheduled_date else None,
+            "estimate_minutes": pt.estimate_minutes,
+            "unscheduled": pt.task_id is None,
+        })
 
     # Build courses_input from the existing goals' deadlines.
     course_ids = list(dict.fromkeys(pt.course_id for pt in old_plan_tasks))
@@ -1384,14 +1440,49 @@ def reschedule_multi_plan(
             scheduled_date=None,
             estimate_minutes=item["estimate_minutes"],
             unscheduled_reason=item["reason"],
+            title_snapshot=item.get("title", ""),
+            generation=plan.generation_version,
         ))
     db.commit()
 
-    return MultiPlanResponse(
+    # V7.4-04: Build diff between old and new schedule.
+    new_items_set = {
+        (item["title"], item.get("course_name", ""), str(item["scheduled_date"]))
+        for item in schedule_items_raw
+    }
+    old_items_set = {
+        (item["title"], item["course_name"], item["scheduled_date"] or "")
+        for item in old_items
+    }
+    added_titles = new_items_set - old_items_set
+    removed_titles = old_items_set - new_items_set
+
+    diff = MultiPlanRescheduleDiff(
+        added=[
+            MultiScheduleItem(
+                scheduled_date=item["scheduled_date"],
+                course_name=item.get("course_name", course_name_by_id.get(item["course_id"], "")),
+                title=item["title"],
+                estimate_minutes=item["estimate_minutes"],
+                start_time=item.get("start_time"),
+                end_time=item.get("end_time"),
+            )
+            for item in schedule_items_raw
+            if (item["title"], item.get("course_name", ""), str(item["scheduled_date"])) in added_titles
+        ],
+        removed=[
+            item for item in old_items
+            if (item["title"], item["course_name"], item["scheduled_date"] or "") in removed_titles
+        ],
+        changed=[],
+    )
+
+    return MultiPlanRescheduleResponse(
         multi_plan_id=plan.id,
         schedule=items,
         overflow_warnings=overflow_warnings,
         unscheduled_tasks=unscheduled_tasks,
+        diff=diff,
     )
 
 

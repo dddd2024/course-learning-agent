@@ -48,6 +48,7 @@ MIGRATION_MODULES = [
     "017_v7_quiz_pass_score",
     "018_v7_4_page_unique",
     "019_v7_4_chunk_fragments",
+    "020_v7_4_plan_task_snapshot",
 ]
 
 

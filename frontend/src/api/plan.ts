@@ -201,6 +201,36 @@ export function createMultiPlan(payload: MultiPlanPayload): AxiosPromise<MultiPl
 
 // V6-41: Multi-plan lifecycle types & API functions
 
+export interface MultiPlanListItem {
+  id: number
+  title: string
+  status: string
+  deadline: string
+  daily_minutes: number
+  generation_version: number
+  task_count: number
+}
+
+export function listMultiPlans(status?: string): AxiosPromise<MultiPlanListItem[]> {
+  return request.get('/plans/multi', { params: status ? { status } : undefined })
+}
+
+export function getMultiPlanHistory(id: number): AxiosPromise<MultiPlanHistoryItem[]> {
+  return request.get(`/plans/multi/${id}/history`)
+}
+
+export interface MultiPlanHistoryItem {
+  task_id: number | null
+  course_id: number
+  course_name: string
+  title: string
+  scheduled_date: string | null
+  estimate_minutes: number
+  task_status: string | null
+  generation: number | null
+  unscheduled_reason: string | null
+}
+
 export interface MultiPlanTaskItem {
   task_id: number | null
   course_id: number

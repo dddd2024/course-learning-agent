@@ -7,10 +7,13 @@ import {
   createMultiPlan,
   deleteMultiPlan,
   getMultiPlan,
+  getMultiPlanHistory,
+  listMultiPlans,
   patchMultiPlan,
   rescheduleMultiPlan,
   type MultiPlanConstraints,
   type MultiPlanDetail,
+  type MultiPlanListItem,
   type MultiPlanPayload,
   type MultiPlanResult,
   type MultiPlanScheduleItem,
@@ -40,12 +43,27 @@ const result = ref<MultiPlanResult | null>(null)
 const schedule = ref<MultiPlanScheduleItem[]>([])
 
 // V6-41: Multi-plan lifecycle state
-const mode = ref<'create' | 'detail'>('create')
-const multiPlanList = ref<Array<{ id: number; title: string }>>([])
+const mode = ref<'create' | 'detail' | 'history'>('create')
+const multiPlanList = ref<MultiPlanListItem[]>([])
 const selectedMultiPlanId = ref<number | null>(null)
 const multiPlanDetail = ref<MultiPlanDetail | null>(null)
 const detailLoading = ref(false)
 const statusPatching = ref(false)
+const listLoading = ref(false)
+
+// History view state
+const historyItems = ref<Array<{
+  task_id: number | null
+  course_id: number
+  course_name: string
+  title: string
+  scheduled_date: string | null
+  estimate_minutes: number
+  task_status: string | null
+  generation: number | null
+  unscheduled_reason: string | null
+}>>([])
+const historyLoading = ref(false)
 
 // Reschedule dialog state
 const rescheduleDialogVisible = ref(false)
@@ -291,9 +309,9 @@ async function handleGenerate() {
     } else {
       ElMessage.success(`已生成综合计划，共 ${data.schedule.length} 条日程`)
     }
-    // V6-41: If a multi_plan_id was returned, load the detail view
+    // V7.4-04: Refresh list from API after creating a new plan
     if (data.multi_plan_id) {
-      addMultiPlanToList(data.multi_plan_id, `多课程计划 #${data.multi_plan_id}`)
+      await fetchMultiPlanList()
       await loadMultiPlanDetail(data.multi_plan_id)
     }
   } catch (e) {
@@ -317,54 +335,19 @@ function goBack() {
 }
 
 // ---------------------------------------------------------------------------
-// V6-41: Multi-plan lifecycle helpers
+// V7.4-04: Multi-plan lifecycle helpers (API-based, not sessionStorage)
 // ---------------------------------------------------------------------------
 
-const MULTI_PLAN_LIST_KEY = 'multiPlan:list'
-const MULTI_PLAN_SELECTED_KEY = 'multiPlan:selectedId'
-
-function loadMultiPlanList(): Array<{ id: number; title: string }> {
+async function fetchMultiPlanList() {
+  listLoading.value = true
   try {
-    const raw = sessionStorage.getItem(MULTI_PLAN_LIST_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
+    const { data } = await listMultiPlans()
+    multiPlanList.value = data
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '获取多课程计划列表失败'))
+  } finally {
+    listLoading.value = false
   }
-}
-
-function saveMultiPlanList(list: Array<{ id: number; title: string }>) {
-  sessionStorage.setItem(MULTI_PLAN_LIST_KEY, JSON.stringify(list))
-}
-
-function addMultiPlanToList(id: number, title: string) {
-  const list = loadMultiPlanList()
-  if (!list.some((p) => p.id === id)) {
-    list.push({ id, title })
-    saveMultiPlanList(list)
-  }
-  multiPlanList.value = list
-}
-
-function removeMultiPlanFromList(id: number) {
-  const list = loadMultiPlanList().filter((p) => p.id !== id)
-  saveMultiPlanList(list)
-  multiPlanList.value = list
-}
-
-function saveSelectedMultiPlanId(id: number | null) {
-  if (id !== null) {
-    sessionStorage.setItem(MULTI_PLAN_SELECTED_KEY, String(id))
-  } else {
-    sessionStorage.removeItem(MULTI_PLAN_SELECTED_KEY)
-  }
-}
-
-function loadSelectedMultiPlanId(): number | null {
-  const raw = sessionStorage.getItem(MULTI_PLAN_SELECTED_KEY)
-  const id = Number(raw)
-  return Number.isInteger(id) && id > 0 ? id : null
 }
 
 function multiPlanStatusLabel(status: string): string {
@@ -427,20 +410,10 @@ async function loadMultiPlanDetail(id: number) {
     applyMultiPlanDetail(data)
     selectedMultiPlanId.value = id
     mode.value = 'detail'
-    saveSelectedMultiPlanId(id)
-    // Keep the title in the selector list up-to-date
-    const item = multiPlanList.value.find((p) => p.id === id)
-    if (item && item.title !== data.title) {
-      item.title = data.title
-      saveMultiPlanList(multiPlanList.value)
-    } else if (!item) {
-      addMultiPlanToList(id, data.title)
-    }
   } catch (err) {
     ElMessage.error(parseApiError(err, '读取多课程计划失败'))
-    // If the plan no longer exists, clean up the stale reference
-    removeMultiPlanFromList(id)
-    saveSelectedMultiPlanId(null)
+    // If the plan no longer exists, refresh the list
+    await fetchMultiPlanList()
     selectedMultiPlanId.value = null
     mode.value = 'create'
   } finally {
@@ -448,10 +421,22 @@ async function loadMultiPlanDetail(id: number) {
   }
 }
 
+async function loadMultiPlanHistory(id: number) {
+  historyLoading.value = true
+  try {
+    const { data } = await getMultiPlanHistory(id)
+    historyItems.value = data
+    mode.value = 'history'
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '获取历史记录失败'))
+  } finally {
+    historyLoading.value = false
+  }
+}
+
 async function handleMultiPlanSelect(id: number | null) {
   if (id === null) {
     mode.value = 'create'
-    saveSelectedMultiPlanId(null)
     return
   }
   await loadMultiPlanDetail(id)
@@ -463,7 +448,6 @@ function startNewMultiPlan() {
   schedule.value = []
   multiPlanDetail.value = null
   selectedMultiPlanId.value = null
-  saveSelectedMultiPlanId(null)
   tableRef.value?.clearSelection()
   for (const id of Object.keys(courseConfigs)) {
     delete courseConfigs[Number(id)]
@@ -489,8 +473,7 @@ async function handleDeleteMultiPlan() {
   try {
     await deleteMultiPlan(planId)
     ElMessage.success('多课程计划已删除')
-    removeMultiPlanFromList(planId)
-    saveSelectedMultiPlanId(null)
+    await fetchMultiPlanList()
     selectedMultiPlanId.value = null
     multiPlanDetail.value = null
     result.value = null
@@ -549,12 +532,8 @@ async function handleReschedule() {
 
 onMounted(async () => {
   await fetchCourses()
-  // V6-41: Restore multi-plan session from sessionStorage
-  multiPlanList.value = loadMultiPlanList()
-  const savedId = loadSelectedMultiPlanId()
-  if (savedId !== null && multiPlanList.value.some((p) => p.id === savedId)) {
-    await loadMultiPlanDetail(savedId)
-  }
+  // V7.4-04: Load multi-plan list from backend API instead of sessionStorage
+  await fetchMultiPlanList()
 })
 </script>
 
@@ -635,6 +614,13 @@ onMounted(async () => {
               @click="openRescheduleDialog"
             >
               重新调度
+            </el-button>
+            <el-button
+              size="small"
+              plain
+              @click="loadMultiPlanHistory(multiPlanDetail.id)"
+            >
+              历史记录
             </el-button>
             <el-button
               type="danger"
@@ -1046,6 +1032,51 @@ onMounted(async () => {
           </el-card>
         </template>
       </template>
+    </template>
+
+    <!-- V7.4-04: History view -->
+    <template v-if="mode === 'history'">
+      <el-card class="section-card" shadow="never" v-loading="historyLoading">
+        <template #header>
+          <div class="section-title-bar">
+            <span class="section-title">历史记录</span>
+            <el-button size="small" @click="loadMultiPlanDetail(selectedMultiPlanId!)">返回详情</el-button>
+          </div>
+        </template>
+        <el-table :data="historyItems" stripe empty-text="暂无历史记录">
+          <el-table-column label="课程" min-width="120">
+            <template #default="{ row }">
+              <span
+                class="course-tag"
+                :style="{ backgroundColor: getCourseColor(row.course_name) }"
+              >
+                {{ row.course_name }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="title" label="任务标题" min-width="200" show-overflow-tooltip />
+          <el-table-column label="日期" width="130">
+            <template #default="{ row }">
+              <span v-if="row.scheduled_date">{{ row.scheduled_date }}</span>
+              <span v-else class="text-muted">未排期</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="estimate_minutes" label="预计分钟" width="110" align="center" />
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag v-if="row.task_status" :type="row.task_status === 'completed' ? 'success' : 'info'" size="small">
+                {{ row.task_status }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="版本" width="80" align="center">
+            <template #default="{ row }">
+              <span v-if="row.generation" class="text-muted">v{{ row.generation }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="unscheduled_reason" label="未排期原因" min-width="200" show-overflow-tooltip />
+        </el-table>
+      </el-card>
     </template>
 
     <el-empty
