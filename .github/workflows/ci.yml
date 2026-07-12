@@ -136,8 +136,8 @@ jobs:
           set -euo pipefail
           export DATABASE_URL="sqlite:///${RUNNER_TEMP}/migration-${GITHUB_RUN_ID}.db"
           export PYTHONPATH="${GITHUB_WORKSPACE}/backend"
-          mkdir -p artifacts
-          python scripts/migrate.py --dry-run --json artifacts/migration-dry-run.json 2>&1 | tee migration-dry-run-result.txt
+          mkdir -p "${GITHUB_WORKSPACE}/artifacts"
+          python scripts/migrate.py --dry-run --json "${GITHUB_WORKSPACE}/artifacts/migration-dry-run.json" 2>&1 | tee migration-dry-run-result.txt
 
       - name: Run migration smoke test
         shell: bash
