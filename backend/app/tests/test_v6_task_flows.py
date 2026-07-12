@@ -1,8 +1,8 @@
 """V6 task flow tests: learn, review, and quiz task lifecycle.
 
-V6-21: Learn task flow - start auto-records target_loaded, user_confirmed
+V7: Learn task flow - page load records target_loaded, then user_confirmed
         event, then verify completes the task.
-V6-22: Review task flow - start auto-records target_loaded, review_confirmed
+V7: Review task flow - page load records target_loaded, then review_confirmed
         event, then verify completes the task. Archived KPs still work.
 V6-23: Quiz task flow - start creates quiz, quiz submit auto-verifies on
         pass, low score stays in_progress, retry preserves history.
@@ -120,7 +120,7 @@ def _event_types(db, task_id: int) -> set[str]:
 # ---------------------------------------------------------------------------
 
 def test_learn_task_full_flow(db_session, sample_user, sample_course):
-    """Learn task: start -> target_loaded auto-recorded -> user_confirmed -> verify -> completed."""
+    """Learn task: start -> real load -> confirmation -> verify -> completed."""
     # Create a ready material for the learn task target
     material = Material(
         user_id=sample_user.id,
@@ -150,16 +150,15 @@ def test_learn_task_full_flow(db_session, sample_user, sample_course):
     )
     db_session.commit()
 
-    # 1. Start the task -> should auto-record target_loaded
+    # 1. Start does not claim that the target loaded.
     result = start_task(db_session, task.id, sample_user.id)
     assert result["execution_status"] == "in_progress"
 
     events = _event_types(db_session, task.id)
-    assert "target_loaded" in events, (
-        f"target_loaded event not recorded after start_task, got: {events}"
-    )
+    assert "target_loaded" not in events
 
-    # 2. Record user_confirmed event (frontend "complete learning")
+    # 2. The loaded reader records target_loaded before confirmation.
+    record_task_event(db_session, task.id, sample_user.id, event_type="target_loaded", target_id=material.id)
     record_task_event(
         db_session,
         task.id,
@@ -185,7 +184,7 @@ def test_learn_task_full_flow(db_session, sample_user, sample_course):
 # ---------------------------------------------------------------------------
 
 def test_review_task_full_flow(db_session, sample_user, sample_course):
-    """Review task: start -> target_loaded -> review_confirmed -> verify -> completed.
+    """Review task: start -> real load -> review_confirmed -> verify -> completed.
 
     Also verifies that archived knowledge points do not block task completion.
     """
@@ -216,16 +215,15 @@ def test_review_task_full_flow(db_session, sample_user, sample_course):
     )
     db_session.commit()
 
-    # 1. Start task -> should auto-record target_loaded
+    # 1. Start task; the route must separately report a successful load.
     result = start_task(db_session, task.id, sample_user.id)
     assert result["execution_status"] == "in_progress"
 
     events = _event_types(db_session, task.id)
-    assert "target_loaded" in events, (
-        f"target_loaded event not recorded after start_task, got: {events}"
-    )
+    assert "target_loaded" not in events
 
-    # 2. Record review_confirmed event (frontend "complete review")
+    # 2. Record a successful outline load and then confirmation.
+    record_task_event(db_session, task.id, sample_user.id, event_type="target_loaded", target_id=kp.id)
     record_task_event(
         db_session,
         task.id,
@@ -266,6 +264,13 @@ def test_review_task_full_flow(db_session, sample_user, sample_course):
 
     # Start, record events, verify -> should still complete despite archived KP
     start_task(db_session, task2.id, sample_user.id)
+    record_task_event(
+        db_session,
+        task2.id,
+        sample_user.id,
+        event_type="target_loaded",
+        target_id=kp.id,
+    )
 
     record_task_event(
         db_session,
