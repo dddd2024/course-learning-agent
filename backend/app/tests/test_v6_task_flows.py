@@ -19,7 +19,7 @@ from app.api.v1.endpoints.quizzes import submit_quiz
 from app.models.knowledge_point import KnowledgePoint
 from app.models.material import Material
 from app.models.plan import StudyGoal, StudyTask, TaskExecutionEvent
-from app.models.quiz import QuizItem
+from app.models.quiz import Quiz, QuizItem
 from app.schemas.quiz import QuizSubmit, QuizSubmitAnswer
 from app.services.task_execution_service import (
     override_task,
@@ -473,3 +473,45 @@ def test_quiz_task_low_score_stays_in_progress(
     assert task.status == "pending", (
         f"Expected pending after low score, got {task.status!r}"
     )
+
+
+def test_quiz_submit_rolls_back_when_bound_task_transition_fails(
+    db_session, sample_user, sample_course, monkeypatch
+):
+    """A late task-transition fault must not leave a submitted quiz behind."""
+    monkeypatch.setattr(
+        "app.services.task_execution_service.generate_quiz", _mock_generate_quiz
+    )
+    goal = _make_goal(db_session, sample_user, title="Atomic submit goal")
+    task = _make_task(
+        db_session, goal, sample_course, "quiz", "quiz", None,
+        spec={"question_count": 2, "pass_score": 60},
+    )
+    db_session.commit()
+    quiz_id = start_task(db_session, task.id, sample_user.id)["quiz_id"]
+    items = db_session.query(QuizItem).filter_by(quiz_id=quiz_id).all()
+
+    def fail_transition(*_args, **_kwargs):
+        raise RuntimeError("injected task transition failure")
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.quizzes.verify_task_service", fail_transition
+    )
+    with pytest.raises(RuntimeError, match="injected task transition failure"):
+        submit_quiz(
+            quiz_id=quiz_id,
+            payload=QuizSubmit(
+                task_id=task.id,
+                answers=[QuizSubmitAnswer(item_id=item.id, user_answer=item.answer) for item in items],
+            ),
+            db=db_session,
+            current_user=sample_user,
+        )
+
+    db_session.expire_all()
+    quiz = db_session.get(Quiz, quiz_id)
+    task = db_session.get(StudyTask, task.id)
+    assert quiz.status == "draft"
+    assert quiz.score is None
+    assert all(item.user_answer is None and item.is_correct is None for item in quiz.items)
+    assert task.execution_status == "in_progress"

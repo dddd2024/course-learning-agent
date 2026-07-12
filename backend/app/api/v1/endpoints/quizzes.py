@@ -692,7 +692,11 @@ def submit_quiz(
     # point updates.  Do not catch errors here: a failed transition rolls the
     # entire submission back instead of creating a split quiz/task state.
     if task_id is not None:
-        verify_task_service(db, task_id, current_user.id, commit=False)
+        try:
+            verify_task_service(db, task_id, current_user.id, commit=False)
+        except Exception:
+            db.rollback()
+            raise
 
     try:
         db.commit()
