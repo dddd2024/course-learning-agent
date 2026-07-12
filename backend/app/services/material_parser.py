@@ -23,7 +23,9 @@ from __future__ import annotations
 import logging
 import hashlib
 import json
+import shutil
 import time
+from uuid import uuid4
 from pathlib import Path
 from typing import Callable
 
@@ -33,6 +35,7 @@ from app.core.config import settings
 from app.core.timezone import utc_now
 from app.models.material import Material, MaterialVersion
 from app.models.material_chunk import MaterialChunk
+from app.models.material_image import MaterialImage
 from app.models.material_page import MaterialPage
 from app.models.security_finding import MaterialSecurityFinding
 from app.retrieval.chunker import clean_keyword_text
@@ -71,6 +74,21 @@ def _count_existing_chunks(db: Session, material_id: int) -> int:
     )
 
 
+def _remove_staged_images(staging_dir: Path | None, *, promoted: bool = False) -> None:
+    """Remove only a parser-created staging directory under UPLOAD_DIR."""
+    if staging_dir is None or not staging_dir.exists():
+        return
+    try:
+        upload_root = Path(settings.UPLOAD_DIR).resolve()
+        staging_path = staging_dir.resolve()
+        is_parser_staging = staging_path.name.startswith(".v7-staging-")
+        is_uncommitted_version = promoted and staging_path.name.startswith("v")
+        if staging_path.is_relative_to(upload_root) and (is_parser_staging or is_uncommitted_version):
+            shutil.rmtree(staging_path)
+    except Exception:
+        logger.warning("Could not clean staged images at %s", staging_dir, exc_info=True)
+
+
 def parse_with_retry(
     db: Session,
     material: Material,
@@ -96,6 +114,8 @@ def parse_with_retry(
     sleep = sleep_fn or time.sleep
     material_id = material.id
     existing_chunk_count = _count_existing_chunks(db, material_id)
+    staged_image_dir: Path | None = None
+    promoted_image_dir: Path | None = None
 
     def check_cancelled() -> None:
         if is_cancelled is not None and is_cancelled():
@@ -139,6 +159,7 @@ def parse_with_retry(
                 MaterialVersion.status == "ready",
             ).first()
             if existing_version is not None:
+                check_cancelled()  # do not switch an existing version after cancellation
                 # Collect old active chunk ids before deactivating so we
                 # can update the FTS index after the commit.
                 old_chunk_ids = [
@@ -273,15 +294,45 @@ def parse_with_retry(
             if material.file_type.lower() == "pdf":
                 try:
                     from app.services.material_image_service import reextract_images
-                    reextract_images(db, material)
+                    image_root = (Path(settings.UPLOAD_DIR) / material.file_path).parent / "images"
+                    staged_image_dir = image_root / f".v7-staging-{material_id}-{next_version}-{uuid4().hex}"
+                    # A failed extraction must not leak its delete/insert
+                    # statements into the parse transaction.
+                    with db.begin_nested():
+                        reextract_images(
+                            db,
+                            material,
+                            image_dir=staged_image_dir,
+                            commit=False,
+                        )
                     logger.info("Refreshed images for material %s", material_id)
                 except Exception as img_exc:
+                    _remove_staged_images(staged_image_dir)
+                    staged_image_dir = None
                     logger.warning("Image extraction failed for material %s: %s", material_id, img_exc)
+
+            check_cancelled()  # do not publish staged images after cancellation
 
             for f in security_scanner.scan_material_chunks(saved_chunks):
                 db.add(f)
 
             check_cancelled()  # immediately before active-version switch
+
+            if staged_image_dir is not None and staged_image_dir.exists():
+                promoted_image_dir = staged_image_dir.parent / f"v{next_version}"
+                if promoted_image_dir.exists():
+                    raise RuntimeError(f"图片版本目录已存在：{promoted_image_dir.name}")
+                staged_image_dir.replace(promoted_image_dir)
+                relative_root = Path(settings.UPLOAD_DIR)
+                for image in db.query(MaterialImage).filter(
+                    MaterialImage.material_id == material_id
+                ).all():
+                    image.image_path = str(
+                        (promoted_image_dir / image.image_filename).relative_to(relative_root)
+                    ).replace("\\", "/")
+                staged_image_dir = None
+
+            check_cancelled()  # after file promotion, before the atomic DB switch
 
             material.status = "ready"
             version_row.status = "ready"
@@ -307,6 +358,8 @@ def parse_with_retry(
             return "ready", len(chunks)
         except ParseCancelled:
             db.rollback()
+            _remove_staged_images(staged_image_dir)
+            _remove_staged_images(promoted_image_dir, promoted=True)
             material = db.query(Material).filter(Material.id == material_id).first()
             if material is not None:
                 material.status = "ready" if existing_chunk_count else "uploaded"
@@ -317,6 +370,8 @@ def parse_with_retry(
             return "cancelled", 0
         except Exception as exc:  # noqa: BLE001 - any parse failure
             db.rollback()
+            _remove_staged_images(staged_image_dir)
+            _remove_staged_images(promoted_image_dir, promoted=True)
             material = (
                 db.query(Material)
                 .filter(Material.id == material_id)

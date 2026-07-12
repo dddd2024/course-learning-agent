@@ -5,7 +5,7 @@ from pathlib import Path
 from app.core import database
 from app.models.material import Material, MaterialVersion
 from app.models.material_page import MaterialPage
-from app.retrieval.document_ir import DocumentPage
+from app.retrieval.document_ir import DocumentBlock, DocumentPage
 from app.retrieval.parsers import parse_file
 from app.retrieval.semantic_chunker import semantic_chunk_document
 from app.services.material_parser import parse_with_retry
@@ -119,6 +119,61 @@ def test_cancelled_parse_never_creates_or_activates_a_version(
     assert material.status == "uploaded"
     assert material.active_version_id is None
     assert db_session.query(MaterialVersion).filter_by(material_id=material.id).count() == 0
+
+
+def test_cancelled_pdf_parse_discards_staged_images_before_activation(
+    db_session, sample_user, sample_course, tmp_path, monkeypatch
+):
+    """Image files and metadata must remain staged until the version switch."""
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    source = tmp_path / "slides.pdf"
+    source.write_bytes(b"not-read-by-injected-parser")
+    material = Material(
+        user_id=sample_user.id, course_id=sample_course.id, filename=source.name,
+        file_type="pdf", file_path=source.name, status="uploaded",
+    )
+    db_session.add(material)
+    db_session.commit()
+
+    calls = {"count": 0, "commit": None}
+
+    def cancel_after_image_stage() -> bool:
+        calls["count"] += 1
+        return calls["count"] >= 6
+
+    def fake_extract_images(db, mat, *, image_dir, commit):
+        calls["commit"] = commit
+        image_dir.mkdir(parents=True, exist_ok=True)
+        (image_dir / "staged.png").write_bytes(b"staged")
+        return {"status": "ready", "extracted": 1}
+
+    def fake_parse(_path, _file_type):
+        return [DocumentPage(
+            page_no=1,
+            blocks=[DocumentBlock(
+                block_id="source-1", page_no=1, block_type="body",
+                reading_order=1, text="TCP/IP staged image cancellation test",
+            )],
+        )]
+
+    monkeypatch.setattr(
+        "app.services.material_image_service.reextract_images", fake_extract_images
+    )
+    status, count = parse_with_retry(
+        db_session,
+        material,
+        sample_user.id,
+        parse_fn=fake_parse,
+        is_cancelled=cancel_after_image_stage,
+    )
+
+    db_session.refresh(material)
+    assert (status, count) == ("cancelled", 0)
+    assert calls["commit"] is False
+    assert material.active_version_id is None
+    assert db_session.query(MaterialVersion).filter_by(material_id=material.id).count() == 0
+    image_root = tmp_path / "images"
+    assert not image_root.exists() or not list(image_root.rglob("*"))
 
 
 def test_clean_reader_mode_does_not_render_page_clean_text_twice():

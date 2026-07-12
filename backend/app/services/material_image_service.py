@@ -34,7 +34,20 @@ def image_integrity(db: Session, material: Material) -> dict:
     return {"material_id": material.id, "total": total, "ready": ready, "missing": missing, "status": status}
 
 
-def reextract_images(db: Session, material: Material) -> dict:
+def reextract_images(
+    db: Session,
+    material: Material,
+    *,
+    image_dir: Path | None = None,
+    commit: bool = True,
+) -> dict:
+    """Extract images into ``image_dir`` and stage their metadata.
+
+    The public re-extraction endpoint uses the defaults and commits as before.
+    The parser supplies a private staging directory with ``commit=False`` so a
+    cancellation cannot publish new image metadata before the corresponding
+    material version is activated.
+    """
     if material.file_type.lower() != "pdf":
         return {"material_id": material.id, "status": "forbidden", "code": "IMAGE_EXTRACTION_UNSUPPORTED", "found": 0, "extracted": 0}
     from app.retrieval.image_extractor import extract_images_from_pdf
@@ -50,7 +63,7 @@ def reextract_images(db: Session, material: Material) -> dict:
     for chunk in chunks:
         if chunk.page_no:
             page_to_chunk.setdefault(chunk.page_no, chunk.id)
-    image_dir = (Path(settings.UPLOAD_DIR) / material.file_path).parent / "images"
+    image_dir = image_dir or ((Path(settings.UPLOAD_DIR) / material.file_path).parent / "images")
     image_dir.mkdir(parents=True, exist_ok=True)
     hashes: set[str] = set()
     count = 0
@@ -68,5 +81,8 @@ def reextract_images(db: Session, material: Material) -> dict:
             is_decorative=1 if image.is_decorative else 0, decorative_reason=image.decorative_reason,
             perceptual_hash=image.perceptual_hash, color_variance=image.color_variance, coverage_ratio=image.coverage_ratio))
         count += 1
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return {"material_id": material.id, "status": "ready", "code": None, "found": found, "extracted": count}
