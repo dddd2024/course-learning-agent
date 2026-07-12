@@ -43,6 +43,12 @@ export interface QuizSubmitPayload {
   answers: QuizSubmitAnswer[]
 }
 
+export interface QuizCreateConstraints {
+  question_types: QuestionType[]
+  difficulty_distribution: { easy: number; medium: number; hard: number }
+  pass_score: number
+}
+
 export interface RubricFeedbackEntry {
   criterion: string
   met: boolean
@@ -101,6 +107,7 @@ export function createQuiz(
   courseId: number,
   knowledgePointIds?: number[],
   questionCount?: number,
+  constraints?: QuizCreateConstraints,
 ): AxiosPromise<Quiz> {
   const payload: Record<string, unknown> = { course_id: courseId }
   if (knowledgePointIds && knowledgePointIds.length > 0) {
@@ -108,6 +115,9 @@ export function createQuiz(
   }
   if (questionCount !== undefined) {
     payload.question_count = questionCount
+  }
+  if (constraints) {
+    Object.assign(payload, constraints)
   }
   return request.post('/quizzes', payload)
 }

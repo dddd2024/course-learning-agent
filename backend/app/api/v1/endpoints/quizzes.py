@@ -34,7 +34,7 @@ from app.agents.audit import AgentAudit
 from app.agents.quiz import generate_quiz
 from app.api.deps import get_current_user
 from app.core.database import get_db
-from app.core.exceptions import BusinessException, NotFoundException
+from app.core.exceptions import BusinessException, NotFoundException, QuizConstraintException
 from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
 from app.models.quiz import Quiz, QuizItem, WeakPoint
@@ -366,6 +366,12 @@ def create_quiz(
             .order_by(KnowledgePoint.id.asc())
             .all()
         )
+        if len(rows) != len(set(payload.knowledge_point_ids)):
+            raise QuizConstraintException(
+                requested_count=payload.question_count,
+                valid_count=0,
+                drop_reasons=["invalid_or_inactive_knowledge_point"],
+            )
     else:
         rows = (
             db.query(KnowledgePoint)
@@ -381,6 +387,14 @@ def create_quiz(
     if not rows:
         raise BusinessException(message="课程暂无知识点，请先生成知识点")
 
+    active_generation = max(row.generation for row in rows)
+    if any(row.generation != active_generation for row in rows):
+        raise QuizConstraintException(
+            requested_count=payload.question_count,
+            valid_count=0,
+            drop_reasons=["knowledge_point_not_in_active_generation"],
+        )
+
     active_config = get_active_config(db, current_user.id)
     user_config = build_user_config(active_config) if active_config else None
 
@@ -394,20 +408,54 @@ def create_quiz(
         user_config=user_config,
     )
     insufficient_evidence = quiz_output.get("insufficient_evidence", False)
-    if not quiz_output.get("items"):
-        raise BusinessException(message="资料证据不足，未创建空测验；请补充资料或重新解析", status_code=422)
+    items = quiz_output.get("items") or []
+    reasons = list(quiz_output.get("drop_reasons") or [])
+    if not items:
+        raise QuizConstraintException(
+            requested_count=payload.question_count,
+            valid_count=0,
+            drop_reasons=reasons or ["insufficient_evidence"],
+        )
+    strict_contract = payload.question_types is not None or payload.difficulty_distribution is not None
+    if strict_contract and len(items) != payload.question_count:
+        raise QuizConstraintException(
+            requested_count=payload.question_count,
+            valid_count=len(items),
+            drop_reasons=reasons or ["insufficient_evidence" if insufficient_evidence else "insufficient_questions"],
+        )
+    if payload.question_types is not None and any(item.get("question_type") not in payload.question_types for item in items):
+        raise QuizConstraintException(
+            requested_count=payload.question_count,
+            valid_count=0,
+            drop_reasons=["question_type_constraint"],
+        )
+
+    def difficulty_band(item: dict) -> str:
+        value = item.get("difficulty", 3)
+        if isinstance(value, str):
+            return value if value in {"easy", "medium", "hard"} else "medium"
+        return "easy" if value <= 2 else "hard" if value >= 4 else "medium"
+
+    observed_distribution = {name: sum(difficulty_band(item) == name for item in items) for name in ("easy", "medium", "hard")}
+    requested_distribution = {name: payload.difficulty_distribution.get(name, 0) for name in observed_distribution} if payload.difficulty_distribution is not None else None
+    if requested_distribution is not None and observed_distribution != requested_distribution:
+        raise QuizConstraintException(
+            requested_count=payload.question_count,
+            valid_count=0,
+            drop_reasons=["difficulty_distribution_constraint"],
+        )
 
     quiz = Quiz(
         user_id=current_user.id,
         course_id=payload.course_id,
         title=quiz_output.get("title", f"{course.name} 测验"),
-        question_count=len(quiz_output.get("items", [])),
+        question_count=payload.question_count if strict_contract else len(items),
         status="draft",
     )
     db.add(quiz)
     db.flush()
 
-    for item_data in quiz_output.get("items", []):
+    for item_data in items:
         item = QuizItem(
             quiz_id=quiz.id,
             knowledge_point_id=item_data.get("knowledge_point_id"),

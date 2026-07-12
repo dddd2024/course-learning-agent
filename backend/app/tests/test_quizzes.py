@@ -216,6 +216,35 @@ def test_create_quiz_success(client, tmp_path, monkeypatch) -> None:
         assert "order_index" in item
 
 
+def test_create_quiz_strict_contract_never_persists_partial_quiz(
+    client, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr("app.core.config.settings.PARSED_DIR", str(tmp_path / "parsed"))
+    headers = auth_headers(client, username="strict-contract")
+    course_id = _setup_course_with_kps(client, headers)
+    payload = {
+        "course_id": course_id,
+        "question_count": 3,
+        "question_types": ["choice", "multiple_choice", "true_false", "short_answer"],
+        "difficulty_distribution": {"easy": 0, "medium": 3, "hard": 0},
+        "pass_score": 75,
+    }
+    created = client.post("/api/v1/quizzes", json=payload, headers=headers)
+    assert created.status_code == 200, created.text
+    assert created.json()["question_count"] == 3
+
+    impossible = client.post(
+        "/api/v1/quizzes",
+        json={**payload, "question_count": 4, "difficulty_distribution": {"easy": 0, "medium": 4, "hard": 0}},
+        headers=headers,
+    )
+    assert impossible.status_code == 422
+    assert impossible.json()["code"] == "QUIZ_CONSTRAINT_UNSATISFIED"
+    assert impossible.json()["requested_count"] == 4
+    assert client.get(f"/api/v1/quizzes?course_id={course_id}", headers=headers).json()["total"] == 1
+
+
 def test_create_quiz_no_knowledge_points(client, tmp_path, monkeypatch) -> None:
     """Course without knowledge points: POST /quizzes returns 4xx or empty items."""
     monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))

@@ -49,6 +49,23 @@ class BusinessException(AppException):
     default_message = "业务错误"
 
 
+class QuizConstraintException(BusinessException):
+    """A structured 422 response when a requested quiz cannot be built."""
+
+    code = "QUIZ_CONSTRAINT_UNSATISFIED"
+    status_code = 422
+    default_message = "测验约束无法满足"
+
+    def __init__(self, *, requested_count: int, valid_count: int, drop_reasons: list[str]):
+        super().__init__(self.default_message, status_code=422)
+        self.data = {
+            "requested_count": requested_count,
+            "valid_count": valid_count,
+            "dropped_count": max(0, requested_count - valid_count),
+            "drop_reasons": drop_reasons,
+        }
+
+
 class UsernameExistsException(BusinessException):
     code = "USERNAME_EXISTS"
     default_message = "用户名已存在"
@@ -69,9 +86,12 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(AppException)
     async def handle_app_exception(_: Request, exc: AppException) -> JSONResponse:
+        body = _error_body(exc.code, exc.message)
+        if hasattr(exc, "data"):
+            body.update(exc.data)
         return JSONResponse(
             status_code=exc.status_code,
-            content=_error_body(exc.code, exc.message),
+            content=body,
         )
 
     @app.exception_handler(StarletteHTTPException)

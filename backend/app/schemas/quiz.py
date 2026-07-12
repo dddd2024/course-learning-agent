@@ -5,7 +5,11 @@ import json
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+SUPPORTED_QUESTION_TYPES = frozenset({"choice", "multiple_choice", "true_false", "short_answer"})
+SUPPORTED_DIFFICULTIES = frozenset({"easy", "medium", "hard"})
 
 
 class QuizCreate(BaseModel):
@@ -14,6 +18,31 @@ class QuizCreate(BaseModel):
     course_id: int
     knowledge_point_ids: Optional[List[int]] = None
     question_count: int = Field(default=5, ge=1, le=30)
+    question_types: Optional[List[str]] = Field(default=None, min_length=1)
+    difficulty_distribution: Optional[dict[str, int]] = None
+    pass_score: int = Field(default=60, ge=0, le=100)
+
+    @field_validator("question_types")
+    @classmethod
+    def _valid_question_types(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        if value is None:
+            return value
+        normalized = list(dict.fromkeys(item.strip() for item in value))
+        if not normalized or any(item not in SUPPORTED_QUESTION_TYPES for item in normalized):
+            raise ValueError("question_types 仅允许 choice/multiple_choice/true_false/short_answer")
+        return normalized
+
+    @model_validator(mode="after")
+    def _valid_difficulty_distribution(self) -> "QuizCreate":
+        if self.difficulty_distribution is None:
+            return self
+        if (
+            not self.difficulty_distribution
+            or any(name not in SUPPORTED_DIFFICULTIES or count < 0 for name, count in self.difficulty_distribution.items())
+            or sum(self.difficulty_distribution.values()) != self.question_count
+        ):
+            raise ValueError("difficulty_distribution 必须由 easy/medium/hard 组成且总数等于 question_count")
+        return self
 
 
 class QuizOption(BaseModel):

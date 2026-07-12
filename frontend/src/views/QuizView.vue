@@ -269,11 +269,16 @@ async function handleGenerate() {
   if (selectedCourseId.value === undefined) return
   dialogLoading.value = true
   try {
-    const { data } = await createQuiz(
-      selectedCourseId.value,
-      genForm.knowledge_point_ids.length > 0 ? genForm.knowledge_point_ids : undefined,
-      genForm.question_count,
-    )
+      const { data } = await createQuiz(
+        selectedCourseId.value,
+        genForm.knowledge_point_ids.length > 0 ? genForm.knowledge_point_ids : undefined,
+        genForm.question_count,
+        {
+          question_types: ['choice', 'multiple_choice', 'true_false', 'short_answer'],
+          difficulty_distribution: { easy: 0, medium: genForm.question_count, hard: 0 },
+          pass_score: 60,
+        },
+      )
     dialogVisible.value = false
     ElMessage.success('测验已生成')
     fetchQuizzes()

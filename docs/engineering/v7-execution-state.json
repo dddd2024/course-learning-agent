@@ -2,11 +2,11 @@
   "version": "v7.1",
   "branch": "codex/v7-production-integration",
   "base_commit": "53a1221",
-  "current_head": "562efc654b2d303c47acffd8ccfeb77f147fd353",
+  "current_head": "187e27c28ced1a9153d425e3cd161b2aefe24a29",
   "started_at": "2026-07-12T00:00:00+08:00",
   "updated_at": "2026-07-12T00:00:00+08:00",
   "overall_status": "in_progress",
-  "current_task": "V7-CONT-06",
+  "current_task": "V7-CONT-08",
   "tasks": {
     "V7-CONT-00": {
       "status": "verified",
@@ -90,10 +90,15 @@
       "notes": ""
     },
     "V7-CONT-06": {
-      "status": "in_progress",
-      "evidence": [],
+      "status": "verified",
+      "evidence": [
+        "Explicit quiz constraints validate requested active KP scope, question count, supported types, difficulty distribution and pass score; unsatisfied requests return structured QUIZ_CONSTRAINT_UNSATISFIED without persisting a partial quiz."
+      ],
       "commits": [],
-      "tests": [],
+      "tests": [
+        "python -m pytest backend/app/tests/test_quizzes.py backend/app/tests/test_v3_quiz_grounding.py backend/app/tests/test_v6_quiz_constraints.py -q --tb=short",
+        "frontend: npm run type-check; npm run test -- --run"
+      ],
       "notes": ""
     },
     "V7-CONT-07": {
@@ -110,7 +115,7 @@
       "notes": ""
     },
     "V7-CONT-08": {
-      "status": "not_started",
+      "status": "in_progress",
       "evidence": [],
       "commits": [],
       "tests": [],
