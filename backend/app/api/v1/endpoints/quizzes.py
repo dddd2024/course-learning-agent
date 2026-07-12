@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.audit import AgentAudit
 from app.agents.quiz import generate_quiz
+from app.services.quiz_creation_service import QuizCreationService
 from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.core.exceptions import BusinessException, NotFoundException, QuizConstraintException
@@ -388,108 +389,23 @@ def create_quiz(
     if not rows:
         raise BusinessException(message="课程暂无知识点，请先生成知识点")
 
-    active_generation = max(row.generation for row in rows)
-    if any(row.generation != active_generation for row in rows):
-        raise QuizConstraintException(
-            requested_count=payload.question_count,
-            valid_count=0,
-            drop_reasons=["knowledge_point_not_in_active_generation"],
-        )
-
-    active_config = get_active_config(db, current_user.id)
-    user_config = build_user_config(active_config) if active_config else None
-
-    quiz_output = generate_quiz(
+    # V7.4-03 P0-03: Route through QuizCreationService for unified
+    # strict contract enforcement (no inline generate_quiz call).
+    quiz = QuizCreationService.create_quiz(
         db=db,
         user_id=current_user.id,
         course_id=payload.course_id,
-        knowledge_points=rows,
         course_name=course.name,
+        knowledge_points=rows,
         question_count=payload.question_count,
-        user_config=user_config,
-    )
-    insufficient_evidence = quiz_output.get("insufficient_evidence", False)
-    items = quiz_output.get("items") or []
-    reasons = list(quiz_output.get("drop_reasons") or [])
-    if not items:
-        raise QuizConstraintException(
-            requested_count=payload.question_count,
-            valid_count=0,
-            drop_reasons=reasons or ["insufficient_evidence"],
-        )
-    strict_contract = payload.question_types is not None or payload.difficulty_distribution is not None
-    if strict_contract and len(items) != payload.question_count:
-        raise QuizConstraintException(
-            requested_count=payload.question_count,
-            valid_count=len(items),
-            drop_reasons=reasons or ["insufficient_evidence" if insufficient_evidence else "insufficient_questions"],
-        )
-    if payload.question_types is not None and any(item.get("question_type") not in payload.question_types for item in items):
-        raise QuizConstraintException(
-            requested_count=payload.question_count,
-            valid_count=0,
-            drop_reasons=["question_type_constraint"],
-        )
-
-    def difficulty_band(item: dict) -> str:
-        value = item.get("difficulty", 3)
-        if isinstance(value, str):
-            return value if value in {"easy", "medium", "hard"} else "medium"
-        return "easy" if value <= 2 else "hard" if value >= 4 else "medium"
-
-    observed_distribution = {name: sum(difficulty_band(item) == name for item in items) for name in ("easy", "medium", "hard")}
-    requested_distribution = {name: payload.difficulty_distribution.get(name, 0) for name in observed_distribution} if payload.difficulty_distribution is not None else None
-    if requested_distribution is not None and observed_distribution != requested_distribution:
-        raise QuizConstraintException(
-            requested_count=payload.question_count,
-            valid_count=0,
-            drop_reasons=["difficulty_distribution_constraint"],
-        )
-
-    quiz = Quiz(
-        user_id=current_user.id,
-        course_id=payload.course_id,
-        title=quiz_output.get("title", f"{course.name} 测验"),
-        question_count=payload.question_count if strict_contract else len(items),
         pass_score=payload.pass_score,
-        status="draft",
+        question_types=payload.question_types,
+        difficulty_distribution=payload.difficulty_distribution,
     )
-    db.add(quiz)
-    db.flush()
-
-    for item_data in items:
-        item = QuizItem(
-            quiz_id=quiz.id,
-            knowledge_point_id=item_data.get("knowledge_point_id"),
-            question_type=item_data.get("question_type", "short_answer"),
-            question_text=item_data.get("question_text", ""),
-            options=json.dumps(
-                item_data.get("options", []), ensure_ascii=False
-            ),
-            answer=item_data.get("answer", ""),
-            explanation=item_data.get("explanation", ""),
-            difficulty=item_data.get("difficulty"),
-            source_evidence_ids=json.dumps(item_data.get("source_evidence_ids", [])),
-            evidence_snapshot=json.dumps(item_data.get("source_evidence_ids", [])),
-            # QUIZ-V3-01: store source_evidence for grounding verification.
-            source_evidence=json.dumps(
-                item_data.get("source_evidence", []), ensure_ascii=False
-            ),
-            verification_status=item_data.get("verification_status", "verified"),
-            rubric_json=json.dumps(item_data.get("rubric", []), ensure_ascii=False),
-            order_index=item_data.get("order_index", 0),
-        )
-        db.add(item)
 
     db.commit()
     db.refresh(quiz)
-    # QUIZ-V3-02: pass partial_generation flag to the response.
-    partial_gen = quiz_output.get("partial_generation", False)
-    return _quiz_to_response(
-        quiz,
-        partial_generation=partial_gen,
-        insufficient_evidence=insufficient_evidence,
-    )
+    return _quiz_to_response(quiz, partial_generation=False, insufficient_evidence=False)
 
 
 @router.get("", response_model=QuizListResponse)

@@ -142,10 +142,10 @@ def parse_with_retry(
             file_path = Path(settings.UPLOAD_DIR) / material.file_path
             pages = parse_fn(str(file_path), material.file_type)
             check_cancelled()  # after parser
-            # parse_file's V7 production contract is Document IR; no tuple
-            # or fixed-window compatibility path is permitted here.
-            clean_results = clean_pages([page.text for page in pages])
-            cleaned_pages = clean_document_pages(pages)
+            # V7.4-02 P1-02: Single cleaning pass.
+            # clean_document_pages calls clean_pages internally; do not
+            # call clean_pages separately here (was causing double cleaning).
+            cleaned_pages, clean_results = clean_document_pages(pages)
             chunks = semantic_chunk_document(cleaned_pages)
             check_cancelled()  # before creating a staging version
 

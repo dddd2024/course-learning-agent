@@ -35,7 +35,7 @@ def test_clean_pages_removes_header_footer_from_chunk_text():
         _make_page(1, ["课程名称：计算机网络", "TCP/IP协议是互联网的基础", "第1页"]),
         _make_page(2, ["课程名称：计算机网络", "CSMA/CD用于以太网", "第2页"]),
     ]
-    cleaned = clean_document_pages(raw_pages)
+    cleaned, _ = clean_document_pages(raw_pages)
     # The header "课程名称：计算机网络" and footer "第1页"/"第2页" should be removed
     page1_text = cleaned[0].text
     page2_text = cleaned[1].text
@@ -57,7 +57,7 @@ def test_cleaned_pages_produce_chunks_without_headers():
         _make_page(1, ["课程名称：计算机网络", "TCP/IP协议是互联网的基础协议", "第1页"]),
         _make_page(2, ["课程名称：计算机网络", "HTTP/2是HTTP协议的第二个版本", "第2页"]),
     ]
-    cleaned = clean_document_pages(raw_pages)
+    cleaned, _ = clean_document_pages(raw_pages)
     chunks = semantic_chunk_document(cleaned)
     all_chunk_text = " ".join(c["text"] for c in chunks)
     assert "课程名称" not in all_chunk_text
@@ -74,7 +74,7 @@ def test_cleaned_page_preserves_raw_block_ids():
     raw_pages = [
         _make_page(1, ["课程名称：计算机网络", "TCP/IP协议是互联网的基础", "第1页"]),
     ]
-    cleaned = clean_document_pages(raw_pages)
+    cleaned, _ = clean_document_pages(raw_pages)
     # The cleaned page should still have blocks with original IDs
     block_ids = [b.block_id for b in cleaned[0].blocks]
     assert "p1-b0" in block_ids or "p1-b1" in block_ids

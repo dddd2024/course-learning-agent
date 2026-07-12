@@ -133,15 +133,46 @@ def _build_chunk(
     split_reason: str,
     fragments: list[dict] | None = None,
 ) -> dict:
-    """Build a chunk dictionary."""
+    """Build a chunk dictionary.
+
+    V7.4-02 P1-03: Fragment offsets are adjusted after stripping
+    leading/trailing whitespace from text. The strip_offset and
+    stripped_length are used to shift fragment offsets so they
+    remain valid indices into the final chunk["text"].
+    """
     page_nos_sorted = sorted(page_nos)
+    # V7.4-02 P1-03: Track leading whitespace for offset adjustment
+    strip_offset = len(text) - len(text.lstrip())
+    stripped_text = text.strip()
+    stripped_len = len(stripped_text)
+
+    # Adjust fragment offsets to be relative to the stripped text
+    adjusted_fragments = []
+    if fragments:
+        for frag in fragments:
+            start = frag["text_start"] - strip_offset
+            end = frag["text_end"] - strip_offset
+            # Clamp to valid range
+            start = max(0, min(start, stripped_len))
+            end = max(0, min(end, stripped_len))
+            if start < end:  # Only include non-empty fragments
+                adjusted_fragments.append({
+                    "block_id": frag["block_id"],
+                    "text_start": start,
+                    "text_end": end,
+                })
+
+    # V7.4-02 P1-04: Use dict.fromkeys to preserve insertion order
+    # while deduplicating block IDs (set() loses order)
+    ordered_block_ids = list(dict.fromkeys(block_ids))
+
     return {
-        "text": text.strip(),
+        "text": stripped_text,
         "title": title,
         "page_start": page_nos_sorted[0] if page_nos_sorted else None,
         "page_end": page_nos_sorted[-1] if page_nos_sorted else None,
-        "source_block_ids": list(block_ids),
-        "source_fragments_json": fragments or [],
+        "source_block_ids": ordered_block_ids,
+        "source_fragments_json": adjusted_fragments,
         "split_reason": split_reason,
         "chunk_index": chunk_index,
         "chunker_version": CHUNKER_VERSION,
@@ -345,8 +376,8 @@ def semantic_chunk(
                         second_frags.append({"block_id": block.block_id, "text_start": max(0, new_block_start - split_pos), "text_end": new_block_end - split_pos})
 
                     # Determine which block IDs are in each part
-                    first_block_ids = list({f["block_id"] for f in first_frags})
-                    second_block_ids = list({f["block_id"] for f in second_frags})
+                    first_block_ids = list(dict.fromkeys(f["block_id"] for f in first_frags))
+                    second_block_ids = list(dict.fromkeys(f["block_id"] for f in second_frags))
 
                     current_text = first_part
                     current_fragments = first_frags
@@ -403,8 +434,8 @@ def semantic_chunk(
                             first_part = text_so_far[:split_pos]
                             second_part = text_so_far[split_pos:]
                             first_frags, second_frags = _split_fragments(current_fragments, split_pos)
-                            first_block_ids = list({f["block_id"] for f in first_frags})
-                            second_block_ids = list({f["block_id"] for f in second_frags})
+                            first_block_ids = list(dict.fromkeys(f["block_id"] for f in first_frags))
+                            second_block_ids = list(dict.fromkeys(f["block_id"] for f in second_frags))
                             current_text = first_part
                             current_fragments = first_frags
                             current_block_ids = first_block_ids if first_block_ids else current_block_ids

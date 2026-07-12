@@ -49,6 +49,10 @@ class MultiCoursePlanTask(Base, TimestampMixin):
     scheduled_date = Column(Date, nullable=True, index=True)
     estimate_minutes = Column(Integer, nullable=False, default=0)
     unscheduled_reason = Column(String(100), nullable=True)
+    # V7.4-04: Preserve title and generation for unscheduled tasks (task_id=None)
+    # so they display correctly and are filtered by generation in the detail view.
+    title_snapshot = Column(String(255), nullable=True)
+    generation = Column(Integer, nullable=True)
 
 
 class StudyGoal(Base, TimestampMixin):

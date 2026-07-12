@@ -35,3 +35,16 @@ export function listKnowledgePoints(
 ): AxiosPromise<KnowledgeListResult> {
   return request.get(`/courses/${courseId}/knowledge-points`, { params })
 }
+
+export interface KPGeneration {
+  generation: number
+  status: string
+  count: number
+  created_at: string | null
+}
+
+export function getKPGenerations(
+  courseId: number,
+): AxiosPromise<KPGeneration[]> {
+  return request.get(`/courses/${courseId}/knowledge-points/generations`)
+}

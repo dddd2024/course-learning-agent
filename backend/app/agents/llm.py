@@ -536,33 +536,45 @@ def _mock_outline(prompt: str = "") -> dict[str, Any]:
         text = chunks[0].strip()
         lines = [l.strip() for l in text.split("\n") if l.strip()]
         if len(lines) >= 2:
-            # Extract concept-style titles from the first two lines
-            t1 = _extract_title_from_chunk(lines[0], 0)
-            t2 = _extract_title_from_chunk(lines[1], 1)
+            # Extract concept-style titles from the full text, skipping
+            # header/footer lines that _extract_title_from_chunk would skip.
+            # Use the full text so the function can iterate over all lines
+            # and find the first meaningful one.
+            t1 = _extract_title_from_chunk(text, 0)
+            # For t2, skip the first meaningful line and extract from the rest
+            remaining_lines = lines[1:]
+            t2 = _extract_title_from_chunk(
+                "\n".join(remaining_lines), 1
+            ) if remaining_lines else f"知识点2"
             if len(t1) > 15 or re.search(r".{2,}是.{2,}", t1):
                 t1 = _truncate_to_concept(t1)
             if len(t2) > 15 or re.search(r".{2,}是.{2,}", t2):
                 t2 = _truncate_to_concept(t2)
-            knowledge_points = [
-                {
-                    "title": t1,
-                    "summary": _clean_summary(text[:200]),
-                    "importance": 5,
-                    "source_chunk_ids": [chunk_ids[0]] if chunk_ids else [],
-                    "exam_style": "简答题/选择题",
-                    "review_action": "重读片段1的相关内容。",
-                },
-                {
-                    "title": t2,
-                    "summary": _clean_summary(
-                        "\n".join(lines[1:])[:200] if len(lines) > 1 else text[:200]
-                    ),
-                    "importance": 4,
-                    "source_chunk_ids": [chunk_ids[0]] if chunk_ids else [],
-                    "exam_style": "简答题/选择题",
-                    "review_action": "重读片段1的相关内容。",
-                },
-            ]
+            # Skip generic fallback titles — better to have 1 good KP
+            # than 2 KPs with placeholder titles.
+            if t1.startswith("知识点") or t2.startswith("知识点"):
+                pass  # Keep original knowledge_points (1 KP with good title)
+            else:
+                knowledge_points = [
+                    {
+                        "title": t1,
+                        "summary": _clean_summary(text[:200]),
+                        "importance": 5,
+                        "source_chunk_ids": [chunk_ids[0]] if chunk_ids else [],
+                        "exam_style": "简答题/选择题",
+                        "review_action": "重读片段1的相关内容。",
+                    },
+                    {
+                        "title": t2,
+                        "summary": _clean_summary(
+                            "\n".join(lines[1:])[:200] if len(lines) > 1 else text[:200]
+                        ),
+                        "importance": 4,
+                        "source_chunk_ids": [chunk_ids[0]] if chunk_ids else [],
+                        "exam_style": "简答题/选择题",
+                        "review_action": "重读片段1的相关内容。",
+                    },
+                ]
 
     return {"knowledge_points": knowledge_points}
 
@@ -670,8 +682,13 @@ def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
     with ``chunk_id`` and ``quote_text`` that is a substring of the actual chunk
     text, so the grounding can be independently verified.
 
-    No hardcoded "梯度下降" or "学习率" questions are produced.
+    V7.4-07: Parse requested question_count from prompt and generate enough
+    questions to meet the demand (cycling through chunks if needed).
     """
+    # Parse requested question count from prompt
+    count_match = re.search(r"生成\s*(\d+)\s*道", prompt)
+    requested_count = int(count_match.group(1)) if count_match else 5
+
     # Parse evidence chunks from the prompt.
     evidence_pattern = re.compile(
         r"\[evidence_id=(\d+)[^\]]*\]\s*(.+?)(?=\n\[evidence_id=|\n\n|\Z)",
@@ -680,7 +697,7 @@ def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
     chunks_raw = evidence_pattern.findall(prompt)
 
     if not chunks_raw:
-        return {"questions": []}
+        return {"questions": [], "title": "测验"}
 
     # Build (chunk_id:int, text:str) pairs, filtering very short chunks.
     chunks: list[tuple[int, str]] = []
@@ -690,10 +707,18 @@ def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
             chunks.append((int(cid_str), text))
 
     if not chunks:
-        return {"questions": []}
+        return {"questions": [], "title": "测验"}
 
     questions: list[dict[str, Any]] = []
-    for idx, (chunk_id, chunk_text) in enumerate(chunks):
+    # Cycle through chunks to generate enough questions
+    cycle = 0
+    while len(questions) < requested_count:
+        idx = cycle % len(chunks)
+        chunk_id, chunk_text = chunks[idx]
+        cycle += 1
+        if cycle > requested_count * 3:
+            break  # Safety valve
+
         lines = [
             l.strip() for l in chunk_text.split("\n")
             if l.strip() and len(l.strip()) >= 8
@@ -702,6 +727,7 @@ def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
             continue
 
         kp_label = f"kp_{idx + 1}"
+        suffix = f"（第{cycle}题）" if cycle > len(chunks) else ""
 
         # --- True/False question from the first meaningful line ---
         source_line = lines[0]
@@ -711,32 +737,29 @@ def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
         if quote_tf not in chunk_text:
             quote_tf = source_line
 
-        questions.append({
-            "question_type": "true_false",
-            "difficulty": 3,
-            "stem": f"根据课程资料，以下说法是否正确：{source_line[:80]}",
-            "options": [],
-            "answer": "true",
-            "explanation": "该说法直接来自课程资料原文。",
-            "rubric": [],
-            "knowledge_point_ids": [kp_label],
-            "source_chunk_ids": [str(chunk_id)],
-            "source_evidence": [
-                {
-                    "chunk_id": chunk_id,
-                    "quote_text": quote_tf,
-                }
-            ],
-        })
+        if len(questions) < requested_count:
+            questions.append({
+                "question_type": "true_false",
+                "difficulty": 3,
+                "stem": f"根据课程资料，以下说法是否正确{suffix}：{source_line[:80]}",
+                "options": [],
+                "answer": "true",
+                "explanation": "该说法直接来自课程资料原文。",
+                "rubric": [],
+                "knowledge_point_ids": [kp_label],
+                "source_chunk_ids": [str(chunk_id)],
+                "source_evidence": [
+                    {"chunk_id": chunk_id, "quote_text": quote_tf}
+                ],
+            })
 
         # --- Short-answer / fill-in-the-blank from a second line ---
-        if len(lines) > 1:
-            second_line = lines[1]
+        if len(lines) > 1 and len(questions) < requested_count:
+            second_line = lines[1] if len(lines) > 1 else lines[0]
             quote_sa = second_line[:120]
             if quote_sa not in chunk_text:
                 quote_sa = second_line
 
-            # Extract a CJK term to blank out for a fill-in question.
             cjk_terms = re.findall(r"[\u4e00-\u9fff]{2,}", second_line)
             if cjk_terms:
                 blank_term = cjk_terms[0]
@@ -744,7 +767,7 @@ def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
                 questions.append({
                     "question_type": "short_answer",
                     "difficulty": 3,
-                    "stem": f"填空：{blanked}",
+                    "stem": f"填空{suffix}：{blanked}",
                     "options": [],
                     "answer": blank_term,
                     "explanation": f"根据课程资料，该处应填入「{blank_term}」。",
@@ -760,28 +783,21 @@ def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
                     "knowledge_point_ids": [kp_label],
                     "source_chunk_ids": [str(chunk_id)],
                     "source_evidence": [
-                        {
-                            "chunk_id": chunk_id,
-                            "quote_text": quote_sa,
-                        }
+                        {"chunk_id": chunk_id, "quote_text": quote_sa}
                     ],
                 })
 
         # --- Choice question from the chunk text ---
-        if len(lines) >= 2:
-            # Build a choice question: which statement matches the source?
+        if len(lines) >= 2 and len(questions) < requested_count:
             correct_option = lines[0][:60]
-            # Distractors are deterministic transformations, never another source line.
             distractors = [
                 correct_option.replace("是", "不是", 1) if "是" in correct_option else f"并非：{correct_option}",
                 f"该结论仅适用于不存在的前提：{correct_option}",
                 f"与原文相反：{correct_option[::-1]}",
             ]
-
             options = [correct_option] + distractors[:3]
-            # Shuffle deterministically (keep correct at known position)
             import random as _rnd
-            _rnd.seed(chunk_id)
+            _rnd.seed(chunk_id + cycle)
             indices = list(range(len(options)))
             _rnd.shuffle(indices)
             shuffled = [options[i] for i in indices]
@@ -794,7 +810,7 @@ def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
             questions.append({
                 "question_type": "single_choice",
                 "difficulty": 3,
-                "stem": "以下哪项说法与课程资料原文一致？",
+                "stem": f"以下哪项说法与课程资料原文一致{suffix}？",
                 "options": shuffled,
                 "answer": correct_letter,
                 "explanation": "该选项直接来自课程资料原文。",
@@ -802,14 +818,11 @@ def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
                 "knowledge_point_ids": [kp_label],
                 "source_chunk_ids": [str(chunk_id)],
                 "source_evidence": [
-                    {
-                        "chunk_id": chunk_id,
-                        "quote_text": quote_choice,
-                    }
+                    {"chunk_id": chunk_id, "quote_text": quote_choice}
                 ],
             })
 
-    return {"title": "课程资料测验", "questions": questions[:10]}
+    return {"title": "课程资料测验", "questions": questions[:requested_count]}
 
 
 def _mock_citation_verify(prompt: str = "") -> dict[str, Any]:

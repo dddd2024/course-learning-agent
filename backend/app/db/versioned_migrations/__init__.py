@@ -46,6 +46,9 @@ MIGRATION_MODULES = [
     "015_v7_chunk_provenance",
     "016_v7_non_destructive_reschedule",
     "017_v7_quiz_pass_score",
+    "018_v7_4_page_unique",
+    "019_v7_4_chunk_fragments",
+    "020_v7_4_plan_task_snapshot",
 ]
 
 

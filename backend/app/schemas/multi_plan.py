@@ -170,3 +170,24 @@ class MultiPlanReschedule(BaseModel):
     """Payload for POST /plans/multi/{multi_plan_id}/reschedule."""
 
     daily_minutes: int = Field(..., gt=0)
+
+
+class MultiPlanRescheduleDiff(BaseModel):
+    """Diff between old and new schedule after a reschedule."""
+
+    added: List[MultiScheduleItem] = Field(default_factory=list)
+    removed: List[Dict[str, Any]] = Field(default_factory=list)
+    changed: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class MultiPlanRescheduleResponse(BaseModel):
+    """Response for POST /plans/multi/{multi_plan_id}/reschedule.
+
+    V7.4-04: Includes a diff showing what was added, removed, and changed.
+    """
+
+    multi_plan_id: Optional[int] = None
+    schedule: List[MultiScheduleItem]
+    overflow_warnings: List[str] = Field(default_factory=list)
+    unscheduled_tasks: List[MultiUnscheduledTask] = Field(default_factory=list)
+    diff: MultiPlanRescheduleDiff = Field(default_factory=MultiPlanRescheduleDiff)

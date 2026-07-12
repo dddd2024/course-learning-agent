@@ -165,17 +165,19 @@ def test_migration_detects_duplicate_pages_before_constraint():
             session.commit()
             session.close()
 
-            # Run migration — it should detect duplicates and remove them
-            run_schema_migrations(engine)
+            # V7.4-01: Migration must ABORT on duplicates, not delete them
+            import pytest as _pytest
+            with _pytest.raises(RuntimeError, match="duplicate"):
+                run_schema_migrations(engine)
 
-            # Verify no duplicates remain
+            # Verify NO rows were deleted (safe migration preserves data)
             with engine.begin() as conn:
                 result = conn.execute(text(
                     "SELECT material_version_id, page_no, COUNT(*) as cnt "
                     "FROM material_pages GROUP BY material_version_id, page_no "
                     "HAVING cnt > 1"
                 )).fetchall()
-                assert len(result) == 0, f"Duplicate pages remain: {result}"
+                assert len(result) > 0, "Duplicates should still exist (migration must not delete)"
         finally:
             engine.dispose()
             gc.collect()
