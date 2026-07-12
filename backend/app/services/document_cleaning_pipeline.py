@@ -16,7 +16,7 @@ from app.services.material_cleaner import clean_pages
 
 def clean_document_pages(
     pages: list[DocumentPage],
-) -> list[DocumentPage]:
+) -> tuple[list[DocumentPage], list]:
     """Apply the cleaning pipeline to block-structured Document IR.
 
     V7.4-02 P1-01/P1-02: Line-level cleaning within blocks.
@@ -29,10 +29,12 @@ def clean_document_pages(
         pages: Raw DocumentPage objects from the parser.
 
     Returns:
-        New DocumentPage objects with noise lines removed from blocks.
+        A tuple of (cleaned_pages, clean_results) where clean_results
+        is the list of CleanPageResult objects from the underlying
+        clean_pages() call, used for storing audit decisions.
     """
     if not pages:
-        return []
+        return [], []
 
     page_texts = [page.text for page in pages]
     clean_results = clean_pages(page_texts)
@@ -75,4 +77,4 @@ def clean_document_pages(
             page_type=page.page_type,
             parser_version=page.parser_version,
         ))
-    return cleaned_pages
+    return cleaned_pages, clean_results

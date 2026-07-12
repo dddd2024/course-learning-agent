@@ -237,7 +237,7 @@ def test_create_quiz_strict_contract_never_persists_partial_quiz(
 
     impossible = client.post(
         "/api/v1/quizzes",
-        json={**payload, "question_count": 4, "difficulty_distribution": {"easy": 0, "medium": 4, "hard": 0}},
+        json={**payload, "question_count": 4, "difficulty_distribution": {"easy": 4, "medium": 0, "hard": 0}},
         headers=headers,
     )
     assert impossible.status_code == 422

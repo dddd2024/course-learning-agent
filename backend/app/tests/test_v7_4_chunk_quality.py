@@ -60,7 +60,7 @@ def test_line_level_noise_removed_within_block():
         "操作系统概述\n第1页\n进程管理是操作系统的核心功能"
     )])]
 
-    cleaned = clean_document_pages(pages)
+    cleaned, _ = clean_document_pages(pages)
     assert len(cleaned) == 1
     page = cleaned[0]
     # The page number line should be removed from the block text

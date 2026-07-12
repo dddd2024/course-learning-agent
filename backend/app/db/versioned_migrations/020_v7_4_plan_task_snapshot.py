@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 
-VERSION_ID = "020_v7_4_plan_task_snapshot"
+version_id = "020_v7_4_plan_task_snapshot"
 
 
 def up(db, engine: Engine) -> None:
@@ -28,13 +28,13 @@ def up(db, engine: Engine) -> None:
             conn.commit()
 
 
-def dry_run(engine: Engine) -> list[str]:
-    """Return the SQL statements that would be executed."""
+def dry_run(db, engine: Engine) -> dict:
+    """Return a summary of what would change."""
     with engine.connect() as conn:
         cols = {row[1] for row in conn.execute(text("PRAGMA table_info(multi_course_plan_tasks)")).fetchall()}
-    stmts = []
+    changes = {}
     if "title_snapshot" not in cols:
-        stmts.append("ALTER TABLE multi_course_plan_tasks ADD COLUMN title_snapshot VARCHAR(255)")
+        changes["add_title_snapshot"] = True
     if "generation" not in cols:
-        stmts.append("ALTER TABLE multi_course_plan_tasks ADD COLUMN generation INTEGER")
-    return stmts
+        changes["add_generation"] = True
+    return changes

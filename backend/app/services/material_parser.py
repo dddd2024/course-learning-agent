@@ -145,7 +145,7 @@ def parse_with_retry(
             # V7.4-02 P1-02: Single cleaning pass.
             # clean_document_pages calls clean_pages internally; do not
             # call clean_pages separately here (was causing double cleaning).
-            cleaned_pages = clean_document_pages(pages)
+            cleaned_pages, clean_results = clean_document_pages(pages)
             chunks = semantic_chunk_document(cleaned_pages)
             check_cancelled()  # before creating a staging version
 
