@@ -304,13 +304,13 @@ jobs:
           name: e2e-test-result
           path: artifacts/e2e
 
-      - name: Run V6 functional closure verification
+      - name: Run V7 functional closure verification
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts
-          python scripts/verify_function_closure_v6.py --artifact-root artifacts --external-e2e artifacts/e2e/frontend/playwright-results.json
-          cp artifacts/verification/v6-acceptance.json artifacts/verification-result.json
+          python scripts/verify_function_closure_v7.py --artifact-root artifacts --external-e2e artifacts/e2e/frontend/playwright-results.json
+          cp artifacts/verification/v7/v7-acceptance.json artifacts/verification-result.json
 
       - name: Check for skipped tests
         shell: bash
@@ -337,22 +337,22 @@ jobs:
             fi
           fi
 
-      - name: Verify acceptance result is V6 and all checks passed
+      - name: Verify acceptance result is V7 and all checks passed
         shell: bash
         run: |
           set -euo pipefail
-          echo "Validating verification-result.json is a proper V6 JSON report..."
+          echo "Validating verification-result.json is a proper V7 JSON report..."
           if [ -f artifacts/verification-result.json ]; then
           python -c "
           import json, sys
           with open('artifacts/verification-result.json') as f:
               data = json.load(f)
-          assert data['version'] == 'v6', f'Unexpected verification version: {data[\"version\"]}'
+          assert data['version'] == 'v7', f'Unexpected verification version: {data[\"version\"]}'
           assert isinstance(data['checks'], list), 'checks must be a list'
           assert data['total_checks'] == len(data['checks']), 'check count mismatch'
           assert data['all_passed'] is True, 'acceptance report is not all_passed'
           assert all(item['status'] == 'pass' for item in data['checks']), 'a check failed'
-          print(f'All {data[\"total_checks\"]} V6 checks passed')
+          print(f'All {data[\"total_checks\"]} V7 checks passed')
           "
           else
             echo "::error::verification-result.json not found"
