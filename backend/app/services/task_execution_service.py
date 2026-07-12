@@ -104,7 +104,9 @@ def _create_quiz_for_task(
         user_config=user_config,
     )
 
-    items = quiz_output.get("items", [])
+    # A planned quiz has a resolved target spec: unlike free practice it may
+    # not persist an unclassified question or a question outside that target.
+    items = [item for item in quiz_output.get("items", []) if item.get("knowledge_point_id") in {row.id for row in rows}]
     if not items:
         raise BusinessException(message="资料证据不足，无法生成有效测验；请补充并解析课程资料后重试", status_code=422)
     quiz = Quiz(

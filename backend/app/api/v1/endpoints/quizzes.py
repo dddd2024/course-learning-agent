@@ -308,6 +308,7 @@ def create_quiz(
             .filter(
                 KnowledgePoint.course_id == payload.course_id,
                 KnowledgePoint.user_id == current_user.id,
+                KnowledgePoint.status == "active",
                 KnowledgePoint.id.in_(payload.knowledge_point_ids),
             )
             .order_by(KnowledgePoint.id.asc())
@@ -319,6 +320,7 @@ def create_quiz(
             .filter(
                 KnowledgePoint.course_id == payload.course_id,
                 KnowledgePoint.user_id == current_user.id,
+                KnowledgePoint.status == "active",
             )
             .order_by(KnowledgePoint.id.asc())
             .all()
