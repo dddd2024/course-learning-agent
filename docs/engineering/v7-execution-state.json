@@ -2,7 +2,7 @@
   "version": "v7.1",
   "branch": "codex/v7-production-integration",
   "base_commit": "53a1221",
-  "current_head": "9875d8ad9a4b0c979d0771ed09c857590be3d814",
+  "current_head": "562efc654b2d303c47acffd8ccfeb77f147fd353",
   "started_at": "2026-07-12T00:00:00+08:00",
   "updated_at": "2026-07-12T00:00:00+08:00",
   "overall_status": "in_progress",
@@ -80,7 +80,9 @@
       "evidence": [
         "OutlineView records real target load and review confirmation; archived review targets rebind to matching active replacement with task_target_rebound event."
       ],
-      "commits": [],
+      "commits": [
+        "9875d8a fix(v7): rebind archived review targets"
+      ],
       "tests": [
         "python -m pytest backend/app/tests/test_v7_learn_evidence.py backend/app/tests/test_v6_task_flows.py -q --tb=short",
         "frontend: npm run type-check"
@@ -95,11 +97,13 @@
       "notes": ""
     },
     "V7-CONT-07": {
-      "status": "implemented_unverified",
+      "status": "verified",
       "evidence": [
         "Quiz submission validates bound task before mutations and runs scoring, weak points, task verification, todos and goals in one transaction."
       ],
-      "commits": [],
+      "commits": [
+        "562efc6 fix(v7): submit quiz and task transition atomically"
+      ],
       "tests": [
         "python -m pytest backend/app/tests/test_v6_task_flows.py backend/app/tests/test_quizzes.py -q --tb=short"
       ],
