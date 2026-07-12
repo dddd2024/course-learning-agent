@@ -44,8 +44,8 @@ def _run(
     log_dir: Path,
 ) -> dict[str, Any]:
     started = time.monotonic()
-    process = subprocess.run(command, cwd=cwd, text=True, capture_output=True, env=env)
-    output = process.stdout + process.stderr
+    process = subprocess.run(command, cwd=cwd, text=True, encoding="utf-8", errors="replace", capture_output=True, env=env)
+    output = (process.stdout or "") + (process.stderr or "")
     (log_dir / f"{name}.log").write_text(output, encoding="utf-8")
     passed, failed, skipped = _counts(output, process.returncode)
     status = "pass" if process.returncode == 0 and failed == 0 and skipped == 0 else "fail"
@@ -160,7 +160,7 @@ def main() -> int:
         # These suites are independent V5 contracts.  Keeping them as named
         # checks makes a missing regression test a failure instead of a claim.
         for name, test_file in (
-            ("document_quality", "backend/app/tests/test_v5_document_quality.py"),
+            ("document_quality", "backend/app/tests/test_v5_document_parser.py"),
             ("image_integrity", "backend/app/tests/test_v5_image_integrity.py"),
             ("deletion_consistency", "backend/app/tests/test_v5_material_delete.py"),
             ("plan_closure", "backend/app/tests/test_v5_plan_state.py"),
