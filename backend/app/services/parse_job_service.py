@@ -78,7 +78,7 @@ def run_job(job_id: int, parse_fn=None) -> None:
         db.commit()
         status, _ = (parse_fn or parse_with_retry)(db, material, job.user_id)
         db.refresh(job)
-        if job.status != "cancelled":
+        if job.status != "cancelled" and status != "cancelled":
             job.status = "succeeded" if status == "ready" else "failed"
             job.finished_at, job.heartbeat_at = utc_now(), utc_now()
             job.error_message = material.last_parse_error if status != "ready" else None

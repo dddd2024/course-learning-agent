@@ -105,8 +105,13 @@ def test_cancelled_parse_never_creates_or_activates_a_version(
     db_session.add(material)
     db_session.commit()
 
+    checks = {"count": 0}
+    def cancel_after_source_read() -> bool:
+        checks["count"] += 1
+        return checks["count"] >= 2
+
     status, count = parse_with_retry(
-        db_session, material, sample_user.id, is_cancelled=lambda: True
+        db_session, material, sample_user.id, is_cancelled=cancel_after_source_read
     )
 
     db_session.refresh(material)
