@@ -196,6 +196,8 @@ class TaskEventRequest(BaseModel):
     event_type: str = Field(..., pattern="^(target_loaded|user_confirmed|review_confirmed)$")
     target_id: int = Field(..., gt=0)
     material_version_id: Optional[int] = Field(default=None, gt=0)
+    route: Optional[str] = Field(default=None, max_length=500)
+    page_count: Optional[int] = Field(default=None, ge=1)
     note: Optional[str] = Field(default=None, max_length=1000)
 
 

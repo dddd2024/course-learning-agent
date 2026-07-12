@@ -2,11 +2,11 @@
   "version": "v7.1",
   "branch": "codex/v7-production-integration",
   "base_commit": "53a1221",
-  "current_head": "f04ff79b45cbff03adebb1397996bcbacabbe4b7",
+  "current_head": "225688c648c5ccda78f9b3439e5fd376055e69fa",
   "started_at": "2026-07-12T00:00:00+08:00",
   "updated_at": "2026-07-12T00:00:00+08:00",
   "overall_status": "in_progress",
-  "current_task": "V7-CONT-04",
+  "current_task": "V7-CONT-05",
   "tasks": {
     "V7-CONT-00": {
       "status": "verified",
@@ -53,21 +53,28 @@
       "evidence": [
         "Retry and override delegate lifecycle writes to transition_task; direct task PATCH status mutation is rejected."
       ],
-      "commits": [],
+      "commits": [
+        "225688c refactor(v7): enforce unified task state transitions"
+      ],
       "tests": [
         "python -m pytest backend/app/tests/test_v6_state_machine.py backend/app/tests/test_v6_task_flows.py backend/app/tests/test_v3_plan_execution.py backend/app/tests/test_v7_no_legacy_paths.py -q --tb=short"
       ],
       "notes": ""
     },
     "V7-CONT-04": {
-      "status": "in_progress",
-      "evidence": [],
+      "status": "verified",
+      "evidence": [
+        "LearnView records target_loaded only after ready target and reader data load; event persists loaded_at, route, and page_count."
+      ],
       "commits": [],
-      "tests": [],
+      "tests": [
+        "python -m pytest backend/app/tests/test_v7_learn_evidence.py backend/app/tests/test_v7_production_wiring.py backend/app/tests/test_v6_task_flows.py -q --tb=short",
+        "frontend: npm run type-check"
+      ],
       "notes": ""
     },
     "V7-CONT-05": {
-      "status": "not_started",
+      "status": "in_progress",
       "evidence": [],
       "commits": [],
       "tests": [],

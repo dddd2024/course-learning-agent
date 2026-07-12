@@ -24,6 +24,7 @@ class MaterialResponse(BaseModel):
     file_url: Optional[str] = None
     status: str
     version: int
+    active_version_id: Optional[int] = None
     error_message: Optional[str] = None
     uploaded_at: datetime
     parse_started_at: Optional[datetime] = None

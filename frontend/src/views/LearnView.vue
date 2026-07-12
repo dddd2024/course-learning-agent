@@ -393,7 +393,7 @@ import { listKnowledgePoints } from '../api/knowledge'
 import { parseApiError } from '../utils/error'
 import { renderMarkdown } from '../utils/markdown'
 import request from '../api'
-import { verifyTask } from '../api/plan'
+import { recordTaskEvent, verifyTask } from '../api/plan'
 
 const route = useRoute()
 const router = useRouter()
@@ -405,6 +405,7 @@ const fromTaskId = computed(() => {
   const tid = Number(route.query.task_id)
   return Number.isInteger(tid) && tid > 0 ? tid : null
 })
+const targetLoadRecorded = ref(false)
 const materials = ref<Material[]>([])
 const selectedMaterialId = ref<number | null>(null)
 const rawChunks = ref<Chunk[]>([])
@@ -760,6 +761,28 @@ async function loadChunks() {
     await preloadImages(chunks.value)
     // V6-52: load image integrity status (best-effort, non-blocking)
     loadImageIntegrity()
+    // V7: task start only creates the in-progress state.  Evidence is sent
+    // after the target material and its rendered reader data have loaded.
+    const expectedMaterialId = Number(route.query.material_id)
+    if (
+      fromTaskId.value &&
+      !targetLoadRecorded.value &&
+      Number.isInteger(expectedMaterialId) &&
+      expectedMaterialId > 0 &&
+      selectedMaterialId.value === expectedMaterialId &&
+      selectedMaterial.value?.status === 'ready' &&
+      (chunks.value.length > 0 || materialPages.value.length > 0)
+    ) {
+      await recordTaskEvent(
+        fromTaskId.value,
+        'target_loaded',
+        expectedMaterialId,
+        selectedMaterial.value.active_version_id ?? undefined,
+        route.fullPath,
+        materialPages.value.length || chunks.value.length,
+      )
+      targetLoadRecorded.value = true
+    }
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取资料内容失败'))
   } finally {

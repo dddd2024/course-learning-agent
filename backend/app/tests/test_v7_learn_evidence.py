@@ -33,3 +33,26 @@ def test_target_loaded_is_idempotent_after_start(db_session, sample_user, sample
     second = record_task_event(db_session, sample_learn_task.id, sample_user.id, "target_loaded", sample_learn_task.target_id)
     assert first["recorded"] is True
     assert second["recorded"] is False
+
+
+def test_target_loaded_records_reader_context(db_session, sample_user, sample_course):
+    sample_learn_task = _learn_task(db_session, sample_user, sample_course)
+    start_task(db_session, sample_learn_task.id, sample_user.id)
+
+    record_task_event(
+        db_session,
+        sample_learn_task.id,
+        sample_user.id,
+        "target_loaded",
+        sample_learn_task.target_id,
+        route="/courses/1/learn?material_id=1",
+        page_count=3,
+    )
+
+    event = db_session.query(TaskExecutionEvent).filter_by(
+        task_id=sample_learn_task.id, event_type="target_loaded"
+    ).one()
+    payload = json.loads(event.payload_json)
+    assert payload["route"] == "/courses/1/learn?material_id=1"
+    assert payload["page_count"] == 3
+    assert payload["loaded_at"]

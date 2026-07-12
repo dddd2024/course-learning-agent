@@ -221,7 +221,17 @@ def start_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
     }
 
 
-def record_task_event(db: Session, task_id: int, user_id: int, event_type: str, target_id: int, material_version_id: int | None = None, note: str | None = None) -> dict[str, Any]:
+def record_task_event(
+    db: Session,
+    task_id: int,
+    user_id: int,
+    event_type: str,
+    target_id: int,
+    material_version_id: int | None = None,
+    note: str | None = None,
+    route: str | None = None,
+    page_count: int | None = None,
+) -> dict[str, Any]:
     task = _get_owned_task(db, task_id, user_id)
     allowed = {"learn": {"target_loaded", "user_confirmed"}, "review": {"target_loaded", "review_confirmed"}}
     if event_type not in allowed.get(task.task_type, set()):
@@ -239,6 +249,12 @@ def record_task_event(db: Session, task_id: int, user_id: int, event_type: str, 
     if expected_version is not None and material_version_id != expected_version:
         raise BusinessException(message="资料版本与任务目标不一致", status_code=409)
     payload.update({"target_id": target_id, "material_version_id": material_version_id})
+    if event_type == "target_loaded":
+        payload.update({
+            "loaded_at": datetime.now().isoformat(),
+            "route": route or "client",
+            "page_count": page_count or 1,
+        })
     # Reloads must not manufacture additional target_loaded evidence.
     if event_type == "target_loaded":
         existing = db.query(TaskExecutionEvent).filter(

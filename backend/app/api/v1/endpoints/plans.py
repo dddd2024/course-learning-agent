@@ -487,7 +487,17 @@ def record_task_event(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    return record_task_event_service(db, task_id, current_user.id, payload.event_type, payload.target_id, payload.material_version_id, payload.note)
+    return record_task_event_service(
+        db,
+        task_id,
+        current_user.id,
+        payload.event_type,
+        payload.target_id,
+        payload.material_version_id,
+        payload.note,
+        payload.route,
+        payload.page_count,
+    )
 
 
 @router.post("/tasks/{task_id}/retry")

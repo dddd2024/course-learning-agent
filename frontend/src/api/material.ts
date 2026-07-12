@@ -10,6 +10,7 @@ export interface Material {
   file_type: string
   status: MaterialStatus
   version: number
+  active_version_id?: number | null
   error_message?: string | null
   uploaded_at: string
   parse_started_at?: string | null
