@@ -165,7 +165,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       LLM_PROVIDER: mock
-      DATABASE_URL: sqlite:///${{ runner.temp }}/e2e-${{ github.run_id }}.db
+      DATABASE_URL: sqlite:///${{ github.workspace }}/e2e-${{ github.run_id }}.db
       PYTHONPATH: ${{ github.workspace }}/backend
     steps:
       - name: Checkout
