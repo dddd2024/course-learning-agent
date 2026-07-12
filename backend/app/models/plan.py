@@ -22,6 +22,33 @@ from sqlalchemy import (
 from app.models.base import Base, TimestampMixin
 
 
+class MultiCoursePlan(Base, TimestampMixin):
+    """Persistent parent for a coordinated multi-course schedule."""
+
+    __tablename__ = "multi_course_plans"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    deadline = Column(Date, nullable=False)
+    daily_minutes = Column(Integer, nullable=False)
+    status = Column(String(30), nullable=False, default="active", index=True)
+    generation_version = Column(Integer, nullable=False, default=1)
+
+
+class MultiCoursePlanTask(Base, TimestampMixin):
+    """Schedule metadata for a StudyTask without owning the task itself."""
+
+    __tablename__ = "multi_course_plan_tasks"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    multi_plan_id = Column(Integer, ForeignKey("multi_course_plans.id", ondelete="CASCADE"), nullable=False, index=True)
+    task_id = Column(Integer, ForeignKey("study_tasks.id", ondelete="CASCADE"), nullable=True, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id", ondelete="CASCADE"), nullable=False, index=True)
+    depends_on_json = Column(Text, nullable=False, default="[]")
+    scheduled_date = Column(Date, nullable=True, index=True)
+    estimate_minutes = Column(Integer, nullable=False, default=0)
+    unscheduled_reason = Column(String(100), nullable=True)
+
+
 class StudyGoal(Base, TimestampMixin):
     """A user's learning objective plus planning parameters."""
 
@@ -50,7 +77,7 @@ class StudyTask(Base, TimestampMixin):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     goal_id = Column(
-        Integer, ForeignKey("study_goals.id"), nullable=False, index=True
+        Integer, ForeignKey("study_goals.id", ondelete="CASCADE"), nullable=False, index=True
     )
     course_id = Column(
         Integer, ForeignKey("courses.id"), nullable=False, index=True
@@ -72,6 +99,7 @@ class StudyTask(Base, TimestampMixin):
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     last_action_at = Column(DateTime, nullable=True)
+    manual_completed_at = Column(DateTime, nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (
@@ -86,13 +114,13 @@ class TaskExecutionEvent(Base, TimestampMixin):
     __tablename__ = "task_execution_events"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    task_id = Column(Integer, ForeignKey("study_tasks.id"), nullable=False, index=True)
+    task_id = Column(Integer, ForeignKey("study_tasks.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     event_type = Column(String(50), nullable=False, index=True)
     target_type = Column(String(30), nullable=True)
     target_id = Column(Integer, nullable=True)
     payload_json = Column(Text, nullable=True)
-    occurred_at = Column(DateTime, nullable=False)
+    occurred_at = Column(DateTime, nullable=False, index=True)
 
 
 class Todo(Base, TimestampMixin):
@@ -105,7 +133,7 @@ class Todo(Base, TimestampMixin):
         Integer, ForeignKey("users.id"), nullable=False, index=True
     )
     task_id = Column(
-        Integer, ForeignKey("study_tasks.id"), nullable=False, index=True
+        Integer, ForeignKey("study_tasks.id", ondelete="CASCADE"), nullable=False, index=True
     )
     course_id = Column(
         Integer, ForeignKey("courses.id"), nullable=False, index=True

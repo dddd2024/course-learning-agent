@@ -24,11 +24,46 @@ import math
 import re
 from typing import List
 
-from sqlalchemy import or_
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from app.models.material import Material
 from app.models.material_chunk import MaterialChunk
+from app.retrieval.aliases import expand
+
+
+def rebuild_fts_index(db: Session) -> None:
+    """Rebuild the SQLite FTS5 index from active, indexable chunks."""
+    db.execute(text("CREATE VIRTUAL TABLE IF NOT EXISTS material_chunks_fts USING fts5(chunk_id UNINDEXED, course_id UNINDEXED, body, title)"))
+    db.execute(text("DELETE FROM material_chunks_fts"))
+    rows = db.query(MaterialChunk).filter(MaterialChunk.is_active == 1, MaterialChunk.is_indexable == 1).all()
+    db.execute(text("INSERT INTO material_chunks_fts(chunk_id, course_id, body, title) VALUES (:chunk_id, :course_id, :body, :title)"), [{"chunk_id": row.id, "course_id": row.course_id, "body": row.text or "", "title": row.title or ""} for row in rows])
+    db.commit()
+
+
+def fts_search(db: Session, course_id: int, query: str, top_k: int = 12) -> list[dict]:
+    """BM25 retrieval with alias expansion; return [] on unsupported SQLite."""
+    terms = [term.replace('"', ' ') for value in expand(query) for term in _split_keywords(value)]
+    if not terms:
+        return []
+    try:
+        rebuild_fts_index(db)
+        match = " OR ".join(dict.fromkeys(terms))
+        rows = db.execute(text("SELECT chunk_id, bm25(material_chunks_fts) AS rank FROM material_chunks_fts WHERE material_chunks_fts MATCH :match AND course_id = :course_id ORDER BY rank LIMIT :limit"), {"match": match, "course_id": course_id, "limit": top_k}).mappings().all()
+    except Exception:
+        db.rollback()
+        return []
+    ids = [int(row["chunk_id"]) for row in rows]
+    chunks = {row.id: row for row in db.query(MaterialChunk).filter(MaterialChunk.id.in_(ids)).all()}
+    results = []
+    lowered_terms = [term.lower() for term in terms]
+    for cid, row in zip(ids, rows):
+        if cid not in chunks:
+            continue
+        chunk = chunks[cid]
+        title_bonus = 0.2 if any(term in (chunk.title or "").lower() for term in lowered_terms) else 0.0
+        results.append({"chunk_id": cid, "text": chunk.text or "", "title": chunk.title, "page_no": chunk.page_no, "material_id": chunk.material_id, "filename": "", "score": round(1 / (1 + abs(float(row["rank"]))) + title_bonus, 4), "retrieval_mode": "fts_bm25"})
+    return sorted(results, key=lambda item: item["score"], reverse=True)
 
 # CJK Unified Ideographs range; used to also split Chinese queries into
 # single-character keywords so multi-char terms like "快表" can still
@@ -126,6 +161,11 @@ def keyword_search(
         ``chunk_id``, ``text``, ``score``, ``page_no``, ``material_id``,
         ``filename``, ``title``.
     """
+    fts_results = fts_search(db, course_id, query, top_k=top_k)
+    if fts_results:
+        for item in fts_results:
+            item["snippet"] = generate_snippet(item["text"], _split_keywords(query))
+        return fts_results
     keywords = _split_keywords(query)
     if not keywords:
         return []
@@ -265,6 +305,7 @@ def keyword_search(
                 "material_id": chunk.material_id,
                 "filename": filename,
                 "title": chunk.title,
+                "retrieval_mode": "keyword_fallback",
             }
         )
 

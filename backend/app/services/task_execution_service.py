@@ -163,7 +163,7 @@ def _build_route_info(task: StudyTask, quiz_id: int | None) -> dict[str, Any]:
         params = {"course_id": task.course_id, "material_id": task.target_id}
     elif task.task_type == "review":
         route = "/courses/:courseId/outline"
-        params = {"course_id": task.course_id, "knowledge_point_id": task.target_id}
+        params = {"course_id": task.course_id, "knowledge_point_id": task.target_id, "task_id": task.id, "plan_id": task.goal_id}
 
     return {"route": route, "params": params}
 

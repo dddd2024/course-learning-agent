@@ -17,7 +17,7 @@ import logging
 import time
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.agents.audit import AgentAudit
@@ -208,21 +208,20 @@ def generate_knowledge_points(
 )
 def list_knowledge_points(
     course_id: int,
+    include_archived: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> KnowledgePointListResponse:
     """List persisted knowledge points for a course owned by the user."""
     _get_owned_course(db, course_id, current_user.id)
 
-    rows = (
-        db.query(KnowledgePoint)
-        .filter(
-            KnowledgePoint.course_id == course_id,
-            KnowledgePoint.user_id == current_user.id,
-        )
-        .order_by(KnowledgePoint.id.asc())
-        .all()
+    query = db.query(KnowledgePoint).filter(
+        KnowledgePoint.course_id == course_id,
+        KnowledgePoint.user_id == current_user.id,
     )
+    if not include_archived:
+        query = query.filter(KnowledgePoint.status == "active")
+    rows = query.order_by(KnowledgePoint.id.asc()).all()
     items = [KnowledgePointResponse.model_validate(r) for r in rows]
     return KnowledgePointListResponse(items=items, total=len(items))
 

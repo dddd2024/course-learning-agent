@@ -166,6 +166,8 @@ def main() -> int:
             ("plan_closure", "backend/app/tests/test_v5_plan_state.py"),
             ("knowledge_grounding", "backend/app/tests/test_v5_knowledge_grounding.py"),
             ("multi_schedule", "backend/app/tests/test_v5_multi_schedule.py"),
+            ("retrieval", "backend/app/tests/test_v5_retrieval.py"),
+            ("parse_job", "backend/app/tests/test_v5_parse_jobs.py"),
         ):
             results.append(_run(
                 name,

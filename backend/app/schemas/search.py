@@ -17,6 +17,7 @@ class SearchResultItem(BaseModel):
     text: str
     snippet: Optional[str] = ""
     score: float
+    retrieval_mode: str = "keyword_fallback"
 
 
 class SearchResultListResponse(BaseModel):
