@@ -193,7 +193,9 @@ class TaskVerifyRequest(BaseModel):
 class TaskEventRequest(BaseModel):
     """A user-confirmed task action recorded as server-side evidence."""
 
-    event_type: str = Field(..., pattern="^(material_opened|knowledge_point_viewed|user_confirmed|review_confirmed)$")
+    event_type: str = Field(..., pattern="^(target_loaded|user_confirmed|review_confirmed)$")
+    target_id: int = Field(..., gt=0)
+    material_version_id: Optional[int] = Field(default=None, gt=0)
     note: Optional[str] = Field(default=None, max_length=1000)
 
 

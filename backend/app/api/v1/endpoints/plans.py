@@ -33,7 +33,7 @@ from app.core.exceptions import BusinessException, NotFoundException
 from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
 from app.models.material import Material
-from app.models.plan import StudyGoal, StudyTask, Todo
+from app.models.plan import MultiCoursePlan, MultiCoursePlanTask, StudyGoal, StudyTask, Todo
 from app.models.quiz import WeakPoint
 from app.models.user import User
 from app.services.weak_point_progress import apply_mastery_decay
@@ -489,7 +489,7 @@ def record_task_event(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    return record_task_event_service(db, task_id, current_user.id, payload.event_type, payload.note)
+    return record_task_event_service(db, task_id, current_user.id, payload.event_type, payload.target_id, payload.material_version_id, payload.note)
 
 
 @router.post("/tasks/{task_id}/retry")
@@ -795,6 +795,16 @@ def create_multi_plan(
     overflow_warnings = schedule.get("overflow_warnings", [])
     unscheduled_tasks = schedule.get("unscheduled_tasks", [])
 
+    parent = MultiCoursePlan(
+        user_id=current_user.id,
+        title="多课程学习计划",
+        deadline=max(item.deadline for item in payload.courses),
+        daily_minutes=payload.daily_minutes,
+        status="active",
+    )
+    db.add(parent)
+    db.flush()
+
     # Persist: one StudyGoal per course so each course's plan can be
     # managed independently, then one StudyTask + one Todo per schedule
     # item.
@@ -849,6 +859,15 @@ def create_multi_plan(
         db.add(task)
         db.flush()
 
+        db.add(MultiCoursePlanTask(
+            multi_plan_id=parent.id,
+            task_id=task.id,
+            course_id=course_id,
+            depends_on_json=json.dumps(item.get("depends_on", []), ensure_ascii=False),
+            scheduled_date=item["scheduled_date"],
+            estimate_minutes=item["estimate_minutes"],
+        ))
+
         todo = Todo(
             user_id=current_user.id,
             task_id=task.id,
@@ -874,6 +893,16 @@ def create_multi_plan(
             )
         )
 
+    for item in unscheduled_tasks:
+        db.add(MultiCoursePlanTask(
+            multi_plan_id=parent.id,
+            task_id=None,
+            course_id=item["course_id"],
+            depends_on_json=json.dumps(item.get("depends_on", []), ensure_ascii=False),
+            scheduled_date=None,
+            estimate_minutes=item["estimate_minutes"],
+            unscheduled_reason=item["reason"],
+        ))
     db.commit()
 
     return MultiPlanResponse(

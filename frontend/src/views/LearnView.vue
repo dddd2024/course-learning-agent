@@ -41,6 +41,11 @@
           :value="m.id"
         />
       </el-select>
+      <el-radio-group v-model="readerMode" size="small" aria-label="资料展示模式">
+        <el-radio-button label="clean">清洗</el-radio-button>
+        <el-radio-button label="raw">原文</el-radio-button>
+        <el-radio-button label="page">原页</el-radio-button>
+      </el-radio-group>
     </div>
 
     <!-- Reading progress bar -->
@@ -89,18 +94,18 @@
         <div class="toc-label">目录</div>
         <div class="toc-list">
           <div
-            v-for="(chunk, idx) in chunks"
-            :key="chunk.id"
+            v-for="(page, idx) in materialPages"
+            :key="page.id"
             class="toc-item"
             :class="{ active: activeChunkIndex === idx }"
             role="button"
             tabindex="0"
-            @click="scrollToChunk(idx)"
-            @keydown.enter="scrollToChunk(idx)"
-            @keydown.space.prevent="scrollToChunk(idx)"
+            @click="scrollToPage(page.page_no)"
+            @keydown.enter="scrollToPage(page.page_no)"
+            @keydown.space.prevent="scrollToPage(page.page_no)"
           >
             <span class="toc-num">{{ idx + 1 }}</span>
-            <span class="toc-title">{{ getChunkLabel(chunk) }}</span>
+            <span class="toc-title">第 {{ page.page_no }} 页</span>
           </div>
         </div>
       </div>
@@ -115,12 +120,6 @@
           <el-empty description="请选择一份资料开始学习" :image-size="100" />
         </div>
         <div v-else class="doc-content">
-          <!-- Filter hint -->
-          <div v-if="filteredCount > 0" class="filter-hint">
-            <el-tag type="info" size="small" effect="plain">
-              已自动过滤 {{ filteredCount }} 个无关片段（封面/目录/页眉等）
-            </el-tag>
-          </div>
           <div class="image-filter-control">
             <el-switch
               v-model="showFilteredImages"
@@ -175,7 +174,16 @@
           </div>
 
           <!-- Document chunks -->
-          <div class="doc-chunks" @mouseup="handleSelection">
+          <div v-if="readerMode !== 'page'" class="doc-chunks" @mouseup="handleSelection">
+            <div v-for="page in materialPages" :id="`page-${page.page_no}`" :key="`reader-${page.id}`" class="doc-chunk">
+              <div class="doc-chunk-head"><span class="doc-chunk-page">第 {{ page.page_no }} 页</span></div>
+              <div class="doc-chunk-text">{{ readerMode === 'raw' ? page.raw_text : page.clean_text }}</div>
+            </div>
+          </div>
+          <div v-else class="doc-chunks">
+            <iframe v-if="selectedMaterial?.file_url" :src="selectedMaterial.file_url" title="资料原页预览" class="material-page-preview" />
+          </div>
+          <div v-if="readerMode === 'clean'" class="doc-chunks" @mouseup="handleSelection">
             <div
               v-for="(chunk, idx) in chunks"
               :key="chunk.id"
@@ -339,7 +347,7 @@ import { nextTick, onMounted, ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ChatDotRound, CopyDocument, InfoFilled, Loading, MagicStick, Aim } from '@element-plus/icons-vue'
-import { listMaterials, getChunks, generateMaterialStudyGuide, type Material, type Chunk } from '../api/material'
+import { listMaterials, getChunks, getMaterialPages, generateMaterialStudyGuide, type Material, type Chunk, type MaterialPage } from '../api/material'
 import { listCourses, type Course } from '../api/course'
 import {
   createConversation,
@@ -367,10 +375,12 @@ const materials = ref<Material[]>([])
 const selectedMaterialId = ref<number | null>(null)
 const rawChunks = ref<Chunk[]>([])
 const chunks = ref<Chunk[]>([])
+const materialPages = ref<MaterialPage[]>([])
+const readerMode = ref<'clean' | 'raw' | 'page'>('clean')
+const selectedMaterial = computed(() => materials.value.find((item) => item.id === selectedMaterialId.value) || null)
 const imageUrls = ref<Record<number, string>>({})
 const showFilteredImages = ref(false)
 const docLoading = ref(false)
-const filteredCount = ref(0)
 const mobilePane = ref<'toc' | 'content' | 'assistant'>('content')
 
 // AI assistant state
@@ -400,129 +410,6 @@ const kpFilterActive = ref(false)
 // TOC + progress state
 const activeChunkIndex = ref(0)
 const readProgress = ref(0)
-
-// --- Chunk filtering ---
-// NOTE: patterns below are intentionally GENERIC (chapter headers, page
-// numbers, dates, teacher info, section headers). Course-specific noise
-// (author tags like [Forouzan]/[Tanenbaum], school names, etc.) must NOT
-// live here — add such handling per-course if ever needed again.
-const USELESS_PATTERNS = [
-  // Chapter headers (e.g. "第一章", "第3章")
-  /^第[一二三四五六七八九十\d]+章\s*$/,
-  // Year-only lines on cover/header pages
-  /^\d{4}年\d*月?\s*$/,
-  // Teacher info
-  /^[主讲教师|教师][:：]/,
-  // Knowledge map headers
-  /^第\d+章知识导图$/,
-  // Date + semester info on cover pages
-  /^\d{4}年(?:春|秋|夏|冬)\s*$/,
-  // "本章学习" / "本章小结" / "学习目标" section headers without content
-  /^(?:本章学习|本章小结|学习目标|教学目标)\s*$/,
-  // Pure page numbers
-  /^第?\d+页\s*$/,
-]
-
-// Lines that, if present, make the whole chunk likely a cover/header
-const NOISE_LINE_PATTERNS = [
-  /^\d{4}年(?:春|秋|夏|冬)/,           // "2026年春"
-  /^\d{4}年\d+月/,                       // "2026年5月"
-  /^第\d+页/,
-  /^[主讲教师|教师][:：]/,
-]
-
-// Inline noise patterns: removed from within lines (not just whole lines)
-// e.g. "42026年春" → "4"
-const INLINE_NOISE_PATTERNS = [
-  /\d{4}年(?:\d+月)?(?:春|秋|夏|冬)?/g,   // dates: "2026年春", "2026年5月"
-]
-
-function isUsefulChunk(chunk: Chunk): boolean {
-  const text = chunk.text.trim()
-  if (text.length < 40) return false
-  for (const pattern of USELESS_PATTERNS) {
-    if (pattern.test(text)) return false
-  }
-  if (chunk.title && chunk.title.trim() === text) return false
-
-  // Check if the chunk is mostly noise (cover page, header lines)
-  const lines = text.split('\n')
-  const noiseLines = lines.filter(line => {
-    const trimmed = line.trim()
-    return NOISE_LINE_PATTERNS.some(p => p.test(trimmed)) ||
-      // Also detect inline noise (dates embedded with page numbers etc.)
-      INLINE_NOISE_PATTERNS.some(p => {
-        const re = new RegExp(p.source, p.flags)
-        return re.test(trimmed) && trimmed.replace(re, '').trim().length < 3
-      })
-  })
-  // If more than half the lines are noise, filter it out
-  if (lines.length > 0 && noiseLines.length / lines.length > 0.5) {
-    return false
-  }
-
-  // Check for high line repetition (diagram text)
-  const uniqueLines = new Set(lines.map(l => l.trim().toLowerCase()))
-  if (lines.length > 3 && uniqueLines.size / lines.length < 0.5) {
-    return false
-  }
-
-  // Check for short-line stacking (diagram labels)
-  const shortLines = lines.filter(l => l.trim().length < 4).length
-  if (lines.length > 3 && shortLines / lines.length > 0.6) {
-    return false
-  }
-
-  // Check for vocabulary diversity
-  const cjkChars = text.match(/[\u4e00-\u9fff\w]/g)
-  if (cjkChars && cjkChars.length > 50) {
-    const uniqueChars = new Set(cjkChars)
-    if (uniqueChars.size / cjkChars.length < 0.3) {
-      return false
-    }
-  }
-
-  // AI quality score filter - chunks with quality_score < 0.3 are filtered
-  if (chunk.quality_score !== null && chunk.quality_score !== undefined) {
-    if (chunk.quality_score < 0.3) return false
-  }
-
-  return true
-}
-
-function cleanChunkText(text: string): string {
-  // Remove noise lines from within chunk text
-  const lines = text.split('\n')
-  const cleaned = lines.filter(line => {
-    const trimmed = line.trim()
-    if (!trimmed) return true // keep blank lines for formatting
-    return !NOISE_LINE_PATTERNS.some(p => p.test(trimmed))
-  })
-  // Apply inline noise removal (dates, bibliographic refs) within surviving lines
-  const deNoised = cleaned.map(line =>
-    INLINE_NOISE_PATTERNS.reduce((l, p) => l.replace(p, ''), line)
-  )
-  // Collapse multiple blank lines into one
-  const result = deNoised.join('\n').replace(/\n{3,}/g, '\n\n')
-  return result.trim()
-}
-
-function filterUsefulChunks(raw: Chunk[]): Chunk[] {
-  const filtered = raw.filter(isUsefulChunk).map(c => ({
-    ...c,
-    text: cleanChunkText(c.text),
-  }))
-  filteredCount.value = raw.length - filtered.length
-  return filtered
-}
-
-function getChunkLabel(chunk: Chunk): string {
-  if (chunk.title && chunk.title.trim()) {
-    return chunk.title.length > 20 ? chunk.title.substring(0, 20) + '...' : chunk.title
-  }
-  if (chunk.page_no) return `第${chunk.page_no}页`
-  return '片段'
-}
 
 function getQualityClass(score: number): string {
   if (score >= 0.7) return 'quality-high'
@@ -634,11 +521,6 @@ async function generateStudyGuide() {
 }
 
 // --- Scroll + progress ---
-function scrollToChunk(idx: number) {
-  const el = document.getElementById(`chunk-${chunks.value[idx].id}`)
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-}
-
 function handleDocScroll() {
   const reader = document.querySelector('.doc-reader') as HTMLElement
   if (!reader) return
@@ -790,8 +672,8 @@ async function loadChunks() {
       rawChunks.value = materialChunks
       // The backend is the single source of truth for cleaned/displayable
       // content; do not hide a valid citation with a second UI heuristic.
-      filteredCount.value = 0
       chunks.value = materialChunks
+      materialPages.value = (await getMaterialPages(selectedMaterialId.value)).data.items
     }
     await preloadImages(chunks.value)
   } catch (err) {
@@ -822,8 +704,9 @@ async function preloadImages(source: Chunk[]) {
     imageUrls.value[image.id] = URL.createObjectURL(data)
   }))
 }
-// Kept for diagnostic comparison only; rendering uses backend display state.
-void filterUsefulChunks
+function scrollToPage(pageNo: number) {
+  document.getElementById(`page-${pageNo}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 
 function askAboutKnowledgePoint() {
   if (!kpTitle.value) return

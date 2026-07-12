@@ -38,7 +38,7 @@ export default defineConfig({
   outputDir: 'test-results',
   webServer: [
     {
-      command: 'cd ../backend && python -m uvicorn app.main:app --host 127.0.0.1 --port 8000',
+      command: 'cd ../backend && python ../scripts/migrate.py && python -m uvicorn app.main:app --host 127.0.0.1 --port 8000',
       env: {
         LLM_PROVIDER: 'mock',
         ...(process.env.DATABASE_URL ? { DATABASE_URL: process.env.DATABASE_URL } : {}),

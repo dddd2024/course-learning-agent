@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 from app.agents.planner import generate as planner_generate
 from app.models.course import Course
 from app.models.quiz import WeakPoint
+from app.models.plan import Todo
 
 # Per-course-per-day continuous-learning cap (section 11.6 of the design
 # doc: 同一课程连续学习不超 90 分钟).
@@ -204,6 +205,9 @@ def schedule_multi_courses(
         days.append(today)
 
     daily_remaining: dict[date, int] = {d: daily_minutes for d in days}
+    existing = db.query(Todo).filter(Todo.user_id == user_id, Todo.status == "pending", Todo.scheduled_date.in_(days)).all()
+    for todo in existing:
+        daily_remaining[todo.scheduled_date] = max(0, daily_remaining[todo.scheduled_date] - int(todo.estimate_minutes or 0))
     # Per-(course_id, date) remaining minutes under the 90-min cap.
     per_course_day_remaining: dict[tuple[int, date], int] = {}
 
@@ -219,9 +223,14 @@ def schedule_multi_courses(
             key=lambda t: -int(t.get("priority", 0) or 0),
         )
 
+        scheduled_titles: set[str] = set()
         for task in ordered_tasks:
             estimate = int(task.get("estimate_minutes", 0) or 0)
             if estimate <= 0:
+                continue
+            dependencies = set(task.get("depends_on") or [])
+            if dependencies and not dependencies <= scheduled_titles:
+                unscheduled_tasks.append({"course_id": cp["course_id"], "course_name": cp["course_name"], "title": task.get("title", ""), "estimate_minutes": estimate, "deadline": cp["deadline"], "remaining_budget": 0, "reason": "dependency_unresolved", "suggestion": "先完成前置任务后重新调度", "depends_on": list(dependencies)})
                 continue
 
             chosen: date | None = None
@@ -273,10 +282,12 @@ def schedule_multi_courses(
                     "estimate_minutes": estimate,
                     "priority": int(task.get("priority", 3) or 3),
                     "acceptance": task.get("acceptance", ""),
+                    "depends_on": list(dependencies),
                     "start_time": None,
                     "end_time": None,
                 }
             )
+            scheduled_titles.add(task.get("title", ""))
 
     schedule.sort(key=lambda item: item["scheduled_date"])
     return {"schedule": schedule, "overflow_warnings": overflow_warnings, "unscheduled_tasks": unscheduled_tasks}

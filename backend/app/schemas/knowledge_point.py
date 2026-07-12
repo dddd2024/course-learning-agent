@@ -47,3 +47,8 @@ class GenerateKnowledgePointsResponse(BaseModel):
     """Result of POST /courses/{id}/knowledge-points/generate."""
 
     knowledge_points: List[KnowledgePointResponse]
+    count: int = 0
+    requested: int = 0
+    generated: int = 0
+    dropped: int = 0
+    drop_reasons: List[str] = []

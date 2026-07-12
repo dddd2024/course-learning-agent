@@ -39,6 +39,9 @@ MIGRATION_MODULES = [
     "008_orphan_goals",
     "009_task_execution_events",
     "010_v5_pages",
+    "011_v5_lifecycle",
+    "012_v5_task_event_cascade",
+    "013_v5_task_completion_fields",
 ]
 
 

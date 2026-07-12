@@ -236,8 +236,8 @@ export function verifyTask(taskId: number, confirmation?: boolean): AxiosPromise
   return request.post(`/plans/tasks/${taskId}/verify`, { confirmation: confirmation ?? null })
 }
 
-export function recordTaskEvent(taskId: number, eventType: 'material_opened' | 'knowledge_point_viewed' | 'user_confirmed' | 'review_confirmed'): AxiosPromise<{ recorded: boolean }> {
-  return request.post(`/plans/tasks/${taskId}/events`, { event_type: eventType })
+export function recordTaskEvent(taskId: number, eventType: 'target_loaded' | 'user_confirmed' | 'review_confirmed', targetId: number, materialVersionId?: number): AxiosPromise<{ recorded: boolean }> {
+  return request.post(`/plans/tasks/${taskId}/events`, { event_type: eventType, target_id: targetId, material_version_id: materialVersionId })
 }
 
 export function retryTask(taskId: number): AxiosPromise<TaskStartResult> {

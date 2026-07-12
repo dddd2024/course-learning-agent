@@ -30,13 +30,17 @@ def todo_update_allowed(todo: Todo, status: str | None) -> None:
         raise ValueError("关联学习任务必须从任务验证入口完成，待办不能绕过服务端验收")
 
 
-def mark_task_completed(db: Session, task: StudyTask) -> None:
+def mark_task_completed(db: Session, task: StudyTask, *, manual: bool = False) -> int:
     now = datetime.now()
     task.status = "done"
     task.execution_status = "completed"
     task.completed_at = now
-    task.auto_completed_at = now
+    task.auto_completed_at = None if manual else now
+    task.manual_completed_at = now if manual else None
+    completed = 0
     for todo in db.query(Todo).filter(Todo.task_id == task.id).all():
         todo.status = "completed"
         todo.completed_at = now
+        completed += 1
     recompute_goal(db, task.goal_id)
+    return completed

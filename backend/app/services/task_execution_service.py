@@ -32,7 +32,7 @@ from app.models.plan import StudyGoal, StudyTask, TaskExecutionEvent, Todo
 from app.models.quiz import Quiz, QuizItem
 from app.services.llm_config_service import build_user_config, get_active_config
 from app.services.task_target_resolver import ensure_target_spec
-from app.services.plan_state_service import recompute_goal
+from app.services.plan_state_service import recompute_goal, mark_task_completed
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,10 @@ def _create_quiz_for_task(
         user_config=user_config,
     )
 
+    # ``generate_quiz`` has already verified every item against an active
+    # source chunk and reconciled its point reference.  Preserve its partial
+    # generation result rather than turning a valid evidence-backed question
+    # into an empty planned quiz merely because a model omitted a label.
     items = quiz_output.get("items", [])
     if not items:
         raise BusinessException(message="资料证据不足，无法生成有效测验；请补充并解析课程资料后重试", status_code=422)
@@ -163,7 +167,7 @@ def _build_route_info(task: StudyTask, quiz_id: int | None) -> dict[str, Any]:
         params = {"course_id": task.course_id, "material_id": task.target_id}
     elif task.task_type == "review":
         route = "/courses/:courseId/outline"
-        params = {"course_id": task.course_id, "knowledge_point_id": task.target_id}
+        params = {"course_id": task.course_id, "knowledge_point_id": task.target_id, "task_id": task.id, "plan_id": task.goal_id}
 
     return {"route": route, "params": params}
 
@@ -268,20 +272,22 @@ def _complete_associated_todos(db: Session, task_id: int, user_id: int) -> int:
     return count
 
 
-def record_task_event(db: Session, task_id: int, user_id: int, event_type: str, note: str | None = None) -> dict[str, Any]:
+def record_task_event(db: Session, task_id: int, user_id: int, event_type: str, target_id: int, material_version_id: int | None = None, note: str | None = None) -> dict[str, Any]:
     task = _get_owned_task(db, task_id, user_id)
     allowed = {"learn": {"target_loaded", "user_confirmed"}, "review": {"target_loaded", "review_confirmed"}}
     if event_type not in allowed.get(task.task_type, set()):
         raise BusinessException(message="该任务不接受此执行事件", status_code=422)
     spec = ensure_target_spec(db, task)
-    # The client supplies the loaded resource id in note payload only for old
-    # clients; modern events have the canonical task target.  Never accept an
-    # event for another material/knowledge point as completion evidence.
     payload = {"note": note} if note else {}
     expected = spec.get("material_id") if task.task_type == "learn" else spec.get("knowledge_point_id")
     if expected is None:
         raise BusinessException(message="任务目标未解析", status_code=409)
-    payload["target_id"] = expected
+    if target_id != expected:
+        raise BusinessException(message="事件目标与任务目标不一致", status_code=409)
+    expected_version = spec.get("material_version_id")
+    if expected_version is not None and material_version_id != expected_version:
+        raise BusinessException(message="资料版本与任务目标不一致", status_code=409)
+    payload.update({"target_id": target_id, "material_version_id": material_version_id})
     _record_event(db, task, user_id, event_type, payload)
     task.last_action_at = datetime.now()
     db.commit()
@@ -345,22 +351,14 @@ def verify_task(db: Session, task_id: int, user_id: int, confirmation: bool | No
             verification_result["reason"] = "尚缺少学习或确认事件"
 
     if verified:
-        task.status = "done"
-        task.execution_status = "completed"
-        task.completed_at = now
-        task.auto_completed_at = now
+        todos_completed = mark_task_completed(db, task)
         task.verification_method = verification_method
         task.verification_result_json = json.dumps(
             verification_result, ensure_ascii=False
         )
         task.last_action_at = now
 
-        # Complete associated todos.
-        todos_completed = _complete_associated_todos(db, task_id, user_id)
         verification_result["todos_completed"] = todos_completed
-
-        # Recalculate parent goal progress.
-        _recalculate_goal_progress(db, task.goal_id)
 
         db.commit()
         db.refresh(task)
@@ -412,21 +410,12 @@ def override_task(
         "previous_execution_status": task.execution_status,
     }
 
-    task.status = "done"
-    task.execution_status = "completed"
-    task.completed_at = now
-    task.auto_completed_at = now
+    todos_completed = mark_task_completed(db, task, manual=True)
     task.verification_method = "manual_override"
     task.verification_result_json = json.dumps(
         override_record, ensure_ascii=False
     )
     task.last_action_at = now
-
-    # Complete associated todos.
-    todos_completed = _complete_associated_todos(db, task_id, user_id)
-
-    # Recalculate parent goal progress.
-    _recalculate_goal_progress(db, task.goal_id)
 
     db.commit()
     db.refresh(task)

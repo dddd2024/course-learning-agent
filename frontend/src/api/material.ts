@@ -39,6 +39,8 @@ export interface ParseResult {
 export interface ChunkImage {
   id: number
   page_no: number
+  status?: 'loading' | 'ready' | 'missing' | 'forbidden' | 'error'
+  missing_reason?: string | null
   file_url?: string | null
   width?: number
   height?: number
@@ -47,6 +49,29 @@ export interface ChunkImage {
   decorative_reason?: string | null
   color_variance?: number | null
   coverage_ratio?: number | null
+}
+
+export interface MaterialPage {
+  id: number
+  page_no: number
+  page_type: string
+  parser_version: string
+  raw_text: string
+  clean_text: string
+  removed_lines: string
+  blocks: string
+}
+
+export function getMaterialPages(materialId: number): AxiosPromise<{ items: MaterialPage[] }> {
+  return request.get(`/materials/${materialId}/pages`)
+}
+
+export function getImageIntegrity(materialId: number): AxiosPromise<{ total: number; ready: number; missing: number; status: string }> {
+  return request.get(`/materials/${materialId}/image-integrity`)
+}
+
+export function reextractImages(materialId: number): AxiosPromise<{ status: string; code?: string; extracted: number }> {
+  return request.post(`/materials/${materialId}/images/reextract`)
 }
 
 export interface Chunk {

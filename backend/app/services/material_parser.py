@@ -35,8 +35,9 @@ from app.models.material import Material, MaterialVersion
 from app.models.material_chunk import MaterialChunk
 from app.models.material_page import MaterialPage
 from app.models.security_finding import MaterialSecurityFinding
-from app.retrieval.chunker import build_chunks, clean_keyword_text, clean_material_text
+from app.retrieval.chunker import build_chunks, clean_keyword_text
 from app.retrieval.parsers import parse_file
+from app.services.material_cleaner import clean_pages
 from app.services import security_scanner
 from app.services.chunk_quality import evaluate_chunks_quality
 from app.services.error_logger import log_error
@@ -107,7 +108,12 @@ def parse_with_retry(
         try:
             file_path = Path(settings.UPLOAD_DIR) / material.file_path
             pages = parse_fn(str(file_path), material.file_type)
-            chunks = build_chunks(pages, chunk_size=600, overlap=100)
+            clean_results = clean_pages([page.text if hasattr(page, "text") else page[1] for page in pages])
+            clean_pages_for_chunks = [
+                (page.page_no if hasattr(page, "page_no") else page[0], cleaned.text)
+                for page, cleaned in zip(pages, clean_results)
+            ]
+            chunks = build_chunks(clean_pages_for_chunks, chunk_size=600, overlap=100)
 
             # Preserve old evidence: a successful parse creates a new
             # immutable version and only the active version participates in
@@ -145,11 +151,10 @@ def parse_with_retry(
             db.flush()
             # Preserve page/block provenance before semantic chunks are built.
             db.query(MaterialPage).filter(MaterialPage.material_id == material_id).delete(synchronize_session=False)
-            for page in pages:
+            for page, cleaned in zip(pages, clean_results):
                 if hasattr(page, "page_no"):
                     raw = page.text
-                    decisions = [{"raw_text": line, "decision": "kept", "reason": "layout_block"} for line in raw.splitlines()]
-                    db.add(MaterialPage(material_id=material_id, material_version_id=version_row.id, page_no=page.page_no or 1, page_type=page.source_kind, parser_version=page.parser_version, raw_text=raw, clean_text=clean_material_text(raw), blocks_json=json.dumps([block.__dict__ for block in page.blocks], ensure_ascii=False), decisions_json=json.dumps(decisions, ensure_ascii=False)))
+                    db.add(MaterialPage(material_id=material_id, material_version_id=version_row.id, page_no=page.page_no or 1, page_type=page.source_kind, parser_version=page.parser_version, raw_text=raw, clean_text=cleaned.text, blocks_json=json.dumps([block.__dict__ for block in page.blocks], ensure_ascii=False), decisions_json=json.dumps(cleaned.decisions, ensure_ascii=False)))
             db.query(MaterialChunk).filter(MaterialChunk.material_id == material_id).update(
                 {MaterialChunk.is_active: 0}, synchronize_session=False
             )
@@ -173,7 +178,7 @@ def parse_with_retry(
             # Step 3: Store with quality scores
             for i, chunk in enumerate(candidate_chunks):
                 raw_text = chunk["text"]
-                text = clean_material_text(raw_text) or clean_material_text(raw_text.replace("\n", " "))
+                text = raw_text.strip()
                 if not text:
                     text = raw_text.strip()
                 qr = quality_results[i] if i < len(quality_results) else {"quality": 0.5, "reason": ""}
@@ -218,55 +223,9 @@ def parse_with_retry(
             # --- Image extraction (PDF only) ---
             if material.file_type.lower() == "pdf":
                 try:
-                    from app.retrieval.image_extractor import extract_images_from_pdf
-                    from app.models.material_image import MaterialImage
-
-                    db.query(MaterialImage).filter(
-                        MaterialImage.material_id == material_id
-                    ).delete(synchronize_session=False)
-
-                    file_path_obj = Path(settings.UPLOAD_DIR) / material.file_path
-                    extracted = extract_images_from_pdf(str(file_path_obj))
-
-                    page_to_chunk = {}
-                    for mc in saved_chunks:
-                        if mc.page_no:
-                            page_to_chunk.setdefault(mc.page_no, mc.id)
-
-                    img_dir = Path(settings.UPLOAD_DIR) / material.file_path.replace(
-                        f"original.{material.file_type}", ""
-                    ) / "images"
-                    img_dir.mkdir(parents=True, exist_ok=True)
-
-                    seen_image_hashes: set[str] = set()
-                    for idx, img in enumerate(extracted):
-                        if img.perceptual_hash in seen_image_hashes:
-                            continue
-                        seen_image_hashes.add(img.perceptual_hash or "")
-                        img_filename = f"page{img.page_no}_{idx}.{img.format}"
-                        img_full_path = img_dir / img_filename
-                        img_full_path.write_bytes(img.image_bytes)
-
-                        rel_path = str(img_full_path.relative_to(Path(settings.UPLOAD_DIR))).replace("\\", "/")
-
-                        db.add(MaterialImage(
-                            material_id=material_id,
-                            course_id=material.course_id,
-                            chunk_id=page_to_chunk.get(img.page_no),
-                            page_no=img.page_no,
-                            image_filename=img_filename,
-                            image_path=rel_path,
-                            width=img.width,
-                            height=img.height,
-                            format=img.format,
-                            is_decorative=1 if img.is_decorative else 0,
-                            decorative_reason=img.decorative_reason,
-                            perceptual_hash=img.perceptual_hash,
-                            color_variance=img.color_variance,
-                            coverage_ratio=img.coverage_ratio,
-                        ))
-                    db.flush()
-                    logger.info("Saved %d images for material %s", len(extracted), material_id)
+                    from app.services.material_image_service import reextract_images
+                    reextract_images(db, material)
+                    logger.info("Refreshed images for material %s", material_id)
                 except Exception as img_exc:
                     logger.warning("Image extraction failed for material %s: %s", material_id, img_exc)
 

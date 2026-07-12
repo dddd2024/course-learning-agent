@@ -42,7 +42,7 @@ def get_dashboard_summary(
     )
     knowledge_point_count = (
         db.query(KnowledgePoint)
-        .filter(KnowledgePoint.user_id == uid)
+        .filter(KnowledgePoint.user_id == uid, KnowledgePoint.status == "active")
         .count()
     )
     todo_today_count = (

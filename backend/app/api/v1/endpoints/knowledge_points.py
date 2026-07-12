@@ -17,7 +17,7 @@ import logging
 import time
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.agents.audit import AgentAudit
@@ -159,7 +159,18 @@ def generate_knowledge_points(
     }
     seen: set[str] = set()
     persisted: list[KnowledgePointResponse] = []
+    dropped = 0
+    drop_reasons: list[str] = []
     for point in points:
+        source_ids = [int(value) for value in point.get("source_chunk_ids", []) if str(value).isdigit()]
+        valid_source_ids = [row[0] for row in db.query(MaterialChunk.id).join(Material, Material.id == MaterialChunk.material_id).filter(
+            MaterialChunk.id.in_(source_ids), MaterialChunk.course_id == course_id,
+            Material.status == "ready", MaterialChunk.is_active == 1, MaterialChunk.is_indexable == 1,
+        ).all()] if source_ids else []
+        if not valid_source_ids:
+            dropped += 1
+            drop_reasons.append("unverified_or_inactive_source")
+            continue
         normalized = re.sub(r"\s+", "", point["title"].strip().lower())
         stable_key = f"{course_id}:{normalized}"
         seen.add(stable_key)
@@ -173,10 +184,10 @@ def generate_knowledge_points(
         row.title = point["title"]
         row.summary = point["summary"]
         row.importance = point["importance"]
-        row.source_chunk_ids = json.dumps(point["source_chunk_ids"])
+        row.source_chunk_ids = json.dumps(valid_source_ids)
         row.source_version_ids = json.dumps(sorted({
             c.material_version_id for c in db.query(MaterialChunk).filter(
-                MaterialChunk.id.in_(point["source_chunk_ids"])
+                MaterialChunk.id.in_(valid_source_ids)
             ) if c.material_version_id
         }))
         row.exam_style = point["exam_style"]
@@ -199,7 +210,7 @@ def generate_knowledge_points(
         duration_ms=int((time.monotonic() - run_started_at) * 1000),
     )
 
-    return GenerateKnowledgePointsResponse(knowledge_points=persisted)
+    return GenerateKnowledgePointsResponse(knowledge_points=persisted, count=len(persisted), requested=len(points), generated=len(persisted), dropped=dropped, drop_reasons=sorted(set(drop_reasons)))
 
 
 @router.get(
@@ -208,21 +219,20 @@ def generate_knowledge_points(
 )
 def list_knowledge_points(
     course_id: int,
+    include_archived: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> KnowledgePointListResponse:
     """List persisted knowledge points for a course owned by the user."""
     _get_owned_course(db, course_id, current_user.id)
 
-    rows = (
-        db.query(KnowledgePoint)
-        .filter(
-            KnowledgePoint.course_id == course_id,
-            KnowledgePoint.user_id == current_user.id,
-        )
-        .order_by(KnowledgePoint.id.asc())
-        .all()
+    query = db.query(KnowledgePoint).filter(
+        KnowledgePoint.course_id == course_id,
+        KnowledgePoint.user_id == current_user.id,
     )
+    if not include_archived:
+        query = query.filter(KnowledgePoint.status == "active")
+    rows = query.order_by(KnowledgePoint.id.asc()).all()
     items = [KnowledgePointResponse.model_validate(r) for r in rows]
     return KnowledgePointListResponse(items=items, total=len(items))
 

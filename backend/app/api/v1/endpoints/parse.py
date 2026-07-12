@@ -38,6 +38,11 @@ from app.schemas.material import (
 )
 from app.services.error_logger import log_error
 from app.services.material_parser import parse_with_retry
+from app.models.parse_job import ParseJob
+from app.models.material_page import MaterialPage
+from app.services.parse_job_service import create_or_get_job, recover_stale_jobs, run_job
+from app.services.material_delete_service import delete_material as delete_material_service
+from app.services.material_image_service import image_integrity, image_state, reextract_images
 
 router = APIRouter()
 
@@ -176,30 +181,58 @@ def parse_material(
     """
     material = _get_owned_material(db, material_id, current_user.id)
 
-    if material.status == "processing":
-        return ParseResponse(
-            material_id=material_id,
-            status="processing",
-            chunk_count=0,
-        )
-
-    # Set processing state so the immediate response is accurate and
-    # list_materials sees the material as in-progress.
-    material.status = "processing"
-    material.error_message = None
-    material.parse_started_at = utc_now()
-    material.parse_attempts = 0
-    db.commit()
-
-    background_tasks.add_task(
-        _run_parse_in_background, material_id, current_user.id
-    )
+    job, created = create_or_get_job(db, material, current_user.id, include_created=True)
+    if created:
+        background_tasks.add_task(run_job, job.id, parse_with_retry)
 
     return ParseResponse(
         material_id=material_id,
         status="processing",
         chunk_count=0,
     )
+
+
+@router.get("/{material_id}/image-integrity")
+def get_image_integrity(material_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+    return image_integrity(db, _get_owned_material(db, material_id, current_user.id))
+
+
+@router.post("/{material_id}/images/reextract")
+def retry_image_extraction(material_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+    return reextract_images(db, _get_owned_material(db, material_id, current_user.id))
+
+
+@router.get("/{material_id}/parse-jobs")
+def list_parse_jobs(material_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+    _get_owned_material(db, material_id, current_user.id)
+    recover_stale_jobs(db)
+    rows = db.query(ParseJob).filter(ParseJob.material_id == material_id, ParseJob.user_id == current_user.id).order_by(ParseJob.id.desc()).all()
+    return {"items": [{"id": row.id, "status": row.status, "attempt": row.attempt, "heartbeat_at": row.heartbeat_at, "error": row.error_message} for row in rows]}
+
+
+@router.post("/{material_id}/parse-jobs/{job_id}/retry")
+def retry_parse_job(material_id: int, job_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+    material = _get_owned_material(db, material_id, current_user.id)
+    old = db.query(ParseJob).filter(ParseJob.id == job_id, ParseJob.material_id == material_id, ParseJob.user_id == current_user.id).first()
+    if old is None:
+        raise NotFoundException(message="解析任务不存在")
+    if old.status in {"queued", "running"}:
+        return {"job_id": old.id, "status": old.status}
+    job = create_or_get_job(db, material, current_user.id)
+    background_tasks.add_task(run_job, job.id, parse_with_retry)
+    return {"job_id": job.id, "status": job.status}
+
+
+@router.post("/{material_id}/parse-jobs/{job_id}/cancel")
+def cancel_parse_job(material_id: int, job_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+    _get_owned_material(db, material_id, current_user.id)
+    job = db.query(ParseJob).filter(ParseJob.id == job_id, ParseJob.material_id == material_id, ParseJob.user_id == current_user.id).first()
+    if job is None:
+        raise NotFoundException(message="解析任务不存在")
+    if job.status in {"queued", "running"}:
+        job.status, job.cancellation_reason, job.finished_at = "cancelled", "用户取消", utc_now()
+        db.commit()
+    return {"job_id": job.id, "status": job.status}
 
 
 @router.get(
@@ -267,7 +300,7 @@ def list_chunks(
                     file_url=f"/api/v1/materials/images/{img.id}/file",
                     is_decorative=bool(img.is_decorative),
                     decorative_reason=img.decorative_reason,
-                    color_variance=img.color_variance,
+                    status=image_state(img)[0], missing_reason=image_state(img)[1], color_variance=img.color_variance,
                     coverage_ratio=img.coverage_ratio,
                 ) for img in attached
             ]
@@ -279,6 +312,14 @@ def list_chunks(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get("/{material_id}/pages")
+def list_material_pages(material_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+    """Reader contract: page catalogue plus raw/clean text and decisions."""
+    material = _get_owned_material(db, material_id, current_user.id)
+    rows = db.query(MaterialPage).filter(MaterialPage.material_id == material.id).order_by(MaterialPage.page_no).all()
+    return {"items": [{"id": row.id, "page_no": row.page_no, "page_type": row.page_type, "parser_version": row.parser_version, "raw_text": row.raw_text or "", "clean_text": row.clean_text or "", "removed_lines": row.decisions_json or "[]", "blocks": row.blocks_json or "[]"} for row in rows]}
 
 
 @router.delete(
@@ -303,28 +344,6 @@ def delete_material(
     if material.status == "processing":
         raise BusinessException(message="资料处理中，暂不能删除，请稍后再试")
 
-    # Delete the original file from disk first. A missing file (already
-    # removed, moved, etc.) must not fail the request.
-    try:
-        disk_path = Path(settings.UPLOAD_DIR) / material.file_path
-        disk_path.unlink(missing_ok=True)
-    except OSError:
-        # Permission / path errors are logged by the global handler; the
-        # database cleanup still proceeds so no orphan rows remain.
-        pass
-
-    # Delete dependent rows before the parent row.
-    db.query(MaterialChunk).filter(
-        MaterialChunk.material_id == material_id
-    ).delete(synchronize_session=False)
-
-    from app.models.security_finding import MaterialSecurityFinding
-
-    db.query(MaterialSecurityFinding).filter(
-        MaterialSecurityFinding.material_id == material_id
-    ).delete(synchronize_session=False)
-
-    db.delete(material)
-    db.commit()
+    delete_material_service(db, material)
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
