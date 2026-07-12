@@ -171,7 +171,6 @@ def test_kp_regeneration_archives_old_kps(client, tmp_path, monkeypatch):
     finally:
         db.close()
 
-
 def test_archived_kps_not_in_default_list(client, tmp_path, monkeypatch):
     """Archived KPs are not shown in the default knowledge-points list."""
     headers, course_id = _setup_course_with_chunks(client, monkeypatch, tmp_path)
@@ -265,28 +264,33 @@ def test_old_quiz_results_reference_archived_kps(client, tmp_path, monkeypatch):
     finally:
         db.close()
 
-    # Regenerate KPs (old KP gets archived)
-    resp2 = client.post(
-        f"/api/v1/courses/{course_id}/knowledge-points/generate",
-        headers=headers,
+
+def test_failed_generation_keeps_existing_active_outline(client, tmp_path, monkeypatch):
+    """Zero valid replacements must not archive the learner's active KPs."""
+    headers, course_id = _setup_course_with_chunks(client, monkeypatch, tmp_path)
+    initial = client.post(
+        f"/api/v1/courses/{course_id}/knowledge-points/generate", headers=headers
     )
-    assert resp2.status_code == 200
+    assert initial.status_code == 200
+    original_ids = {item["id"] for item in initial.json()["knowledge_points"]}
 
-    # Verify the old KP still exists (archived, not deleted)
-    db_gen = app.dependency_overrides[get_db]()
-    db = next(db_gen)
-    try:
-        old_kp = db.query(KnowledgePoint).filter(
-            KnowledgePoint.id == old_kp_id
-        ).first()
-        assert old_kp is not None, "Old KP must not be deleted"
-        assert old_kp.status == "archived"
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.knowledge_points.outline_generate",
+        lambda *args, **kwargs: [{
+            "title": "invalid",
+            "summary": "invalid evidence",
+            "importance": 1,
+            "source_chunk_ids": [999999],
+            "exam_style": "short",
+            "review_action": "review",
+        }],
+    )
+    failed = client.post(
+        f"/api/v1/courses/{course_id}/knowledge-points/generate", headers=headers
+    )
+    assert failed.status_code == 422
 
-        # Verify the quiz item still references the old KP
-        qi = db.query(QuizItem).filter(
-            QuizItem.knowledge_point_id == old_kp_id
-        ).first()
-        assert qi is not None, "Quiz item must still reference the old KP"
-        assert qi.question_text == "What is TCP/IP?"
-    finally:
-        db.close()
+    active = client.get(
+        f"/api/v1/courses/{course_id}/knowledge-points", headers=headers
+    )
+    assert {item["id"] for item in active.json()["items"]} == original_ids

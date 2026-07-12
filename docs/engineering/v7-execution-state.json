@@ -2,11 +2,11 @@
   "version": "v7.1",
   "branch": "codex/v7-production-integration",
   "base_commit": "53a1221",
-  "current_head": "187e27c28ced1a9153d425e3cd161b2aefe24a29",
+  "current_head": "180d51157bfe7200fd901d43cafd74bc8bf717ac",
   "started_at": "2026-07-12T00:00:00+08:00",
   "updated_at": "2026-07-12T00:00:00+08:00",
   "overall_status": "in_progress",
-  "current_task": "V7-CONT-08",
+  "current_task": "V7-CONT-09",
   "tasks": {
     "V7-CONT-00": {
       "status": "verified",
@@ -94,7 +94,9 @@
       "evidence": [
         "Explicit quiz constraints validate requested active KP scope, question count, supported types, difficulty distribution and pass score; unsatisfied requests return structured QUIZ_CONSTRAINT_UNSATISFIED without persisting a partial quiz."
       ],
-      "commits": [],
+      "commits": [
+        "180d511 feat(v7): enforce strict quiz creation contract"
+      ],
       "tests": [
         "python -m pytest backend/app/tests/test_quizzes.py backend/app/tests/test_v3_quiz_grounding.py backend/app/tests/test_v6_quiz_constraints.py -q --tb=short",
         "frontend: npm run type-check; npm run test -- --run"
@@ -115,14 +117,18 @@
       "notes": ""
     },
     "V7-CONT-08": {
-      "status": "in_progress",
-      "evidence": [],
+      "status": "verified",
+      "evidence": [
+        "A replacement generation is staged before old active KPs are archived; invalid generated evidence returns 422 and preserves the existing active outline."
+      ],
       "commits": [],
-      "tests": [],
+      "tests": [
+        "python -m pytest backend/app/tests/test_v6_kp_titles.py -q --tb=short"
+      ],
       "notes": ""
     },
     "V7-CONT-09": {
-      "status": "not_started",
+      "status": "in_progress",
       "evidence": [],
       "commits": [],
       "tests": [],

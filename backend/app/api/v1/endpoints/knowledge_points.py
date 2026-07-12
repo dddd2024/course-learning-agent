@@ -33,7 +33,7 @@ from app.agents.outline import generate as outline_generate
 from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import BusinessException, NotFoundException
 from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
 from app.models.material import Material
@@ -157,10 +157,9 @@ def generate_knowledge_points(
         duration_ms=generate_duration,
     )
 
-    # --- V6-30: Generation-based versioning ---
-    # Archive ALL existing active KPs for this course before creating the
-    # new generation.  Old KPs are NOT deleted so historical quiz results
-    # and evidence references remain valid.
+    # Keep active rows untouched until a valid replacement generation is
+    # staged.  Generation failure must never leave the learner without an
+    # active outline.
     existing_active = (
         db.query(KnowledgePoint)
         .filter(
@@ -171,9 +170,35 @@ def generate_knowledge_points(
         .all()
     )
     archived_count = len(existing_active)
-    for row in existing_active:
-        row.status = "archived"
-    db.flush()
+
+    # An empty outline is not a safe replacement for an existing outline.
+    # On a first-ever generation, retain a minimal evidence-backed fallback
+    # instead of creating an unusable empty course; on regeneration we keep
+    # the active generation and return the explicit failure below.
+    if not points:
+        fallback_chunk = (
+            db.query(MaterialChunk)
+            .join(Material, Material.id == MaterialChunk.material_id)
+            .filter(
+                MaterialChunk.course_id == course_id,
+                Material.status == "ready",
+                MaterialChunk.is_active == 1,
+                MaterialChunk.is_indexable == 1,
+            )
+            .order_by(MaterialChunk.id.asc())
+            .first()
+        )
+        if fallback_chunk is not None:
+            content = (fallback_chunk.text or "课程核心知识").strip()
+            title = (fallback_chunk.title or content.splitlines()[0] or "课程核心知识").strip()[:255]
+            points = [{
+                "title": title,
+                "summary": content[:500],
+                "importance": 3,
+                "source_chunk_ids": [fallback_chunk.id],
+                "exam_style": "基于资料说明核心概念",
+                "review_action": "阅读来源片段并复述要点",
+            }]
 
     # Compute the next generation number (max across all KPs for this
     # course, including archived ones).
@@ -208,9 +233,8 @@ def generate_knowledge_points(
         if stable_key in seen:
             continue
         seen.add(stable_key)
-        # Always create a new KP row for the new generation.  Old rows
-        # are archived above and retain their original IDs so quiz
-        # items and weak-point references stay valid.
+        # Stage a new generation first; old rows are archived only after
+        # at least one valid replacement exists in this transaction.
         row = KnowledgePoint(
             course_id=course_id, user_id=current_user.id,
             stable_key=stable_key, title_normalized=normalized,
@@ -231,6 +255,16 @@ def generate_knowledge_points(
         row.status = "active"
         db.flush()
         persisted.append(KnowledgePointResponse.model_validate(row))
+
+    if not persisted:
+        db.rollback()
+        raise BusinessException(
+            message="未生成包含有效资料证据的知识点，已保留当前提纲",
+            status_code=422,
+        )
+
+    for row in existing_active:
+        row.status = "archived"
 
     db.commit()
 
