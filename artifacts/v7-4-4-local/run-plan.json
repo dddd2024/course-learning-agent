@@ -1,0 +1,24 @@
+{
+  "version": "v7.4.4",
+  "base_sha": "9af524e9e1c7ff149256170931cf7fc9d766858e",
+  "head_sha": "HEAD",
+  "include": [
+    "scripts/collect_local_evidence.py",
+    "scripts/verify_local_evidence.py",
+    "artifacts/v7-4-4-local/run-plan.json",
+    "frontend/playwright-results.json",
+    "frontend/playwright-report/index.html",
+    "frontend/tests/e2e/v7-4-4-browser-e2e.spec.ts",
+    "backend/app/db/versioned_migrations/__init__.py"
+  ],
+  "commands": [
+    {"label":"backend-full","command":["backend/.venv/Scripts/python.exe","-m","pytest","-q","backend/app/tests"]},
+    {"label":"migration-faults","command":["backend/.venv/Scripts/python.exe","-m","pytest","-q","backend/app/tests/test_v7_4_4_migration_faults.py","backend/app/tests/test_v7_4_4_reschedule_behavior.py"]},
+    {"label":"frontend-typecheck","cwd":"frontend","command":["npm.cmd","run","type-check"]},
+    {"label":"frontend-unit","cwd":"frontend","command":["npm.cmd","run","test","--","--run"]},
+    {"label":"frontend-build","cwd":"frontend","command":["npm.cmd","run","build"]},
+    {"label":"browser-e2e","cwd":"frontend","command":["powershell","-NoProfile","-Command","$env:CI='true'; npx playwright test tests/e2e/v7-4-4-browser-e2e.spec.ts --retries=0"]},
+    {"label":"git-diff-check","command":["git","diff","--check"]},
+    {"label":"git-status-check","command":["git","status","--short"]}
+  ]
+}
