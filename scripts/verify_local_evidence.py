@@ -16,6 +16,10 @@ REQUIRED_V7_4_4_LABELS = {
     "backend-full", "migration-faults", "frontend-typecheck", "frontend-unit",
     "frontend-build", "browser-e2e", "git-diff-check", "git-status-check",
 }
+REQUIRED_V7_5_0_LABELS = {
+    "backend-full", "document-fidelity", "frontend-typecheck", "frontend-build",
+    "git-diff-check", "git-status-before",
+}
 
 
 def sha256_file(path: Path) -> str:
@@ -60,7 +64,7 @@ def verify_manifest(manifest: dict[str, Any], project_dir: Path, verify_state_su
         tested_sha = git_rev_parse(manifest["head_sha"], project_dir)
         actual_head = git_rev_parse(release_head or "HEAD", project_dir)
         if actual_head != tested_sha:
-            allow_prefixes = ("artifacts/v7-4-4-local/", "docs/engineering/v7-execution-state.json")
+            allow_prefixes = ("artifacts/v7-4-4-local/", "artifacts/v7-5-0-local/", "docs/engineering/v7-execution-state.json")
             unexpected = [path for path in changed_paths(tested_sha, actual_head, project_dir)
                           if not path.startswith(allow_prefixes)]
             if unexpected:
@@ -85,6 +89,16 @@ def verify_manifest(manifest: dict[str, Any], project_dir: Path, verify_state_su
         missing = REQUIRED_V7_4_4_LABELS - labels
         if missing:
             errors.append("manifest missing required command labels: " + ", ".join(sorted(missing)))
+    if manifest.get("version") == "v7.5.0":
+        labels = {record.get("label") for record in manifest.get("commands", [])}
+        missing = REQUIRED_V7_5_0_LABELS - labels
+        if missing:
+            errors.append("manifest missing required command labels: " + ", ".join(sorted(missing)))
+        status = next((record for record in manifest.get("commands", []) if record.get("label") == "git-status-before"), None)
+        if status:
+            output = project_path(status.get("stdout_log_path", ""), project_dir).read_text(encoding="utf-8", errors="replace")
+            if output.strip():
+                errors.append("git-status-before stdout must be empty")
 
     for record in manifest.get("files", []):
         path = project_path(record.get("path", ""), project_dir)
