@@ -28,17 +28,17 @@
     {
       "label": "frontend-type-check",
       "cwd": "frontend",
-      "command": ["npm", "run", "type-check"]
+      "command": ["npm.cmd", "run", "type-check"]
     },
     {
       "label": "frontend-unit",
       "cwd": "frontend",
-      "command": ["npm", "run", "test", "--", "--run"]
+      "command": ["npm.cmd", "run", "test", "--", "--run"]
     },
     {
       "label": "frontend-build",
       "cwd": "frontend",
-      "command": ["npm", "run", "build"]
+      "command": ["npm.cmd", "run", "build"]
     },
     {
       "label": "browser-e2e",
