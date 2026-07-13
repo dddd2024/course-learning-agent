@@ -13,8 +13,10 @@ import { getCourse, type Course } from '../api/course'
 import { MAX_PAGE_SIZE } from '../constants/pagination'
 import {
   generateKnowledgePoints,
+  getKPGenerations,
   listKnowledgePoints,
   type KnowledgePoint,
+  type KPGeneration,
 } from '../api/knowledge'
 import {
   getChunks,
@@ -24,6 +26,7 @@ import {
 } from '../api/material'
 import { recordTaskEvent, verifyTask } from '../api/plan'
 import { parseApiError } from '../utils/error'
+import { formatLocalDateTime } from '../utils/datetime'
 import EmptyState from '../components/common/EmptyState.vue'
 
 interface ChunkWithSource {
@@ -42,6 +45,9 @@ const courseLoading = ref(false)
 const knowledgePoints = ref<KnowledgePoint[]>([])
 const listLoading = ref(false)
 const generating = ref(false)
+
+const generations = ref<KPGeneration[]>([])
+const generationsLoading = ref(false)
 
 const chunkDialogVisible = ref(false)
 const chunkDialogLoading = ref(false)
@@ -137,6 +143,19 @@ async function fetchKnowledgePoints() {
   }
 }
 
+async function fetchGenerations() {
+  if (!courseId.value) return
+  generationsLoading.value = true
+  try {
+    const { data } = await getKPGenerations(courseId.value)
+    generations.value = data
+  } catch {
+    generations.value = []
+  } finally {
+    generationsLoading.value = false
+  }
+}
+
 async function handleGenerate() {
   if (!courseId.value) return
   const replacingExisting = knowledgePoints.value.length > 0
@@ -162,6 +181,7 @@ async function handleGenerate() {
     knowledgePoints.value = data.knowledge_points
     materialChunksCache.value.clear()
     ElMessage.success(`已生成 ${data.count} 个知识点`)
+    await fetchGenerations()
   } catch (err) {
     ElMessage.error(parseApiError(err, '生成知识点失败'))
   } finally {
@@ -268,6 +288,7 @@ onMounted(async () => {
   await fetchCourse()
   if (course.value) {
     await fetchKnowledgePoints()
+    await fetchGenerations()
   }
 })
 </script>
@@ -434,6 +455,38 @@ onMounted(async () => {
             </template>
             <span v-else class="kp-source-empty">无</span>
           </div>
+        </div>
+      </div>
+    </el-card>
+
+    <el-card
+      v-if="generations.length > 0"
+      v-loading="generationsLoading"
+      class="section-card"
+      shadow="never"
+    >
+      <template #header>
+        <div class="section-title-bar">
+          <span class="section-title">生成历史</span>
+          <span class="section-count">共 {{ generations.length }} 个版本</span>
+        </div>
+      </template>
+      <div class="generation-list">
+        <div
+          v-for="gen in generations"
+          :key="gen.generation"
+          class="generation-item"
+        >
+          <span class="generation-version">第 {{ gen.generation }} 版</span>
+          <el-tag
+            :type="gen.status === 'current' ? 'success' : 'info'"
+            size="small"
+            effect="light"
+          >
+            {{ gen.status === 'current' ? '当前' : '已归档' }}
+          </el-tag>
+          <span class="generation-count">{{ gen.count }} 个知识点</span>
+          <span class="generation-date">{{ formatLocalDateTime(gen.created_at) }}</span>
         </div>
       </div>
     </el-card>
@@ -937,6 +990,39 @@ onMounted(async () => {
   color: #303133;
 }
 
+.generation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.generation-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+}
+
+.generation-version {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  min-width: 60px;
+}
+
+.generation-count {
+  font-size: 13px;
+  color: #606266;
+}
+
+.generation-date {
+  font-size: 12px;
+  color: #909399;
+  margin-left: auto;
+}
+
 .chunk-dialog-body {
   min-height: 120px;
 }
@@ -1125,6 +1211,15 @@ onMounted(async () => {
   .source-list-item-head {
     align-items: flex-start;
     flex-wrap: wrap;
+  }
+
+  .generation-item {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+  }
+
+  .generation-date {
+    margin-left: 0;
   }
 }
 </style>

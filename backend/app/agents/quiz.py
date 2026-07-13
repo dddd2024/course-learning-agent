@@ -71,8 +71,84 @@ def _format_knowledge_points(knowledge_points: list[KnowledgePoint]) -> str:
 
 
 def _format_question_types() -> str:
-    """Return the question-type section for the prompt."""
+    """Return the default question-type section for the prompt.
+
+    Kept for backward compatibility; :func:`_format_question_types_contract`
+    is preferred when the caller supplies an explicit contract.
+    """
     return "选择题、判断题、简答题，难度分布合理。"
+
+
+# V7.4.1-03: human-readable labels for each allowed question type, used
+# when propagating the requested ``question_types`` into the prompt so the
+# LLM knows exactly which types to generate.
+_TYPE_DISPLAY = {
+    "choice": "选择题(choice)",
+    "multiple_choice": "多选题(multiple_choice)",
+    "true_false": "判断题(true_false)",
+    "short_answer": "简答题(short_answer)",
+}
+
+
+def _format_question_types_contract(
+    question_types: list[str] | None,
+) -> str:
+    """Render the question-type section of the prompt from the contract.
+
+    V7.4.1-03: when the caller requests specific types, the prompt must
+    tell the LLM to generate *only* those types. When no contract is
+    supplied, fall back to the permissive default.
+    """
+    if not question_types:
+        return _format_question_types()
+    parts = [_TYPE_DISPLAY.get(t, t) for t in question_types]
+    return "仅生成以下题型：" + "、".join(parts) + "。不得生成其他题型。"
+
+
+def _format_difficulty_distribution_contract(
+    distribution: dict[str, int] | None,
+) -> str:
+    """Render the difficulty-distribution section of the prompt.
+
+    V7.4.1-03: when the caller requests a specific distribution, the
+    prompt must spell out the exact counts (e.g. ``2 easy, 1 medium,
+    0 hard``) so the LLM can honour it. When no contract is supplied,
+    fall back to the permissive default ratio.
+    """
+    if not distribution:
+        return "难度分布应合理（简单/中等/困难比例约 3:5:2）。"
+    easy = int(distribution.get("easy", 0))
+    medium = int(distribution.get("medium", 0))
+    hard = int(distribution.get("hard", 0))
+    return f"难度分布要求：{easy} easy, {medium} medium, {hard} hard。"
+
+
+def build_quiz_prompt(
+    course_name: str,
+    question_count: int,
+    question_types: list[str] | None,
+    difficulty_distribution: dict[str, int] | None,
+    retrieved_chunks: str,
+    knowledge_points: str,
+) -> str:
+    """Render the quiz generation prompt with the full generation contract.
+
+    V7.4.1-03: propagates ``question_types``, ``difficulty_distribution``,
+    and ``question_count`` into the prompt so the LLM knows exactly what
+    to generate. This is a pure function (no DB access) so it can be unit
+    tested in isolation.
+    """
+    template = load_prompt("quiz_generate")
+    return template.format(
+        course_name=course_name,
+        question_count=question_count,
+        retrieved_chunks=retrieved_chunks,
+        knowledge_points=knowledge_points,
+        question_types=_format_question_types_contract(question_types),
+        difficulty_distribution=_format_difficulty_distribution_contract(
+            difficulty_distribution
+        ),
+    )
 
 
 def _normalise_question_type(raw: str) -> str:
@@ -323,6 +399,8 @@ def generate_quiz(
     knowledge_points: list[KnowledgePoint],
     course_name: str,
     question_count: int = 5,
+    question_types: list[str] | None = None,
+    difficulty_distribution: dict[str, int] | None = None,
     user_config: dict | None = None,
 ) -> dict[str, Any]:
     """Generate a quiz for a course's knowledge points.
@@ -337,6 +415,12 @@ def generate_quiz(
             prompt).
         question_count: Hint for the number of questions. The mock LLM
             ignores this; the real LLM will honour it.
+        question_types: Optional list of allowed question types
+            (V7.4.1-03). Propagated into the prompt so the LLM knows
+            exactly which types to generate.
+        difficulty_distribution: Optional ``{easy, medium, hard}`` counts
+            (V7.4.1-03). Propagated into the prompt so the LLM knows the
+            exact difficulty split to produce.
         user_config: Optional per-user LLM config dict. When supplied,
             it is forwarded to :func:`call_llm` so the call uses the
             user's enabled provider config.
@@ -353,13 +437,16 @@ def generate_quiz(
             "items": [],
         }
 
-    template = load_prompt("quiz_generate")
-    prompt = template.format(
+    # V7.4.1-03: build the prompt via build_quiz_prompt so the requested
+    # question_types, difficulty_distribution, and question_count are
+    # propagated into the LLM prompt.
+    prompt = build_quiz_prompt(
         course_name=course_name,
         question_count=question_count,
+        question_types=question_types,
+        difficulty_distribution=difficulty_distribution,
         retrieved_chunks=_format_evidence(db, knowledge_points),
         knowledge_points=_format_knowledge_points(knowledge_points),
-        question_types=_format_question_types(),
     )
 
     run_started_at = time.monotonic()
@@ -645,4 +732,4 @@ def _safe_finish_run(
         logger.warning("AgentAudit.finish_run(quiz) failed: %s", exc)
 
 
-__all__ = ["generate_quiz"]
+__all__ = ["generate_quiz", "build_quiz_prompt"]
