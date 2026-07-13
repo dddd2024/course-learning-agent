@@ -50,6 +50,7 @@ from app.schemas.multi_plan import (
     MultiPlanTaskItem,
     MultiPlanUpdate,
     MultiScheduleItem,
+    RescheduleDiffItem,
 )
 from app.schemas.plan import (
     GoalResponse,
@@ -1149,18 +1150,38 @@ def patch_multi_plan(
     return _load_multi_plan_detail(db, plan)
 
 
+@router.post("/multi/{multi_plan_id}/archive", response_model=MultiPlanDetailResponse)
+def archive_multi_plan(
+    multi_plan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MultiPlanDetailResponse:
+    """Archive a multi-course plan.
+
+    V7.4.2-05: Instead of allowing force-delete, plans with execution
+    history should be archived. This preserves all tasks and history
+    while removing the plan from the active list.
+    """
+    plan = _get_owned_multi_plan(db, multi_plan_id, current_user.id)
+    plan.status = "archived"
+    db.commit()
+    db.refresh(plan)
+    return _load_multi_plan_detail(db, plan)
+
+
 @router.delete("/multi/{multi_plan_id}", status_code=204)
 def delete_multi_plan(
     multi_plan_id: int,
-    force: bool = Query(False, description="Bypass execution history check"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
     """Delete a multi-course plan and all associated tasks/todos/goals.
 
     V7.4-04: Safe delete — rejects (409) when any linked task has
-    execution history (started, completed, or has events). Pass
-    ``?force=true`` to bypass this check.
+    execution history (started, completed, or has events).
+
+    V7.4.2-05: force parameter removed. Plans with execution history
+    must be archived instead of deleted.
     """
     plan = _get_owned_multi_plan(db, multi_plan_id, current_user.id)
 
@@ -1172,8 +1193,8 @@ def delete_multi_plan(
     )
     task_ids = [pt.task_id for pt in plan_tasks if pt.task_id is not None]
 
-    # V7.4-04: Safe delete — check execution history before deleting.
-    if not force and task_ids:
+    # V7.4.2-05: Always check execution history (force parameter removed)
+    if task_ids:
         tasks_with_history = (
             db.query(StudyTask)
             .filter(
@@ -1186,7 +1207,7 @@ def delete_multi_plan(
             raise BusinessException(
                 message=(
                     f"无法删除：{len(tasks_with_history)} 个任务已有执行记录。"
-                    "请先完成或取消这些任务，或使用 force=true 强制删除。"
+                    "请改用归档（archive）来保留历史记录。"
                 ),
                 status_code=409,
             )
@@ -1445,36 +1466,175 @@ def reschedule_multi_plan(
         ))
     db.commit()
 
-    # V7.4-04: Build diff between old and new schedule.
-    new_items_set = {
-        (item["title"], item.get("course_name", ""), str(item["scheduled_date"]))
-        for item in schedule_items_raw
-    }
-    old_items_set = {
-        (item["title"], item["course_name"], item["scheduled_date"] or "")
-        for item in old_items
-    }
-    added_titles = new_items_set - old_items_set
-    removed_titles = old_items_set - new_items_set
+    # V7.4.2-06: Build five-category diff using stable_task_key matching.
+    # Snapshot old tasks with their stable_task_key for precise matching.
+    old_tasks_snapshot: list[dict] = []
+    for pt in old_plan_tasks:
+        task = old_task_by_id.get(pt.task_id) if pt.task_id else None
+        old_tasks_snapshot.append({
+            "task_id": pt.task_id,
+            "stable_task_key": task.stable_task_key if task else None,
+            "scheduled_date": pt.scheduled_date,
+            "estimate_minutes": pt.estimate_minutes,
+            "title": task.title if task else (pt.title_snapshot or ""),
+            "course_name": old_course_names.get(pt.course_id, ""),
+            "generation": task.generation if task else None,
+            "course_id": pt.course_id,
+            "unscheduled": pt.task_id is None,
+        })
+
+    # Build new tasks snapshot from the newly created tasks.
+    all_new_plan_tasks = (
+        db.query(MultiCoursePlanTask)
+        .filter(MultiCoursePlanTask.multi_plan_id == plan.id)
+        .all()
+    )
+    new_task_ids = [pt.task_id for pt in all_new_plan_tasks if pt.task_id is not None]
+    new_task_by_id: dict[int, StudyTask] = {}
+    if new_task_ids:
+        for t in db.query(StudyTask).filter(StudyTask.id.in_(new_task_ids)).all():
+            new_task_by_id[t.id] = t
+    new_course_names = _load_course_names(
+        db, {pt.course_id for pt in all_new_plan_tasks}
+    )
+
+    new_tasks_snapshot: list[dict] = []
+    for pt in all_new_plan_tasks:
+        task = new_task_by_id.get(pt.task_id) if pt.task_id else None
+        # Only include tasks from the current generation (newly created).
+        # For scheduled tasks, check StudyTask.generation; for unscheduled,
+        # check MultiCoursePlanTask.generation.
+        task_gen = task.generation if task else pt.generation
+        if task_gen != plan.generation_version:
+            continue
+        new_tasks_snapshot.append({
+            "task_id": pt.task_id,
+            "stable_task_key": task.stable_task_key if task else None,
+            "scheduled_date": pt.scheduled_date,
+            "estimate_minutes": pt.estimate_minutes,
+            "title": task.title if task else (pt.title_snapshot or ""),
+            "course_name": new_course_names.get(pt.course_id, ""),
+            "generation": task_gen,
+            "unscheduled_reason": pt.unscheduled_reason,
+        })
+
+    # Match by stable_task_key.
+    old_by_key: dict[str, dict] = {}
+    for item in old_tasks_snapshot:
+        key = item.get("stable_task_key")
+        if key:
+            old_by_key[key] = item
+
+    new_by_key: dict[str, dict] = {}
+    for item in new_tasks_snapshot:
+        key = item.get("stable_task_key")
+        if key:
+            new_by_key[key] = item
+
+    old_keys = set(old_by_key.keys())
+    new_keys = set(new_by_key.keys())
+
+    kept_items: list[RescheduleDiffItem] = []
+    moved_items: list[RescheduleDiffItem] = []
+    created_items: list[RescheduleDiffItem] = []
+    superseded_items: list[RescheduleDiffItem] = []
+    unscheduled_items: list[RescheduleDiffItem] = []
+
+    # kept: same key, same date
+    for key in old_keys & new_keys:
+        old_item = old_by_key[key]
+        new_item = new_by_key[key]
+        if old_item["scheduled_date"] == new_item["scheduled_date"]:
+            kept_items.append(RescheduleDiffItem(
+                stable_task_key=key,
+                old_task_id=old_item["task_id"],
+                new_task_id=new_item["task_id"],
+                old_scheduled_date=old_item["scheduled_date"],
+                new_scheduled_date=new_item["scheduled_date"],
+                old_generation=old_item["generation"],
+                new_generation=new_item["generation"],
+                reason="kept",
+                title=new_item["title"],
+                course_name=new_item["course_name"],
+                estimate_minutes=new_item["estimate_minutes"],
+            ))
+
+    # moved: same key, different date
+    for key in old_keys & new_keys:
+        old_item = old_by_key[key]
+        new_item = new_by_key[key]
+        if old_item["scheduled_date"] != new_item["scheduled_date"]:
+            moved_items.append(RescheduleDiffItem(
+                stable_task_key=key,
+                old_task_id=old_item["task_id"],
+                new_task_id=new_item["task_id"],
+                old_scheduled_date=old_item["scheduled_date"],
+                new_scheduled_date=new_item["scheduled_date"],
+                old_generation=old_item["generation"],
+                new_generation=new_item["generation"],
+                reason="moved",
+                title=new_item["title"],
+                course_name=new_item["course_name"],
+                estimate_minutes=new_item["estimate_minutes"],
+            ))
+
+    # created: new key not in old
+    for key in new_keys - old_keys:
+        new_item = new_by_key[key]
+        created_items.append(RescheduleDiffItem(
+            stable_task_key=key,
+            old_task_id=None,
+            new_task_id=new_item["task_id"],
+            old_scheduled_date=None,
+            new_scheduled_date=new_item["scheduled_date"],
+            old_generation=None,
+            new_generation=new_item["generation"],
+            reason="created",
+            title=new_item["title"],
+            course_name=new_item["course_name"],
+            estimate_minutes=new_item["estimate_minutes"],
+        ))
+
+    # superseded: old key not in new
+    for key in old_keys - new_keys:
+        old_item = old_by_key[key]
+        superseded_items.append(RescheduleDiffItem(
+            stable_task_key=key,
+            old_task_id=old_item["task_id"],
+            new_task_id=None,
+            old_scheduled_date=old_item["scheduled_date"],
+            new_scheduled_date=None,
+            old_generation=old_item["generation"],
+            new_generation=None,
+            reason="superseded",
+            title=old_item["title"],
+            course_name=old_item["course_name"],
+            estimate_minutes=old_item["estimate_minutes"],
+        ))
+
+    # unscheduled: tasks from the new schedule that couldn't be placed
+    for item in new_tasks_snapshot:
+        if item.get("unscheduled_reason"):
+            unscheduled_items.append(RescheduleDiffItem(
+                stable_task_key=item.get("stable_task_key"),
+                old_task_id=None,
+                new_task_id=item["task_id"],
+                old_scheduled_date=None,
+                new_scheduled_date=None,
+                old_generation=None,
+                new_generation=item["generation"],
+                reason=item["unscheduled_reason"],
+                title=item["title"],
+                course_name=item["course_name"],
+                estimate_minutes=item["estimate_minutes"],
+            ))
 
     diff = MultiPlanRescheduleDiff(
-        added=[
-            MultiScheduleItem(
-                scheduled_date=item["scheduled_date"],
-                course_name=item.get("course_name", course_name_by_id.get(item["course_id"], "")),
-                title=item["title"],
-                estimate_minutes=item["estimate_minutes"],
-                start_time=item.get("start_time"),
-                end_time=item.get("end_time"),
-            )
-            for item in schedule_items_raw
-            if (item["title"], item.get("course_name", ""), str(item["scheduled_date"])) in added_titles
-        ],
-        removed=[
-            item for item in old_items
-            if (item["title"], item["course_name"], item["scheduled_date"] or "") in removed_titles
-        ],
-        changed=[],
+        kept=kept_items,
+        moved=moved_items,
+        created=created_items,
+        superseded=superseded_items,
+        unscheduled=unscheduled_items,
     )
 
     return MultiPlanRescheduleResponse(

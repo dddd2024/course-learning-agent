@@ -172,18 +172,49 @@ class MultiPlanReschedule(BaseModel):
     daily_minutes: int = Field(..., gt=0)
 
 
-class MultiPlanRescheduleDiff(BaseModel):
-    """Diff between old and new schedule after a reschedule."""
+class RescheduleDiffItem(BaseModel):
+    """A single item in the five-category reschedule diff.
 
-    added: List[MultiScheduleItem] = Field(default_factory=list)
-    removed: List[Dict[str, Any]] = Field(default_factory=list)
-    changed: List[Dict[str, Any]] = Field(default_factory=list)
+    V7.4.2-06: Each item carries stable_task_key, old/new IDs, dates,
+    generation, and a reason explaining why it was categorized.
+    """
+
+    stable_task_key: Optional[str] = None
+    old_task_id: Optional[int] = None
+    new_task_id: Optional[int] = None
+    old_scheduled_date: Optional[date] = None
+    new_scheduled_date: Optional[date] = None
+    old_generation: Optional[int] = None
+    new_generation: Optional[int] = None
+    reason: str = ""
+    title: str = ""
+    course_name: str = ""
+    estimate_minutes: int = 0
+
+
+class MultiPlanRescheduleDiff(BaseModel):
+    """V7.4.2-06: Five-category diff between old and new schedule.
+
+    Categories:
+    - kept: same stable_task_key, same scheduled_date
+    - moved: same stable_task_key, different scheduled_date
+    - created: new stable_task_key not in old schedule
+    - superseded: old stable_task_key not in new schedule
+    - unscheduled: tasks that could not be scheduled
+    """
+
+    kept: List[RescheduleDiffItem] = Field(default_factory=list)
+    moved: List[RescheduleDiffItem] = Field(default_factory=list)
+    created: List[RescheduleDiffItem] = Field(default_factory=list)
+    superseded: List[RescheduleDiffItem] = Field(default_factory=list)
+    unscheduled: List[RescheduleDiffItem] = Field(default_factory=list)
 
 
 class MultiPlanRescheduleResponse(BaseModel):
     """Response for POST /plans/multi/{multi_plan_id}/reschedule.
 
-    V7.4-04: Includes a diff showing what was added, removed, and changed.
+    V7.4.2-06: Includes a five-category diff (kept/moved/created/
+    superseded/unscheduled) with stable_task_key and old/new metadata.
     """
 
     multi_plan_id: Optional[int] = None

@@ -385,7 +385,14 @@ async function handleSubmit() {
       item_id: item.id,
       user_answer: answers.value[item.id] ?? '',
     }))
-    const { data } = await submitQuiz(activeQuiz.value.id, payload)
+    // V7.4.2-04: Pass task_id for single-request atomic submission
+    const queryTaskId = route.query.task_id
+    const taskId = queryTaskId ? Number(queryTaskId) : undefined
+    const { data } = await submitQuiz(
+      activeQuiz.value.id,
+      payload,
+      taskId !== undefined && taskId > 0 ? taskId : undefined,
+    )
     quizResult.value = data
     activeQuiz.value = {
       ...activeQuiz.value,
@@ -394,23 +401,13 @@ async function handleSubmit() {
     }
     ElMessage.success('提交成功')
 
-    // PLAN-V3-02/03: If we came from a plan task, verify the task
-    // with the quiz score so it auto-completes.
-    const queryTaskId = route.query.task_id
-    if (queryTaskId) {
-      const taskId = Number(queryTaskId)
-      if (Number.isInteger(taskId) && data.total > 0) {
-        const pct = Math.round((data.score / data.total) * 100)
-        try {
-          const { data: verifyData } = await verifyTask(taskId)
-          if (verifyData.verified) {
-            ElMessage.success('任务验证通过，已自动完成')
-          } else {
-            ElMessage.warning(`任务验证未通过（得分 ${pct}%，需 ≥ 60%）`)
-          }
-        } catch {
-          // Verification failure is non-fatal — the quiz was still submitted.
-        }
+    // V7.4.2-04: Task verification is now part of the same request
+    if (data.task_verification) {
+      if (data.task_verification.verified) {
+        ElMessage.success('任务验证通过，已自动完成')
+      } else {
+        const pct = data.percentage ?? 0
+        ElMessage.warning(`任务验证未通过（得分 ${pct}%，需 ≥ ${data.pass_score ?? 60}%）`)
       }
     }
 

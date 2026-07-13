@@ -463,11 +463,21 @@ def get_quiz_result(
             source_evidence=item.source_evidence or "[]",
             verification_status=getattr(item, "verification_status", "verified") or "verified",
         ))
+    total_count = len(items)
+    score = quiz.score or 0
+    percentage = round(score / total_count * 100) if total_count > 0 else 0
+    pass_score = getattr(quiz, "pass_score", 60) or 60
+    passed = percentage >= pass_score
+
     return QuizResultOut(
         id=quiz.id,
-        score=quiz.score or 0,
-        total=len(items),
+        score=score,
+        total=total_count,
         items=items,
+        percentage=percentage,
+        pass_score=pass_score,
+        passed=passed,
+        task_verification=None,
     )
 
 
@@ -604,12 +614,15 @@ def submit_quiz(
     quiz.score = score
     quiz.status = "submitted"
 
+    # V7.4.2-04: Track task verification result for the response
+    task_verification_result: dict | None = None
     # Task verification is part of the same transaction as scoring and weak
     # point updates.  Do not catch errors here: a failed transition rolls the
     # entire submission back instead of creating a split quiz/task state.
     if task_id is not None:
         try:
             verify_task_service(db, task_id, current_user.id, commit=False)
+            task_verification_result = {"verified": True, "task_id": task_id}
         except Exception:
             db.rollback()
             raise
@@ -633,12 +646,22 @@ def submit_quiz(
         except Exception as exc:  # pragma: no cover - audit must not break flow
             logger.warning("AgentAudit.finish_run(quiz submit) failed: %s", exc)
 
+    # V7.4.2-04: Compute percentage, passed, and include task_verification
+    total_count = len(items_by_id)
+    percentage = round(score / total_count * 100) if total_count > 0 else 0
+    pass_score = getattr(quiz, "pass_score", 60) or 60
+    passed = percentage >= pass_score
+
     return QuizResultOut(
         id=quiz.id,
         score=score,
-        total=len(items_by_id),
+        total=total_count,
         items=result_items,
         weak_point_changes=weak_point_changes,
+        percentage=percentage,
+        pass_score=pass_score,
+        passed=passed,
+        task_verification=task_verification_result,
     )
 
 

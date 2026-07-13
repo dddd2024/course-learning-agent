@@ -89,6 +89,11 @@ export interface QuizResult {
   score: number
   total: number
   items: QuizResultItem[]
+  // V7.4.2-04: Atomic submission fields
+  percentage?: number
+  pass_score?: number
+  passed?: boolean
+  task_verification?: { verified: boolean; task_id: number } | null
 }
 
 export interface WeakPoint {
@@ -155,8 +160,14 @@ export function deleteQuiz(id: number): AxiosPromise<void> {
 export function submitQuiz(
   id: number,
   answers: QuizSubmitAnswer[],
+  taskId?: number,
 ): AxiosPromise<QuizResult> {
-  return request.post(`/quizzes/${id}/submit`, { answers })
+  // V7.4.2-04: Send task_id for single-request atomic submission
+  const payload: { answers: QuizSubmitAnswer[]; task_id?: number } = { answers }
+  if (taskId !== undefined && taskId > 0) {
+    payload.task_id = taskId
+  }
+  return request.post(`/quizzes/${id}/submit`, payload)
 }
 
 export function getWeakPoints(courseId: number): AxiosPromise<WeakPointListResult> {

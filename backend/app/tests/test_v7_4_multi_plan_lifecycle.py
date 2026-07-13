@@ -339,9 +339,12 @@ class TestRescheduleDiff:
         data = resp.json()
         assert "diff" in data, "Reschedule response must include a 'diff' field"
         diff = data["diff"]
-        assert "added" in diff
-        assert "removed" in diff
-        assert "changed" in diff
+        # V7.4.2-06: diff now uses five categories instead of added/removed/changed
+        assert "kept" in diff
+        assert "moved" in diff
+        assert "created" in diff
+        assert "superseded" in diff
+        assert "unscheduled" in diff
 
 
 # ---------------------------------------------------------------------------
@@ -384,18 +387,19 @@ class TestSafeDelete:
             db.close()
 
     def test_delete_with_force_flag_bypasses_check(self, client: TestClient):
-        """DELETE /plans/multi/{id}?force=true bypasses execution history check."""
+        """V7.4.2-05: Force delete is removed; archive is used instead."""
         user_id, headers = _auth_client(client)
         course = _make_course(user_id)
         plan = _seed_multi_plan(user_id, course.id, with_execution=True)
 
+        # Force delete is no longer supported; should return 409
         resp = client.delete(f"/api/v1/plans/multi/{plan.id}?force=true", headers=headers)
-        assert resp.status_code == 204
-        db = _get_session()
-        try:
-            assert db.query(MultiCoursePlan).filter_by(id=plan.id).first() is None
-        finally:
-            db.close()
+        assert resp.status_code == 409
+
+        # Archive should succeed
+        resp = client.post(f"/api/v1/plans/multi/{plan.id}/archive", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "archived"
 
 
 # ---------------------------------------------------------------------------

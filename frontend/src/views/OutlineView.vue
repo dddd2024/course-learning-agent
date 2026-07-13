@@ -14,6 +14,7 @@ import { MAX_PAGE_SIZE } from '../constants/pagination'
 import {
   generateKnowledgePoints,
   getKPGenerations,
+  getKPsByGeneration,
   listKnowledgePoints,
   type KnowledgePoint,
   type KPGeneration,
@@ -48,6 +49,11 @@ const generating = ref(false)
 
 const generations = ref<KPGeneration[]>([])
 const generationsLoading = ref(false)
+
+// V7.4.2-07: History mode for viewing archived KP generations
+const historyMode = ref(false)
+const viewedGeneration = ref<number | null>(null)
+const historyLoading = ref(false)
 
 const chunkDialogVisible = ref(false)
 const chunkDialogLoading = ref(false)
@@ -154,6 +160,29 @@ async function fetchGenerations() {
   } finally {
     generationsLoading.value = false
   }
+}
+
+// V7.4.2-07: View a specific generation's KPs (read-only history mode)
+async function viewGeneration(gen: number) {
+  if (!courseId.value) return
+  historyLoading.value = true
+  try {
+    const { data } = await getKPsByGeneration(courseId.value, gen)
+    knowledgePoints.value = data.items
+    viewedGeneration.value = gen
+    historyMode.value = true
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '获取历史版本知识点失败'))
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+// V7.4.2-07: Exit history mode and return to current active KPs
+async function exitHistoryMode() {
+  historyMode.value = false
+  viewedGeneration.value = null
+  await fetchKnowledgePoints()
 }
 
 async function handleGenerate() {
@@ -317,7 +346,16 @@ onMounted(async () => {
           </div>
         </div>
         <div class="action-buttons">
+          <!-- V7.4.2-07: Show exit history mode button when in history mode -->
           <el-button
+            v-if="historyMode"
+            type="warning"
+            @click="exitHistoryMode"
+          >
+            返回当前版本
+          </el-button>
+          <el-button
+            v-else
             :icon="Refresh"
             :loading="listLoading"
             :disabled="generating"
@@ -325,7 +363,9 @@ onMounted(async () => {
           >
             刷新
           </el-button>
+          <!-- V7.4.2-07: Disable generate button in history mode -->
           <el-button
+            v-if="!historyMode"
             type="primary"
             :icon="MagicStick"
             :loading="generating"
@@ -342,6 +382,20 @@ onMounted(async () => {
         </div>
       </div>
     </el-card>
+
+    <!-- V7.4.2-07: History mode banner -->
+    <el-alert
+      v-if="historyMode"
+      :title="`正在查看第 ${viewedGeneration} 版知识点（只读历史模式）`"
+      type="warning"
+      :closable="false"
+      show-icon
+      class="section-card"
+    >
+      <template #default>
+        <span>此版本已归档，写操作已禁用。点击"返回当前版本"回到最新知识点。</span>
+      </template>
+    </el-alert>
 
     <el-alert
       v-if="reviewTaskId"
@@ -476,6 +530,8 @@ onMounted(async () => {
           v-for="gen in generations"
           :key="gen.generation"
           class="generation-item"
+          :class="{ 'generation-item--active': viewedGeneration === gen.generation }"
+          @click="viewGeneration(gen.generation)"
         >
           <span class="generation-version">第 {{ gen.generation }} 版</span>
           <el-tag
@@ -1003,6 +1059,18 @@ onMounted(async () => {
   padding: 10px 14px;
   border: 1px solid #ebeef5;
   border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+.generation-item:hover {
+  border-color: #409eff;
+  background-color: #ecf5ff;
+}
+
+.generation-item--active {
+  border-color: #409eff;
+  background-color: #ecf5ff;
 }
 
 .generation-version {

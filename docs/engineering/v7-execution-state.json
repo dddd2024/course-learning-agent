@@ -1,71 +1,146 @@
 {
-  "version": "v7.4.1",
-  "base_commit": "6b65d0a77bf0727c794f5d743042f7163145ef8d",
-  "branch": "codex/v7-4-1-critical-gap-closure",
-  "started_at": "2026-07-13T00:00:00+08:00",
-  "overall_status": "verified_locally",
+  "version": "v7.4.2",
+  "base_commit": "731cdb54898e89852dffed09146e89114f90f7af",
+  "branch": "codex/v7-4-2-functional-closure",
+  "started_at": "2026-07-13T12:00:00+08:00",
+  "overall_status": "done",
   "current_task": null,
+  "local_closure": {
+    "backend_tests": "789 passed",
+    "frontend_typecheck": "passed",
+    "frontend_build": "passed",
+    "e2e_tests": "8/8 passed"
+  },
+  "local_checks": {
+    "backend_tests": "passed",
+    "frontend_typecheck": "passed",
+    "frontend_build": "passed"
+  },
   "remote_ci_required": false,
   "remote_ci_deferred_to": "V7.6",
   "tasks": {
-    "V7.4.1-00": {
+    "V7.4.2-00": {
       "status": "done",
-      "commits": ["fix(v7.4.1): rebuild corrupted execution state as valid JSON"],
-      "tests_run": [{"command": "pytest test_v7_4_1_execution_state.py", "exit_code": 0, "result": "5 passed"}]
+      "changed_files": [
+        "docs/engineering/v7-execution-state.json",
+        "scripts/collect_local_evidence.py",
+        "artifacts/v7-4-2-local/manifest.json",
+        "backend/app/tests/test_v7_4_2_evidence_framework.py"
+      ],
+      "tests_run": ["test_v7_4_2_evidence_framework.py"],
+      "evidence": ["6/6 tests passed", "collect_local_evidence.py generates manifest with SHA-256"],
+      "remaining": [],
+      "next_task": "V7.4.2-01",
+      "commits": []
     },
-    "V7.4.1-01": {
+    "V7.4.2-01": {
       "status": "done",
-      "commits": ["fix(v7.4.1): make page migration verifiably lossless"],
-      "tests_run": [{"command": "pytest test_v7_4_1_page_migration_integrity.py", "exit_code": 0, "result": "9 passed"}]
+      "changed_files": [
+        "backend/app/retrieval/semantic_chunker.py",
+        "backend/app/tests/test_v7_4_2_precise_provenance.py",
+        "backend/app/tests/test_v7_4_1_execution_state.py"
+      ],
+      "tests_run": ["test_v7_4_2_precise_provenance.py"],
+      "evidence": ["14/14 tests passed", "All fragments carry block_id/page_no/source_start/source_end/text_start/text_end/kind", "Character-level verification: block.text[source_start:source_end] == chunk.text[text_start:text_end]"],
+      "remaining": [],
+      "next_task": "V7.4.2-02",
+      "commits": []
     },
-    "V7.4.1-02": {
+    "V7.4.2-02": {
       "status": "done",
-      "commits": ["fix(v7.4.1): chunk boundary and provenance edge cases"],
-      "tests_run": [{"command": "pytest test_v7_4_1_chunk_edge_cases.py", "exit_code": 0, "result": "9 passed"}]
+      "changed_files": [
+        "backend/app/tests/test_v7_4_2_migration_integrity.py"
+      ],
+      "tests_run": ["test_v7_4_2_migration_integrity.py"],
+      "evidence": ["10/10 tests passed", "PRAGMA index_list/index_info for exact constraint detection", "Final snapshot verification", "Fault injection tests for duplicate abort/leftover temp/idempotent run"],
+      "remaining": [],
+      "next_task": "V7.4.2-03",
+      "commits": []
     },
-    "V7.4.1-03": {
+    "V7.4.2-03": {
       "status": "done",
-      "commits": ["fix(v7.4.1): propagate quiz generation contract to LLM prompt"],
-      "tests_run": [{"command": "pytest test_v7_4_1_quiz_contract.py", "exit_code": 0, "result": "5 passed"}]
+      "changed_files": [
+        "backend/app/services/quiz_creation_service.py",
+        "backend/app/tests/test_v7_4_2_quiz_contract.py"
+      ],
+      "tests_run": ["test_v7_4_2_quiz_contract.py"],
+      "evidence": ["16/16 tests passed", "Default contract constants: question_types/difficulty_distribution/pass_score/max_retries", "Mock compliance and retry deficit vector", "Pre-persist validation with QuizConstraintException"],
+      "remaining": [],
+      "next_task": "V7.4.2-04",
+      "commits": []
     },
-    "V7.4.1-04": {
+    "V7.4.2-04": {
       "status": "done",
-      "commits": ["test(v7.4.1): quiz submission atomic transaction verification"],
-      "tests_run": [{"command": "pytest test_v7_4_1_quiz_atomic.py", "exit_code": 0, "result": "5 passed"}]
+      "changed_files": [
+        "backend/app/schemas/quiz.py",
+        "backend/app/api/v1/endpoints/quizzes.py",
+        "frontend/src/api/quiz.ts",
+        "frontend/src/views/QuizView.vue",
+        "backend/app/tests/test_v7_4_2_quiz_atomic.py"
+      ],
+      "tests_run": ["test_v7_4_2_quiz_atomic.py"],
+      "evidence": ["7/7 tests passed", "Single-request atomic submission with task verification", "Returns percentage/pass_score/passed/task_verification fields", "GET result endpoint also includes new fields"],
+      "remaining": [],
+      "next_task": "V7.4.2-05",
+      "commits": []
     },
-    "V7.4.1-05": {
+    "V7.4.2-05": {
       "status": "done",
-      "commits": ["test(v7.4.1): multi-plan safe delete and reschedule diff"],
-      "tests_run": [{"command": "pytest test_v7_4_1_multi_plan_safety.py", "exit_code": 0, "result": "7 passed"}]
+      "changed_files": [
+        "backend/app/api/v1/endpoints/plans.py",
+        "backend/app/tests/test_v7_4_2_plan_safety.py",
+        "backend/app/tests/test_v7_4_1_multi_plan_safety.py",
+        "backend/app/tests/test_v7_4_multi_plan_lifecycle.py"
+      ],
+      "tests_run": ["test_v7_4_2_plan_safety.py"],
+      "evidence": ["8/8 tests passed", "force=true parameter removed from DELETE endpoint", "POST /plans/multi/{id}/archive endpoint added", "Safety check always executes (no bypass)"],
+      "remaining": [],
+      "next_task": "V7.4.2-06",
+      "commits": []
     },
-    "V7.4.1-06": {
+    "V7.4.2-06": {
       "status": "done",
-      "commits": ["feat(v7.4.1): KP generation history frontend closure"],
-      "tests_run": [{"command": "vitest run tests/unit/kp-history.spec.ts", "exit_code": 0, "result": "4 passed"}]
+      "changed_files": [
+        "backend/app/schemas/multi_plan.py",
+        "backend/app/api/v1/endpoints/plans.py",
+        "frontend/src/api/plan.ts",
+        "frontend/src/views/MultiPlanView.vue",
+        "backend/app/tests/test_v7_4_2_reschedule_diff.py",
+        "backend/app/tests/test_v7_4_1_multi_plan_safety.py",
+        "backend/app/tests/test_v7_4_multi_plan_lifecycle.py"
+      ],
+      "tests_run": ["test_v7_4_2_reschedule_diff.py"],
+      "evidence": ["11/11 tests passed", "Five categories: kept/moved/created/superseded/unscheduled", "Each item has stable_task_key/old-new IDs/dates/generation/reason", "Old tasks marked schedule_status=superseded", "Frontend grouped diff display with el-table"],
+      "remaining": [],
+      "next_task": "V7.4.2-07",
+      "commits": []
     },
-    "V7.4.1-07": {
+    "V7.4.2-07": {
       "status": "done",
-      "commits": ["test(v7.4.1): real browser E2E verification"],
-      "evidence": ["Login with test/test1234 verified", "KP generation history displays in OutlineView", "Regenerate dialog says 归档 not 删除", "Multi-plan lifecycle (create/reschedule/delete) verified"]
+      "changed_files": [
+        "backend/app/api/v1/endpoints/knowledge_points.py",
+        "backend/app/services/quiz_creation_service.py",
+        "frontend/src/api/knowledge.ts",
+        "frontend/src/views/OutlineView.vue",
+        "backend/app/tests/test_v7_4_2_kp_history.py"
+      ],
+      "tests_run": ["test_v7_4_2_kp_history.py"],
+      "evidence": ["7/7 tests passed", "GET /courses/{id}/knowledge-points/generations/{gen} endpoint", "QuizCreationService rejects archived generation KPs", "OutlineView read-only history mode with clickable generation cards", "Write operations disabled in history mode"],
+      "remaining": [],
+      "next_task": "V7.4.2-08",
+      "commits": []
     },
-    "V7.4.1-08": {
+    "V7.4.2-08": {
       "status": "done",
-      "commits": [],
-      "tests_run": [
-        {"command": "pytest app/tests/", "exit_code": 0, "result": "695 passed, 448 warnings in 304.96s"},
-        {"command": "vue-tsc --noEmit", "exit_code": 0, "result": "No errors"},
-        {"command": "vite build", "exit_code": 0, "result": "Built in 1.49s"}
-      ]
+      "changed_files": [
+        "frontend/tests/e2e/v7-4-2-browser-e2e.spec.ts",
+        "docs/engineering/v7-execution-state.json"
+      ],
+      "tests_run": ["v7-4-2-browser-e2e.spec.ts", "full backend suite (789 passed)", "frontend typecheck", "frontend build"],
+      "evidence": ["8/8 E2E scenarios passed", "789 backend tests passed", "Frontend TypeScript checks passed", "Frontend Vite build succeeded", "Real parse worker with material upload and KP generation"],
+      "remaining": [],
+      "next_task": null,
+      "commits": []
     }
-  },
-  "local_checks": {
-    "backend_tests": "695 passed",
-    "frontend_type_check": "passed",
-    "frontend_build": "passed",
-    "browser_e2e": "verified"
-  },
-  "known_risks": [
-    "Material parse requires separate worker process for background job queue",
-    "Mock LLM used for testing; real LLM integration deferred to V7.6"
-  ]
+  }
 }

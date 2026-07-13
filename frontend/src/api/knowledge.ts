@@ -11,6 +11,7 @@ export interface KnowledgePoint {
   review_action: string
   status?: string
   stable_key?: string | null
+  generation?: number
 }
 
 export interface GenerateKnowledgeResult {
@@ -47,4 +48,11 @@ export function getKPGenerations(
   courseId: number,
 ): AxiosPromise<KPGeneration[]> {
   return request.get(`/courses/${courseId}/knowledge-points/generations`)
+}
+
+export function getKPsByGeneration(
+  courseId: number,
+  generation: number,
+): AxiosPromise<KnowledgeListResult> {
+  return request.get(`/courses/${courseId}/knowledge-points/generations/${generation}`)
 }

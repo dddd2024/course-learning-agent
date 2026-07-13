@@ -180,6 +180,28 @@ export interface MultiPlanScheduleItem {
   end_time: string | null
 }
 
+export interface RescheduleDiffItem {
+  stable_task_key: string | null
+  old_task_id: number | null
+  new_task_id: number | null
+  old_scheduled_date: string | null
+  new_scheduled_date: string | null
+  old_generation: number | null
+  new_generation: number | null
+  reason: string
+  title: string
+  course_name: string
+  estimate_minutes: number
+}
+
+export interface MultiPlanRescheduleDiff {
+  kept: RescheduleDiffItem[]
+  moved: RescheduleDiffItem[]
+  created: RescheduleDiffItem[]
+  superseded: RescheduleDiffItem[]
+  unscheduled: RescheduleDiffItem[]
+}
+
 export interface MultiPlanResult {
   multi_plan_id?: number | null
   schedule: MultiPlanScheduleItem[]
@@ -193,6 +215,7 @@ export interface MultiPlanResult {
     reason: string
     suggestion: string
   }>
+  diff?: MultiPlanRescheduleDiff
 }
 
 export function createMultiPlan(payload: MultiPlanPayload): AxiosPromise<MultiPlanResult> {
