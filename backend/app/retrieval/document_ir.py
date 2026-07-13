@@ -127,6 +127,8 @@ class DocumentBlock:
     font_size: Optional[float] = None
     list_level: int = 0
     source_kind: str = "text"
+    visual_role: str = "text"
+    reading_order_confidence: float = 1.0
 
     def to_dict(self) -> dict:
         return {
@@ -139,6 +141,8 @@ class DocumentBlock:
             "font_size": self.font_size,
             "list_level": self.list_level,
             "source_kind": self.source_kind,
+            "visual_role": self.visual_role,
+            "reading_order_confidence": self.reading_order_confidence,
         }
 
     @classmethod
@@ -153,6 +157,8 @@ class DocumentBlock:
             font_size=d.get("font_size"),
             list_level=d.get("list_level", 0),
             source_kind=d.get("source_kind", "text"),
+            visual_role=d.get("visual_role", "text"),
+            reading_order_confidence=float(d.get("reading_order_confidence", 1.0)),
         )
 
 
@@ -176,6 +182,7 @@ class DocumentPage:
     tables: List[DocumentTable] = field(default_factory=list)
     images: List[DocumentImageAnchor] = field(default_factory=list)
     parser_version: str = "layout-v6"
+    layout_uncertain: bool = False
 
     @property
     def text(self) -> str:
@@ -190,6 +197,7 @@ class DocumentPage:
             "tables": [t.to_dict() for t in self.tables],
             "images": [a.to_dict() for a in self.images],
             "parser_version": self.parser_version,
+            "layout_uncertain": self.layout_uncertain,
         }
 
     @classmethod
@@ -201,6 +209,7 @@ class DocumentPage:
             tables=[DocumentTable.from_dict(t) for t in d.get("tables", [])],
             images=[DocumentImageAnchor.from_dict(a) for a in d.get("images", [])],
             parser_version=d.get("parser_version", "layout-v6"),
+            layout_uncertain=bool(d.get("layout_uncertain", False)),
         )
 
 

@@ -4,13 +4,12 @@
   "branch": "codex/v7-5-0-document-fidelity-rc",
   "started_at": "2026-07-13T20:00:00+08:00",
   "overall_status": "in_progress",
-  "current_task": "V7.5.0-03",
+  "current_task": "V7.5.0-04",
   "local_closure": null,
   "release_candidate": null,
   "remote_ci": "deferred_to_v7_6",
   "audit_blockers": [
     "closure_evidence_not_reproducible",
-    "layout_mapping_and_bbox_navigation_unverified",
     "document_reader_original_page_flow_unverified",
     "real_document_regression_unverified"
   ],
@@ -28,8 +27,8 @@
     },
     "V7.5.0-01": {"status": "done", "changed_files": ["backend/app/retrieval/page_renderer.py", "backend/app/models/material_page_asset.py", "backend/app/db/versioned_migrations/023_v7_5_page_assets.py", "backend/app/services/material_parser.py", "backend/app/api/v1/endpoints/parse.py"], "commands": [["backend/.venv/Scripts/python.exe", "-m", "pytest", "-q", "backend/app/tests/test_v7_5_0_document_fidelity.py"]], "tests_run": ["backend/app/tests/test_v7_5_0_document_fidelity.py"], "test_summaries": ["page renderer and protected page-asset API passed"], "evidence": ["backend/app/tests/test_v7_5_0_document_fidelity.py"], "remaining": [], "next_task": "V7.5.0-02", "commits": []},
     "V7.5.0-02": {"status": "done", "changed_files": ["backend/app/retrieval/image_extractor.py", "backend/app/services/material_image_service.py", "backend/app/models/material_image.py"], "commands": [["backend/.venv/Scripts/python.exe", "-m", "pytest", "-q", "backend/app/tests/test_v7_5_0_document_fidelity.py"]], "tests_run": ["backend/app/tests/test_v7_5_0_document_fidelity.py"], "test_summaries": ["page fallback and image occurrence integrity passed"], "evidence": ["backend/app/tests/test_v7_5_0_document_fidelity.py"], "remaining": [], "next_task": "V7.5.0-03", "commits": []},
-    "V7.5.0-03": {"status": "in_progress", "changed_files": [], "commands": [], "tests_run": [], "test_summaries": [], "evidence": [], "remaining": ["layout confidence and visual-page chunk protection"], "next_task": "V7.5.0-04", "commits": []},
-    "V7.5.0-04": {"status": "pending", "changed_files": [], "commands": [], "tests_run": [], "test_summaries": [], "evidence": [], "remaining": [], "next_task": "V7.5.0-05", "commits": []},
+    "V7.5.0-03": {"status": "done", "changed_files": ["backend/app/retrieval/pdf_layout_parser.py", "backend/app/retrieval/document_ir.py", "backend/app/retrieval/semantic_chunker.py"], "commands": [["backend/.venv/Scripts/python.exe", "-m", "pytest", "-q", "backend/app/tests/test_v7_5_0_document_fidelity.py"]], "tests_run": ["backend/app/tests/test_v7_5_0_document_fidelity.py"], "test_summaries": ["diagram-like page creates non-indexable visual summary"], "evidence": ["backend/app/tests/test_v7_5_0_document_fidelity.py"], "remaining": [], "next_task": "V7.5.0-04", "commits": []},
+    "V7.5.0-04": {"status": "in_progress", "changed_files": [], "commands": [], "tests_run": [], "test_summaries": [], "evidence": [], "remaining": ["original-page-first reader"], "next_task": "V7.5.0-05", "commits": []},
     "V7.5.0-05": {"status": "pending", "changed_files": [], "commands": [], "tests_run": [], "test_summaries": [], "evidence": [], "remaining": [], "next_task": "V7.5.0-06", "commits": []},
     "V7.5.0-06": {"status": "pending", "changed_files": [], "commands": [], "tests_run": [], "test_summaries": [], "evidence": [], "remaining": [], "next_task": null, "commits": []}
   }

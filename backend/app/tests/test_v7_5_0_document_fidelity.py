@@ -13,6 +13,9 @@ from app.models.material_page_asset import MaterialPageAsset
 from app.models.material_image import MaterialImage
 from app.retrieval.image_extractor import ImageInfo
 from app.retrieval.page_renderer import render_pdf_pages
+from app.retrieval.pdf_layout_parser import annotate_pdf_layout
+from app.retrieval.document_ir import DocumentBlock, DocumentPage
+from app.retrieval.semantic_chunker import semantic_chunk_document
 from app.services.material_image_service import image_integrity, reextract_images
 
 
@@ -126,3 +129,20 @@ def test_reextract_keeps_same_embedded_image_on_different_page_occurrences(db_se
     assert result["extracted"] == 2
     assert [row.page_no for row in rows] == [1, 2]
     assert len({row.bbox_json for row in rows}) == 2
+
+
+def test_diagram_like_page_becomes_a_visual_summary_not_flattened_text() -> None:
+    blocks = [
+        DocumentBlock(block_id=f"b{index}", page_no=9, block_type="body", reading_order=index,
+                      text=label, bbox=(20 + (index % 4) * 120, 30 + (index // 4) * 100, 100, 50))
+        for index, label in enumerate(["链路层", "网络层", "物理层", "TCP", "IP", "Router", "Host", "Switch"])
+    ]
+    page = DocumentPage(page_no=9, page_type="pdf", blocks=blocks)
+
+    annotate_pdf_layout([page])
+    chunks = semantic_chunk_document([page])
+
+    assert page.layout_uncertain is True
+    assert chunks[0]["split_reason"] == "visual_page_summary"
+    assert chunks[0]["is_indexable"] is False
+    assert "原页视觉资产" in chunks[0]["text"]

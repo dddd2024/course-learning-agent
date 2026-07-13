@@ -625,6 +625,9 @@ def parse_file(
     else:
         raise BusinessException(message=f"不支持的文件类型: {normalised}")
     pages = to_document_pages(parsed)
+    if normalised == "pdf":
+        from app.retrieval.pdf_layout_parser import annotate_pdf_layout
+        pages = annotate_pdf_layout(pages)
     for page in pages:
         page.parser_version = "layout-v7"
     return pages

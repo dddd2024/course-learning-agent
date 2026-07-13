@@ -823,6 +823,23 @@ def semantic_chunk(
 
     for page in pages:
         page_no = page.page_no
+        if getattr(page, "layout_uncertain", False):
+            _flush("layout_boundary")
+            chunks.append({
+                "text": f"第 {page_no} 页包含复杂图形或不确定布局，请查看原页视觉资产。",
+                "title": f"第 {page_no} 页视觉内容",
+                "page_start": page_no,
+                "page_end": page_no,
+                "source_block_ids": [block.block_id for block in page.blocks],
+                "source_fragments_json": [],
+                "split_reason": "visual_page_summary",
+                "chunk_index": chunk_index,
+                "chunker_version": CHUNKER_VERSION,
+                "is_indexable": False,
+                "layout_uncertain": True,
+            })
+            chunk_index += 1
+            continue
         blocks = page.blocks
         i = 0
         while i < len(blocks):
