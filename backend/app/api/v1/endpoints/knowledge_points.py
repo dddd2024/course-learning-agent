@@ -391,7 +391,13 @@ def list_kps_by_generation(
         .all()
     )
     items = [KnowledgePointResponse.model_validate(r) for r in rows]
-    return KnowledgePointListResponse(items=items, total=len(items))
+    is_active_generation = any(row.status == "active" for row in rows)
+    return KnowledgePointListResponse(
+        items=items,
+        total=len(items),
+        read_only=not is_active_generation,
+        generation_status="active" if is_active_generation else "archived",
+    )
 
 
 def _safe_add_step(

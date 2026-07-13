@@ -138,8 +138,21 @@ class QuizCreationService:
                 status_code=422,
             )
 
-        # Validate generation consistency and active status
-        # V7.4.2-07: Reject KPs from archived (non-active) generations.
+        # Validate ownership, course, generation consistency and active
+        # status before invoking the provider.  Callers can pass ORM rows
+        # directly, so the service cannot rely on endpoint-side filtering.
+        if any(
+            kp.course_id != course_id
+            or kp.user_id != user_id
+            or kp.status != "active"
+            for kp in knowledge_points
+        ):
+            raise QuizConstraintException(
+                requested_count=question_count,
+                valid_count=0,
+                drop_reasons=["knowledge_point_not_owned_or_not_active"],
+            )
+
         active_generation = max(kp.generation for kp in knowledge_points)
         if any(kp.generation != active_generation for kp in knowledge_points):
             raise QuizConstraintException(
@@ -148,28 +161,26 @@ class QuizCreationService:
                 drop_reasons=["knowledge_point_not_in_active_generation"],
             )
 
-        # V7.4.2-07: Verify the generation matches the DB's current active generation
-        try:
-            from app.models.knowledge_point import KnowledgePoint as KPModel
-            db_active_gen = (
-                db.query(KPModel.generation)
-                .filter(
-                    KPModel.course_id == course_id,
-                    KPModel.status == "active",
-                )
-                .order_by(KPModel.generation.desc())
-                .first()
+        # Verify against the owner-scoped active generation persisted in the
+        # same session.  Never suppress an unexpected database error here:
+        # doing so could turn a safety check into a best-effort check.
+        from app.models.knowledge_point import KnowledgePoint as KPModel
+        db_active_gen = (
+            db.query(KPModel.generation)
+            .filter(
+                KPModel.course_id == course_id,
+                KPModel.user_id == user_id,
+                KPModel.status == "active",
             )
-            if db_active_gen and isinstance(db_active_gen[0], int) and db_active_gen[0] != active_generation:
-                raise QuizConstraintException(
-                    requested_count=question_count,
-                    valid_count=0,
-                    drop_reasons=["knowledge_point_from_archived_generation"],
-                )
-        except QuizConstraintException:
-            raise
-        except Exception:
-            pass
+            .order_by(KPModel.generation.desc())
+            .first()
+        )
+        if db_active_gen is None or db_active_gen[0] != active_generation:
+            raise QuizConstraintException(
+                requested_count=question_count,
+                valid_count=0,
+                drop_reasons=["knowledge_point_from_archived_generation"],
+            )
 
         # Resolve LLM config if not provided
         if user_config is None:

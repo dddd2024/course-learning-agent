@@ -44,6 +44,12 @@ class KnowledgePointListResponse(BaseModel):
 
     items: List[KnowledgePointResponse]
     total: int
+    # A generation endpoint must tell clients whether it represents the
+    # current writable outline or an immutable historical snapshot.  The
+    # server remains the authority; this flag exists so the UI can make the
+    # same boundary obvious rather than relying on a route-name convention.
+    read_only: bool = False
+    generation_status: str = "active"
 
 
 class GenerateKnowledgePointsResponse(BaseModel):

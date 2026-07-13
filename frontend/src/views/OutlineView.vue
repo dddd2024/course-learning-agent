@@ -132,9 +132,11 @@ async function fetchKnowledgePoints() {
         ElMessage.error('复习任务目标不存在，无法完成该任务')
         return
       }
-      targetResolved.value = true
+      // The backend performs a stable-key rebind before it accepts event
+      // evidence.  Do not declare the archived card itself a usable target.
       await recordTaskEvent(reviewTaskId.value, 'target_loaded', Number(archivedTarget.id))
-      ElMessage.warning('复习目标已更新到当前提纲版本，请确认内容后完成复习')
+      targetResolved.value = true
+      ElMessage.warning('复习目标已重绑到当前提纲版本，请确认内容后完成复习')
       return
     }
     if (reviewTaskId.value && target) {
@@ -170,7 +172,8 @@ async function viewGeneration(gen: number) {
     const { data } = await getKPsByGeneration(courseId.value, gen)
     knowledgePoints.value = data.items
     viewedGeneration.value = gen
-    historyMode.value = true
+    historyMode.value = data.read_only
+    if (!data.read_only) await fetchKnowledgePoints()
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取历史版本知识点失败'))
   } finally {
@@ -186,7 +189,7 @@ async function exitHistoryMode() {
 }
 
 async function handleGenerate() {
-  if (!courseId.value) return
+  if (!courseId.value || historyMode.value) return
   const replacingExisting = knowledgePoints.value.length > 0
   const confirmationMessage = replacingExisting
     ? `将归档现有 ${knowledgePoints.value.length} 个知识点并生成新版本。旧版本知识点仍可通过历史记录查看，关联的测验薄弱点记录将保留。是否继续？`
@@ -283,10 +286,12 @@ function goBack() {
 }
 
 function goToLearn() {
+  if (historyMode.value) return
   router.push(`/courses/${courseId.value}/learn`)
 }
 
 function goToLearnWithKp(kp: KnowledgePoint) {
+  if (historyMode.value) return
   const sourceChunkIds = kp.source_chunk_ids || []
   router.push({
     path: `/courses/${courseId.value}/learn`,
@@ -299,7 +304,7 @@ function goToLearnWithKp(kp: KnowledgePoint) {
 }
 
 async function completeReview() {
-  if (!reviewTaskId.value || !targetResolved.value) return
+  if (historyMode.value || !reviewTaskId.value || !targetResolved.value) return
   completingReview.value = true
   try {
     const { data } = await verifyTask(reviewTaskId.value, true)
@@ -398,14 +403,14 @@ onMounted(async () => {
     </el-alert>
 
     <el-alert
-      v-if="reviewTaskId"
+      v-if="reviewTaskId && !historyMode"
       :title="targetResolved ? '已定位任务目标，请完成本次复习后提交验证' : '正在解析复习任务目标'"
       :type="targetResolved ? 'success' : 'warning'"
       :closable="false"
       class="section-card"
     />
     <el-button
-      v-if="reviewTaskId"
+      v-if="reviewTaskId && !historyMode"
       type="primary"
       :disabled="!targetResolved"
       :loading="completingReview"
@@ -413,7 +418,7 @@ onMounted(async () => {
     >完成本次复习</el-button>
 
     <el-card
-      v-if="!listLoading && knowledgePoints.length === 0"
+      v-if="!historyMode && !listLoading && knowledgePoints.length === 0"
       class="section-card"
       shadow="never"
     >
@@ -442,14 +447,13 @@ onMounted(async () => {
         <div
           v-for="(kp, idx) in knowledgePoints"
           :key="idx"
-          class="kp-card kp-card--clickable"
-          :class="{ 'kp-card--target': kp.id === targetKnowledgePointId }"
-          role="link"
-          tabindex="0"
-          :aria-label="`学习知识点：${kp.title}`"
-          @click="goToLearnWithKp(kp)"
-          @keydown.enter.self="goToLearnWithKp(kp)"
-          @keydown.space.self.prevent="goToLearnWithKp(kp)"
+          :class="['kp-card', { 'kp-card--clickable': !historyMode, 'kp-card--target': kp.id === targetKnowledgePointId }]"
+          :role="historyMode ? undefined : 'link'"
+          :tabindex="historyMode ? -1 : 0"
+          :aria-label="historyMode ? `历史知识点：${kp.title}` : `学习知识点：${kp.title}`"
+          @click="!historyMode && goToLearnWithKp(kp)"
+          @keydown.enter.self="!historyMode && goToLearnWithKp(kp)"
+          @keydown.space.self.prevent="!historyMode && goToLearnWithKp(kp)"
         >
           <div class="kp-head">
             <div class="kp-num">{{ idx + 1 }}</div>
@@ -479,6 +483,7 @@ onMounted(async () => {
             <div class="kp-meta-item">
               <span class="kp-meta-label">建议任务：</span>
               <el-button
+                v-if="!historyMode"
                 link
                 type="primary"
                 class="kp-meta-value"

@@ -22,6 +22,8 @@ export interface GenerateKnowledgeResult {
 export interface KnowledgeListResult {
   items: KnowledgePoint[]
   total: number
+  read_only: boolean
+  generation_status: 'active' | 'archived'
 }
 
 export function generateKnowledgePoints(

@@ -3,7 +3,8 @@
 V7: Learn task flow - page load records target_loaded, then user_confirmed
         event, then verify completes the task.
 V7: Review task flow - page load records target_loaded, then review_confirmed
-        event, then verify completes the task. Archived KPs still work.
+        event, then verify completes the task. Historical KPs are rebound to
+        an active stable-key target or rejected.
 V6-23: Quiz task flow - start creates quiz, quiz submit auto-verifies on
         pass, low score stays in_progress, retry preserves history.
 """
@@ -76,34 +77,34 @@ def _make_task(
 
 def _mock_generate_quiz(**kwargs: Any) -> dict[str, Any]:
     """Return a fixed quiz output with known answers for deterministic tests."""
+    knowledge_point_id = kwargs["knowledge_points"][0].id
+    difficulty_distribution = kwargs.get("difficulty_distribution") or {"easy": 1, "medium": 1, "hard": 0}
+    bands = [
+        band
+        for band in ("easy", "medium", "hard")
+        for _ in range(int(difficulty_distribution.get(band, 0)))
+    ]
+    items = []
+    for index, band in enumerate(bands):
+        answer = "B"
+        items.append({
+            "question_type": "choice",
+            "question_text": f"What is {index + 2}+{index + 2}?",
+            "options": [
+                {"label": "A", "text": str(index + 3), "value": "A"},
+                {"label": "B", "text": str((index + 2) * 2), "value": answer},
+            ],
+            "answer": answer,
+            "explanation": "Deterministic fixture answer",
+            "knowledge_point_id": knowledge_point_id,
+            "difficulty": band,
+            "source_evidence": [{"chunk_id": index + 1, "quote_text": "fixture evidence"}],
+            "source_evidence_ids": [index + 1],
+            "order_index": index,
+        })
     return {
         "title": "V6 Test Quiz",
-        "items": [
-            {
-                "question_type": "choice",
-                "question_text": "What is 2+2?",
-                "options": [
-                    {"label": "A", "text": "3", "value": "A"},
-                    {"label": "B", "text": "4", "value": "B"},
-                ],
-                "answer": "B",
-                "explanation": "2+2=4",
-                "knowledge_point_id": None,
-                "order_index": 0,
-            },
-            {
-                "question_type": "choice",
-                "question_text": "What is 3+3?",
-                "options": [
-                    {"label": "A", "text": "5", "value": "A"},
-                    {"label": "B", "text": "6", "value": "B"},
-                ],
-                "answer": "B",
-                "explanation": "3+3=6",
-                "knowledge_point_id": None,
-                "order_index": 1,
-            },
-        ],
+        "items": items,
     }
 
 
@@ -324,32 +325,12 @@ def test_review_task_full_flow(db_session, sample_user, sample_course):
     )
     db_session.commit()
 
-    # Start, record events, verify -> should still complete despite archived KP
-    start_task(db_session, task2.id, sample_user.id)
-    record_task_event(
-        db_session,
-        task2.id,
-        sample_user.id,
-        event_type="target_loaded",
-        target_id=kp.id,
-    )
-
-    record_task_event(
-        db_session,
-        task2.id,
-        sample_user.id,
-        event_type="review_confirmed",
-        target_id=kp.id,
-    )
-
-    result = verify_task(db_session, task2.id, sample_user.id)
-    assert result["verified"] is True, (
-        f"Archived KP task should still verify, result: {result}"
-    )
-
-    db_session.refresh(task2)
-    assert task2.status == "done"
-    assert task2.execution_status == "completed"
+    # An archived point without a current stable-key replacement must not be
+    # accepted as completion evidence.
+    from app.core.exceptions import BusinessException
+    with pytest.raises(BusinessException) as error:
+        start_task(db_session, task2.id, sample_user.id)
+    assert error.value.status_code == 422
 
 
 # ---------------------------------------------------------------------------
