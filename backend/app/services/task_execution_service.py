@@ -169,6 +169,15 @@ def _rebind_archived_review_target(
     return replacement.id
 
 
+def _review_target_metadata(spec: dict[str, Any], effective_target_id: int | None) -> dict[str, int | None]:
+    """Return one machine-readable target contract for route and evidence APIs."""
+    rebound_from = spec.get("rebound_from_knowledge_point_id")
+    return {
+        "effective_target_id": effective_target_id,
+        "rebound_from_target_id": int(rebound_from) if str(rebound_from).isdigit() else None,
+    }
+
+
 def start_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
     """Start task execution.
 
@@ -196,7 +205,7 @@ def start_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
         if task.target_type != "material" or task.target_id is None:
             raise BusinessException(message=spec.get("remediation", "学习任务缺少可用资料"), status_code=422)
     elif task.task_type == "review":
-        _rebind_archived_review_target(db, task, user_id, spec)
+        effective_target_id = _rebind_archived_review_target(db, task, user_id, spec)
         if task.target_type != "knowledge_point" or task.target_id is None:
             raise BusinessException(message=spec.get("remediation", "复习任务缺少可用知识点"), status_code=422)
     else:
@@ -213,7 +222,7 @@ def start_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
     route_info = _build_route_info(task, quiz_id)
     action_type = {"learn": "open_material", "review": "open_knowledge_point", "quiz": "open_quiz"}[task.task_type]
     route_name = {"learn": "course-learn", "review": "course-outline", "quiz": "quizzes"}[task.task_type]
-    return {
+    result = {
         "route": route_info["route"],
         "params": route_info["params"],
         "action_type": action_type,
@@ -225,6 +234,9 @@ def start_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
         "execution_status": task.execution_status,
         "started_at": task.started_at.isoformat() if task.started_at else None,
     }
+    if task.task_type == "review":
+        result.update(_review_target_metadata(spec, effective_target_id))
+    return result
 
 
 def record_task_event(
@@ -249,6 +261,15 @@ def record_task_event(
     expected = spec.get("material_id") if task.task_type == "learn" else _rebind_archived_review_target(db, task, user_id, spec)
     if expected is None:
         raise BusinessException(message="任务目标未解析", status_code=409)
+    target_metadata = _review_target_metadata(spec, expected) if task.task_type == "review" else {}
+    # A stale browser route may still carry the archived id that was just
+    # rebound by the server. Accept that one transition and record evidence
+    # against the active replacement; unrelated ids remain a hard failure.
+    if (
+        task.task_type == "review"
+        and target_id == target_metadata.get("rebound_from_target_id")
+    ):
+        target_id = expected
     if target_id != expected:
         raise BusinessException(message="事件目标与任务目标不一致", status_code=409)
     expected_version = spec.get("material_version_id")
@@ -273,7 +294,7 @@ def record_task_event(
     transition_task(db, task, "record_event", user_id, evidence={"event_type": event_type, **payload}, commit=False)
     task.last_action_at = datetime.now()
     db.commit()
-    return {"recorded": True, "event_type": event_type}
+    return {"recorded": True, "event_type": event_type, **target_metadata}
 
 
 def retry_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:

@@ -134,7 +134,14 @@ async function fetchKnowledgePoints() {
       }
       // The backend performs a stable-key rebind before it accepts event
       // evidence.  Do not declare the archived card itself a usable target.
-      await recordTaskEvent(reviewTaskId.value, 'target_loaded', Number(archivedTarget.id))
+      const { data: event } = await recordTaskEvent(
+        reviewTaskId.value, 'target_loaded', Number(archivedTarget.id),
+      )
+      if (event.effective_target_id) {
+        await router.replace({
+          query: { ...route.query, knowledge_point_id: String(event.effective_target_id) },
+        })
+      }
       targetResolved.value = true
       ElMessage.warning('复习目标已重绑到当前提纲版本，请确认内容后完成复习')
       return
@@ -540,11 +547,11 @@ onMounted(async () => {
         >
           <span class="generation-version">第 {{ gen.generation }} 版</span>
           <el-tag
-            :type="gen.status === 'current' ? 'success' : 'info'"
+            :type="gen.status === 'active' ? 'success' : 'info'"
             size="small"
             effect="light"
           >
-            {{ gen.status === 'current' ? '当前' : '已归档' }}
+            {{ gen.status === 'active' ? '当前' : '已归档' }}
           </el-tag>
           <span class="generation-count">{{ gen.count }} 个知识点</span>
           <span class="generation-date">{{ formatLocalDateTime(gen.created_at) }}</span>

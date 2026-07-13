@@ -347,7 +347,7 @@ export function verifyTask(taskId: number, confirmation?: boolean): AxiosPromise
   return request.post(`/plans/tasks/${taskId}/verify`, { confirmation: confirmation ?? null })
 }
 
-export function recordTaskEvent(taskId: number, eventType: 'target_loaded' | 'user_confirmed' | 'review_confirmed', targetId: number, materialVersionId?: number, route?: string, pageCount?: number): AxiosPromise<{ recorded: boolean }> {
+export function recordTaskEvent(taskId: number, eventType: 'target_loaded' | 'user_confirmed' | 'review_confirmed', targetId: number, materialVersionId?: number, route?: string, pageCount?: number): AxiosPromise<{ recorded: boolean; effective_target_id?: number | null; rebound_from_target_id?: number | null }> {
   return request.post(`/plans/tasks/${taskId}/events`, { event_type: eventType, target_id: targetId, material_version_id: materialVersionId, route, page_count: pageCount })
 }
 

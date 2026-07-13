@@ -41,7 +41,7 @@ export function listKnowledgePoints(
 
 export interface KPGeneration {
   generation: number
-  status: string
+  status: 'active' | 'archived'
   count: number
   created_at: string | null
 }
