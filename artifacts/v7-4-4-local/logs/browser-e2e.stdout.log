@@ -1,0 +1,13 @@
+
+Running 8 tests using 1 worker
+
+  ok 1 [chromium] › tests\e2e\v7-4-4-browser-e2e.spec.ts:151:1 › V7.4.4-E2E-01: registration is independently browser-visible (2.3s)
+  ok 2 [chromium] › tests\e2e\v7-4-4-browser-e2e.spec.ts:158:1 › V7.4.4-E2E-02: material provenance is inspectable through the UI (9.3s)
+  ok 3 [chromium] › tests\e2e\v7-4-4-browser-e2e.spec.ts:171:1 › V7.4.4-E2E-03: four-type quiz contract, count, pass line, and result are visible (9.2s)
+  ok 4 [chromium] › tests\e2e\v7-4-4-browser-e2e.spec.ts:185:1 › V7.4.4-E2E-04: pure multiple-choice quiz is answered and passed through the UI (9.5s)
+  ok 5 [chromium] › tests\e2e\v7-4-4-browser-e2e.spec.ts:196:1 › V7.4.4-E2E-05: failed task quiz retries with a new quiz and then completes (12.6s)
+  ok 6 [chromium] › tests\e2e\v7-4-4-browser-e2e.spec.ts:227:1 › V7.4.4-E2E-06: historical KP generation is read-only while sources remain usable (9.3s)
+  ok 7 [chromium] › tests\e2e\v7-4-4-browser-e2e.spec.ts:247:1 › V7.4.4-E2E-07: reschedule history reopens and exposes a stable unscheduled key (11.1s)
+  ok 8 [chromium] › tests\e2e\v7-4-4-browser-e2e.spec.ts:273:1 › V7.4.4-E2E-08: execution history blocks deletion and the UI archives the plan (11.3s)
+
+  8 passed (1.4m)

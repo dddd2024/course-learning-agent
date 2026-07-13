@@ -1,0 +1,149 @@
+[WebServer] INFO:     Started server process [8564]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+[WebServer] 2026-07-13 21:02:38,610 [INFO] parse_worker_health: Health check listening on http://127.0.0.1:8001
+[WebServer] 2026-07-13 21:02:38,610 [INFO] parse_worker_health: Parse worker started - polling for queued jobs...
+[WebServer] 21:03:00 [vite] (client) [console.warn] ElementPlusError: [el-checkbox] [API] label act as value is about to be deprecated in version 3.0.0, please use value instead.
+[WebServer] For more detail, please visit: https://element-plus.org/en-US/component/checkbox.html
+[WebServer] 
+[WebServer]     at debugWarn (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:4760:35)
+[WebServer]     at watch.immediate (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5851:12)
+[WebServer]     at callWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1889:17)
+[WebServer]     at callWithAsyncErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1896:15)
+[WebServer]     at baseWatchOptions.call (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2388:46)
+[WebServer]     at job (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1670:13)
+[WebServer]     at watch$1 (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1691:25)
+[WebServer]     at doWatch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2410:22)
+[WebServer]     at watch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2362:9)
+[WebServer]     at useDeprecated (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5850:2)
+[WebServer] 21:03:00 [vite] (client) [console.warn] ElementPlusError: [el-checkbox] [API] label act as value is about to be deprecated in version 3.0.0, please use value instead.
+[WebServer] For more detail, please visit: https://element-plus.org/en-US/component/checkbox.html
+[WebServer] 
+[WebServer]     at debugWarn (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:4760:35)
+[WebServer]     at watch.immediate (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5851:12)
+[WebServer]     at callWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1889:17)
+[WebServer]     at callWithAsyncErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1896:15)
+[WebServer]     at baseWatchOptions.call (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2388:46)
+[WebServer]     at job (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1670:13)
+[WebServer]     at watch$1 (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1691:25)
+[WebServer]     at doWatch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2410:22)
+[WebServer]     at watch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2362:9)
+[WebServer]     at useDeprecated (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5850:2)
+[WebServer] 21:03:00 [vite] (client) [console.warn] ElementPlusError: [el-checkbox] [API] label act as value is about to be deprecated in version 3.0.0, please use value instead.
+[WebServer] For more detail, please visit: https://element-plus.org/en-US/component/checkbox.html
+[WebServer] 
+[WebServer]     at debugWarn (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:4760:35)
+[WebServer]     at watch.immediate (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5851:12)
+[WebServer]     at callWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1889:17)
+[WebServer]     at callWithAsyncErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1896:15)
+[WebServer]     at baseWatchOptions.call (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2388:46)
+[WebServer]     at job (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1670:13)
+[WebServer]     at watch$1 (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1691:25)
+[WebServer]     at doWatch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2410:22)
+[WebServer]     at watch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2362:9)
+[WebServer]     at useDeprecated (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5850:2)
+[WebServer] 21:03:00 [vite] (client) [console.warn] ElementPlusError: [el-checkbox] [API] label act as value is about to be deprecated in version 3.0.0, please use value instead.
+[WebServer] For more detail, please visit: https://element-plus.org/en-US/component/checkbox.html
+[WebServer] 
+[WebServer]     at debugWarn (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:4760:35)
+[WebServer]     at watch.immediate (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5851:12)
+[WebServer]     at callWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1889:17)
+[WebServer]     at callWithAsyncErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1896:15)
+[WebServer]     at baseWatchOptions.call (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2388:46)
+[WebServer]     at job (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1670:13)
+[WebServer]     at watch$1 (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1691:25)
+[WebServer]     at doWatch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2410:22)
+[WebServer]     at watch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2362:9)
+[WebServer]     at useDeprecated (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5850:2)
+[WebServer] 21:03:10 [vite] (client) [console.warn] ElementPlusError: [el-checkbox] [API] label act as value is about to be deprecated in version 3.0.0, please use value instead.
+[WebServer] For more detail, please visit: https://element-plus.org/en-US/component/checkbox.html
+[WebServer] 
+[WebServer]     at debugWarn (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:4760:35)
+[WebServer]     at watch.immediate (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5851:12)
+[WebServer]     at callWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1889:17)
+[WebServer]     at callWithAsyncErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1896:15)
+[WebServer]     at baseWatchOptions.call (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2388:46)
+[WebServer]     at job (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1670:13)
+[WebServer]     at watch$1 (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1691:25)
+[WebServer]     at doWatch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2410:22)
+[WebServer]     at watch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2362:9)
+[WebServer]     at useDeprecated (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5850:2)
+[WebServer] 21:03:10 [vite] (client) [console.warn] ElementPlusError: [el-checkbox] [API] label act as value is about to be deprecated in version 3.0.0, please use value instead.
+[WebServer] For more detail, please visit: https://element-plus.org/en-US/component/checkbox.html
+[WebServer] 
+[WebServer]     at debugWarn (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:4760:35)
+[WebServer]     at watch.immediate (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5851:12)
+[WebServer]     at callWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1889:17)
+[WebServer]     at callWithAsyncErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1896:15)
+[WebServer]     at baseWatchOptions.call (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2388:46)
+[WebServer]     at job (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1670:13)
+[WebServer]     at watch$1 (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1691:25)
+[WebServer]     at doWatch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2410:22)
+[WebServer]     at watch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2362:9)
+[WebServer]     at useDeprecated (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5850:2)
+[WebServer] 21:03:10 [vite] (client) [console.warn] ElementPlusError: [el-checkbox] [API] label act as value is about to be deprecated in version 3.0.0, please use value instead.
+[WebServer] For more detail, please visit: https://element-plus.org/en-US/component/checkbox.html
+[WebServer] 
+[WebServer]     at debugWarn (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:4760:35)
+[WebServer]     at watch.immediate (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5851:12)
+[WebServer]     at callWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1889:17)
+[WebServer]     at callWithAsyncErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1896:15)
+[WebServer]     at baseWatchOptions.call (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2388:46)
+[WebServer]     at job (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1670:13)
+[WebServer]     at watch$1 (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1691:25)
+[WebServer]     at doWatch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2410:22)
+[WebServer]     at watch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2362:9)
+[WebServer]     at useDeprecated (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5850:2)
+[WebServer] 21:03:10 [vite] (client) [console.warn] ElementPlusError: [el-checkbox] [API] label act as value is about to be deprecated in version 3.0.0, please use value instead.
+[WebServer] For more detail, please visit: https://element-plus.org/en-US/component/checkbox.html
+[WebServer] 
+[WebServer]     at debugWarn (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:4760:35)
+[WebServer]     at watch.immediate (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5851:12)
+[WebServer]     at callWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1889:17)
+[WebServer]     at callWithAsyncErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1896:15)
+[WebServer]     at baseWatchOptions.call (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2388:46)
+[WebServer]     at job (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1670:13)
+[WebServer]     at watch$1 (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1691:25)
+[WebServer]     at doWatch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2410:22)
+[WebServer]     at watch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2362:9)
+[WebServer]     at useDeprecated (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5850:2)
+[WebServer] 21:03:54 [vite] (client) [console.warn] ElementPlusError: [el-radio] [API] label act as value is about to be deprecated in version 3.0.0, please use value instead.
+[WebServer] For more detail, please visit: https://element-plus.org/en-US/component/radio.html
+[WebServer] 
+[WebServer]     at debugWarn (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:4760:35)
+[WebServer]     at watch.immediate (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5851:12)
+[WebServer]     at callWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1889:17)
+[WebServer]     at callWithAsyncErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1896:15)
+[WebServer]     at baseWatchOptions.call (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2388:46)
+[WebServer]     at job (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1670:13)
+[WebServer]     at watch$1 (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1691:25)
+[WebServer]     at doWatch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2410:22)
+[WebServer]     at watch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2362:9)
+[WebServer]     at useDeprecated (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5850:2)
+[WebServer] 21:03:54 [vite] (client) [console.warn] ElementPlusError: [el-radio] [API] label act as value is about to be deprecated in version 3.0.0, please use value instead.
+[WebServer] For more detail, please visit: https://element-plus.org/en-US/component/radio.html
+[WebServer] 
+[WebServer]     at debugWarn (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:4760:35)
+[WebServer]     at watch.immediate (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5851:12)
+[WebServer]     at callWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1889:17)
+[WebServer]     at callWithAsyncErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1896:15)
+[WebServer]     at baseWatchOptions.call (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2388:46)
+[WebServer]     at job (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1670:13)
+[WebServer]     at watch$1 (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1691:25)
+[WebServer]     at doWatch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2410:22)
+[WebServer]     at watch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2362:9)
+[WebServer]     at useDeprecated (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5850:2)
+[WebServer] 21:03:54 [vite] (client) [console.warn] ElementPlusError: [el-radio] [API] label act as value is about to be deprecated in version 3.0.0, please use value instead.
+[WebServer] For more detail, please visit: https://element-plus.org/en-US/component/radio.html
+[WebServer] 
+[WebServer]     at debugWarn (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:4760:35)
+[WebServer]     at watch.immediate (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5851:12)
+[WebServer]     at callWithErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1889:17)
+[WebServer]     at callWithAsyncErrorHandling (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1896:15)
+[WebServer]     at baseWatchOptions.call (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2388:46)
+[WebServer]     at job (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1670:13)
+[WebServer]     at watch$1 (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:1691:25)
+[WebServer]     at doWatch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2410:22)
+[WebServer]     at watch (http://127.0.0.1:5173/node_modules/.vite/deps/vue.runtime.esm-bundler-BgHWR618.js?v=6dfa5255:2362:9)
+[WebServer]     at useDeprecated (http://127.0.0.1:5173/node_modules/.vite/deps/element-plus.js?v=6dfa5255:5850:2)
