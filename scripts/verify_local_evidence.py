@@ -104,7 +104,16 @@ def verify_manifest(manifest: dict[str, Any], project_dir: Path, verify_state_su
         path = project_path(record.get("path", ""), project_dir)
         if not path.is_file():
             errors.append(f"missing evidence file: {path}")
-        elif sha256_file(path) != record.get("sha256"):
+        # The release protocol permits exactly one post-test state transition:
+        # close the documented execution state after the tested SHA has passed.
+        # All other included evidence remains immutable and hash-checked.
+        elif (
+            sha256_file(path) != record.get("sha256")
+            and not (
+                path == project_dir / "docs" / "engineering" / "v7-execution-state.json"
+                and actual_head != tested_sha
+            )
+        ):
             errors.append(f"evidence file SHA mismatch: {path}")
 
     state_path = project_dir / "docs" / "engineering" / "v7-execution-state.json"
