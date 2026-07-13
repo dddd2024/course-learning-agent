@@ -18,6 +18,13 @@
 ## 难度分布要求
 {difficulty_distribution}
 
+## 机器合同（优先遵守）
+下面的 `CONTRACT_JSON` 是本次生成的唯一机器可解析合同。不得改变题数、题型集合或难度数量；题型为 `multiple_choice` 时，`answer` 必须是至少两个选项字母组成的数组。
+
+CONTRACT_JSON
+{contract_json}
+CONTRACT_JSON_END
+
 ## 输出要求
 严格输出以下 JSON 结构（不要输出任何 JSON 之外的文字）：
 
@@ -45,7 +52,7 @@
 - `question_type`：`single_choice`/`multiple_choice`/`true_false`/`short_answer` 之一。
 - `difficulty`：1-5 整数。
 - `options`：选择题选项数组；简答题可为空数组。
-- `answer`：正确答案。选择题填选项字母，简答题填参考答案文本。
+- `answer`：单选题填一个选项字母；多选题填至少两个选项字母组成的 JSON 数组；判断题填 JSON 布尔值；简答题填参考答案文本。
 - `explanation`：解析，说明为何此答案正确。
 - `rubric`：仅简答题填写 2-4 个评分要点，每项为 `{{"criterion":"要点说明","keywords":["可匹配关键词"]}}`；选择题和判断题填空数组。关键词必须来自参考答案或资料，不得凭空扩展。
 - `knowledge_point_ids`：关联知识点 ID 数组。

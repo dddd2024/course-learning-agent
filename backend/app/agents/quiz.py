@@ -123,6 +123,25 @@ def _format_difficulty_distribution_contract(
     return f"难度分布要求：{easy} easy, {medium} medium, {hard} hard。"
 
 
+def _format_contract_json(
+    question_count: int,
+    question_types: list[str] | None,
+    difficulty_distribution: dict[str, int] | None,
+    question_offset: int = 0,
+) -> str:
+    """Render the provider contract as an unambiguous machine-readable value."""
+    return json.dumps(
+        {
+            "question_count": question_count,
+            "question_offset": question_offset,
+            "question_types": question_types or ["choice", "true_false", "short_answer"],
+            "difficulty_distribution": difficulty_distribution or {},
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
 def build_quiz_prompt(
     course_name: str,
     question_count: int,
@@ -130,6 +149,7 @@ def build_quiz_prompt(
     difficulty_distribution: dict[str, int] | None,
     retrieved_chunks: str,
     knowledge_points: str,
+    question_offset: int = 0,
 ) -> str:
     """Render the quiz generation prompt with the full generation contract.
 
@@ -148,6 +168,9 @@ def build_quiz_prompt(
         difficulty_distribution=_format_difficulty_distribution_contract(
             difficulty_distribution
         ),
+        contract_json=_format_contract_json(
+            question_count, question_types, difficulty_distribution, question_offset
+        ),
     )
 
 
@@ -156,6 +179,38 @@ def _normalise_question_type(raw: str) -> str:
     if not raw:
         return "short_answer"
     return _TYPE_MAP.get(raw, raw)
+
+
+def _has_valid_question_structure(question: dict[str, Any], qtype: str) -> bool:
+    """Reject malformed provider items before they reach persistence."""
+    options = question.get("options", [])
+    answer = question.get("answer")
+    if qtype == "choice":
+        return (
+            isinstance(answer, str)
+            and bool(answer.strip())
+            and isinstance(options, list)
+            and len(options) >= 4
+        )
+    if qtype == "multiple_choice":
+        return (
+            isinstance(answer, list)
+            and len(answer) >= 2
+            and all(isinstance(value, str) and value.strip() for value in answer)
+            and len(set(answer)) == len(answer)
+            and isinstance(options, list)
+            and len(options) >= 4
+        )
+    if qtype == "true_false":
+        # Older real providers emitted the JSON strings "true" / "false".
+        # Keep that wire-compatible input while the production Mock emits
+        # actual booleans under the V7.4.4 contract.
+        return isinstance(answer, bool) or (
+            isinstance(answer, str) and answer.strip().lower() in {"true", "false"}
+        )
+    if qtype == "short_answer":
+        return isinstance(answer, str) and bool(answer.strip()) and isinstance(question.get("rubric"), list)
+    return False
 
 
 def _normalise_rubric(raw: Any) -> list[dict[str, Any]]:
@@ -307,6 +362,9 @@ def _process_llm_output(
                 "Skipping quiz item %s: invalid question type '%s'", i, qtype
             )
             continue
+        if not _has_valid_question_structure(q, qtype):
+            logger.warning("Skipping quiz item %s: invalid %s structure", i, qtype)
+            continue
 
         evidence_ids = _valid_evidence_ids(
             db, course_id, q.get("source_chunk_ids", []), knowledge_points
@@ -369,7 +427,7 @@ def _process_llm_output(
             "question_type": qtype,
             "question_text": q.get("stem", ""),
             "options": _prefix_options(q.get("options", [])),
-            "answer": str(q.get("answer", "")),
+            "answer": q.get("answer", ""),
             "rubric": rubric,
             "explanation": q.get("explanation", ""),
             "difficulty": q.get("difficulty"),
@@ -402,6 +460,7 @@ def generate_quiz(
     question_types: list[str] | None = None,
     difficulty_distribution: dict[str, int] | None = None,
     user_config: dict | None = None,
+    question_offset: int = 0,
 ) -> dict[str, Any]:
     """Generate a quiz for a course's knowledge points.
 
@@ -447,6 +506,7 @@ def generate_quiz(
         difficulty_distribution=difficulty_distribution,
         retrieved_chunks=_format_evidence(db, knowledge_points),
         knowledge_points=_format_knowledge_points(knowledge_points),
+        question_offset=question_offset,
     )
 
     run_started_at = time.monotonic()

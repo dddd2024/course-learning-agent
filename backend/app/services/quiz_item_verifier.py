@@ -83,8 +83,10 @@ def verify_quiz_item(
     question_type = item.get("question_type", "")
     combined_quote = " ".join(valid_quotes)
 
-    if question_type in ("single_choice", "multiple_choice", "choice"):
+    if question_type in ("single_choice", "choice"):
         return _verify_choice_item(item, combined_quote)
+    elif question_type == "multiple_choice":
+        return _verify_multiple_choice_item(item, combined_quote)
     elif question_type == "true_false":
         return _verify_true_false_item(item, combined_quote)
     elif question_type == "short_answer":
@@ -133,6 +135,40 @@ def _verify_choice_item(
         return False, "单选题必须恰有一个选项与来源引用精确匹配"
     if correct_text != exact_matches[0]:
         return False, "正确答案不是唯一的来源精确匹配选项"
+    return True, "verified"
+
+
+def _verify_multiple_choice_item(
+    item: dict[str, Any],
+    combined_quote: str,
+) -> tuple[bool, str]:
+    """Verify that every and only selected option is directly evidenced."""
+    options = item.get("options", [])
+    answer = item.get("answer")
+    if not isinstance(options, list) or len(options) < 4:
+        return False, "多选题至少需要四个选项"
+    if not isinstance(answer, list) or len(answer) < 2:
+        return False, "多选题答案必须是至少两个选项字母组成的数组"
+
+    by_label: dict[str, str] = {}
+    for index, option in enumerate(options):
+        if isinstance(option, dict):
+            label = str(option.get("label", option.get("value", ""))).strip().upper()
+            text = str(option.get("text", "")).strip()
+        else:
+            raw = str(option).strip()
+            label = raw[:1].upper() if len(raw) > 1 and raw[1] in ".、)" else chr(65 + index)
+            text = raw[2:].strip() if len(raw) > 1 and raw[1] in ".、)" else raw
+        if not label or not text or label in by_label:
+            return False, "多选题选项标签或文本无效"
+        by_label[label] = text
+
+    selected = [str(value).strip().upper() for value in answer]
+    if len(set(selected)) != len(selected) or any(value not in by_label for value in selected):
+        return False, "多选题答案包含无效或重复选项"
+    matching = {label for label, text in by_label.items() if text in combined_quote}
+    if matching != set(selected):
+        return False, "多选题来源精确匹配选项必须与答案数组完全一致"
     return True, "verified"
 
 

@@ -203,6 +203,7 @@ class QuizCreationService:
                 db=db, user_id=user_id, course_id=course_id, knowledge_points=knowledge_points,
                 course_name=course_name, question_count=requested_count,
                 question_types=question_types, difficulty_distribution=remaining, user_config=user_config,
+                question_offset=len(items),
             )
             reasons.extend(quiz_output.get("drop_reasons") or [])
             accepted = 0
@@ -241,7 +242,11 @@ class QuizCreationService:
                 question_type=item_data.get("question_type", "short_answer"),
                 question_text=item_data.get("question_text", ""),
                 options=json.dumps(item_data.get("options", []), ensure_ascii=False),
-                answer=item_data.get("answer", ""),
+                answer=(
+                    json.dumps(item_data.get("answer"), ensure_ascii=False)
+                    if isinstance(item_data.get("answer"), list)
+                    else str(item_data.get("answer", ""))
+                ),
                 explanation=item_data.get("explanation", ""),
                 difficulty=item_data.get("difficulty"),
                 source_evidence_ids=json.dumps(item_data.get("source_evidence_ids", [])),

@@ -686,11 +686,47 @@ def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
     V7.4-07: Parse requested question_count from prompt and generate enough
     questions to meet the demand (cycling through chunks if needed).
     """
-    # Parse requested question count from prompt
-    # The prompt template wraps the requested count in Markdown backticks
-    # (``生成 `5` 道``); accept that as well as plain numeric wording.
+    # CONTRACT_JSON is the production provider contract. Keep the legacy
+    # prompt parsing only as a compatibility fallback for older callers.
+    contract: dict[str, Any] = {}
+    contract_match = re.search(
+        r"CONTRACT_JSON\s*\n\s*(\{.*?\})\s*\n\s*CONTRACT_JSON_END",
+        prompt,
+        re.DOTALL,
+    )
+    if contract_match:
+        try:
+            decoded = json.loads(contract_match.group(1))
+            contract = decoded if isinstance(decoded, dict) else {}
+        except json.JSONDecodeError:
+            contract = {}
     count_match = re.search(r"生成\s*[`'\"]?(\d+)[`'\"]?\s*道", prompt)
-    requested_count = int(count_match.group(1)) if count_match else 5
+    requested_count = int(contract.get("question_count") or (count_match.group(1) if count_match else 5))
+    question_offset = max(0, int(contract.get("question_offset") or 0))
+    requested_types = [
+        str(value) for value in contract.get("question_types", [])
+        if str(value) in {"choice", "multiple_choice", "true_false", "short_answer"}
+    ]
+    if not requested_types:
+        type_match = re.search(r"仅生成以下题型：(.+?)。", prompt)
+        requested_types = [
+            name for name in ("choice", "multiple_choice", "true_false", "short_answer")
+            if type_match and name in type_match.group(1)
+        ] or ["choice", "true_false", "short_answer"]
+    distribution = contract.get("difficulty_distribution")
+    if isinstance(distribution, dict):
+        bands = [
+            band for band in ("easy", "medium", "hard")
+            for _ in range(max(0, int(distribution.get(band, 0))))
+        ]
+    else:
+        bands = []
+    if len(bands) != requested_count:
+        dist_match = re.search(r"(\d+)\s+easy,\s*(\d+)\s+medium,\s*(\d+)\s+hard", prompt)
+        bands = (
+            ["easy"] * int(dist_match.group(1)) + ["medium"] * int(dist_match.group(2)) + ["hard"] * int(dist_match.group(3))
+            if dist_match else ["medium"] * requested_count
+        )
 
     # Parse evidence chunks from the prompt.
     evidence_pattern = re.compile(
@@ -713,174 +749,35 @@ def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
         return {"questions": [], "title": "测验"}
 
     questions: list[dict[str, Any]] = []
-    # Cycle through chunks to generate enough questions
-    cycle = 0
-    while len(questions) < requested_count:
-        idx = cycle % len(chunks)
-        chunk_id, chunk_text = chunks[idx]
-        cycle += 1
-        if cycle > requested_count * 3:
-            break  # Safety valve
-
-        lines = [
-            l.strip() for l in chunk_text.split("\n")
-            if l.strip() and len(l.strip()) >= 8
-        ]
-        if not lines:
-            continue
-
-        kp_label = f"kp_{idx + 1}"
-        suffix = f"（第{cycle}题）" if cycle > len(chunks) else ""
-
-        # --- True/False question from the first meaningful line ---
-        source_line = lines[0]
-        # Use a substring of the actual chunk text as the quote.
-        quote_tf = source_line[:120]
-        # Ensure the quote is a substring of the chunk text.
-        if quote_tf not in chunk_text:
-            quote_tf = source_line
-
-        if len(questions) < requested_count:
-            questions.append({
-                "question_type": "true_false",
-                "difficulty": 3,
-                "stem": f"根据课程资料，以下说法是否正确{suffix}：{source_line[:80]}",
-                "options": [],
-                "answer": "true",
-                "explanation": "该说法直接来自课程资料原文。",
-                "rubric": [],
-                "knowledge_point_ids": [kp_label],
-                "source_chunk_ids": [str(chunk_id)],
-                "source_evidence": [
-                    {"chunk_id": chunk_id, "quote_text": quote_tf}
-                ],
-            })
-
-        # --- Short-answer / fill-in-the-blank from a second line ---
-        if len(lines) > 1 and len(questions) < requested_count:
-            second_line = lines[1] if len(lines) > 1 else lines[0]
-            quote_sa = second_line[:120]
-            if quote_sa not in chunk_text:
-                quote_sa = second_line
-
-            cjk_terms = re.findall(r"[\u4e00-\u9fff]{2,}", second_line)
-            if cjk_terms:
-                blank_term = cjk_terms[0]
-                blanked = second_line.replace(blank_term, "____", 1)
-                questions.append({
-                    "question_type": "short_answer",
-                    "difficulty": 3,
-                    "stem": f"填空{suffix}：{blanked}",
-                    "options": [],
-                    "answer": blank_term,
-                    "explanation": f"根据课程资料，该处应填入「{blank_term}」。",
-                    "rubric": [
-                        {
-                            "criterion": f"包含关键词「{blank_term}」",
-                            "keywords": [blank_term],
-                            "weight": 1.0,
-                            "evidence_ids": [chunk_id],
-                            "required": True,
-                        }
-                    ],
-                    "knowledge_point_ids": [kp_label],
-                    "source_chunk_ids": [str(chunk_id)],
-                    "source_evidence": [
-                        {"chunk_id": chunk_id, "quote_text": quote_sa}
-                    ],
-                })
-
-        # --- Choice question from the chunk text ---
-        if len(lines) >= 2 and len(questions) < requested_count:
-            correct_option = lines[0][:60]
-            distractors = [
-                correct_option.replace("是", "不是", 1) if "是" in correct_option else f"并非：{correct_option}",
-                f"该结论仅适用于不存在的前提：{correct_option}",
-                f"与原文相反：{correct_option[::-1]}",
-            ]
-            options = [correct_option] + distractors[:3]
-            import random as _rnd
-            _rnd.seed(chunk_id + cycle)
-            indices = list(range(len(options)))
-            _rnd.shuffle(indices)
-            shuffled = [options[i] for i in indices]
-            correct_letter = chr(65 + indices.index(0))
-
-            quote_choice = correct_option
-            if quote_choice not in chunk_text:
-                quote_choice = lines[0][:120]
-
-            questions.append({
-                "question_type": "single_choice",
-                "difficulty": 3,
-                "stem": f"以下哪项说法与课程资料原文一致{suffix}？",
-                "options": shuffled,
-                "answer": correct_letter,
-                "explanation": "该选项直接来自课程资料原文。",
-                "rubric": [],
-                "knowledge_point_ids": [kp_label],
-                "source_chunk_ids": [str(chunk_id)],
-                "source_evidence": [
-                    {"chunk_id": chunk_id, "quote_text": quote_choice}
-                ],
-            })
-
-    # The production QuizCreationService enforces the requested contract.
-    # Keep the deterministic mock an honest provider by reflecting the
-    # prompt's explicit type and difficulty requirements instead of always
-    # returning medium mixed questions.
-    type_match = re.search(r"仅生成以下题型：(.+?)。", prompt)
-    requested_types = [
-        name for name in ("choice", "multiple_choice", "true_false", "short_answer")
-        if type_match and name in type_match.group(1)
-    ]
-    dist_match = re.search(r"(\d+)\s+easy,\s*(\d+)\s+medium,\s*(\d+)\s+hard", prompt)
-    bands = (
-        ["easy"] * int(dist_match.group(1))
-        + ["medium"] * int(dist_match.group(2))
-        + ["hard"] * int(dist_match.group(3))
-        if dist_match else ["medium"] * requested_count
-    )
-    if requested_types:
-        # Keep the generated payload compatible with the requested type.  Merely
-        # relabelling a choice or short-answer item as true/false loses its
-        # answer/options contract and is rightly rejected by the verifier.
-        compatible = {
-            "choice": [q for q in questions if q["question_type"] == "single_choice"],
-            "true_false": [q for q in questions if q["question_type"] == "true_false"],
-            "short_answer": [q for q in questions if q["question_type"] == "short_answer"],
+    for index in range(requested_count):
+        sequence_index = question_offset + index
+        chunk_id, chunk_text = chunks[sequence_index % len(chunks)]
+        lines = [line.strip() for line in chunk_text.splitlines() if len(line.strip()) >= 8]
+        source_line = (lines[sequence_index % len(lines)] if lines else chunk_text.strip())[:160]
+        if len(source_line) < 8:
+            return {"questions": [], "title": "课程资料测验"}
+        qtype = requested_types[index % len(requested_types)]
+        quote = source_line
+        base = {
+            "difficulty": bands[index] if index < len(bands) else "medium",
+            "explanation": "答案直接由课程资料中的来源引用支持。",
+            "knowledge_point_ids": [f"kp_{sequence_index % len(chunks) + 1}"],
+            "source_chunk_ids": [str(chunk_id)],
+            "source_evidence": [{"chunk_id": chunk_id, "quote_text": quote}],
         }
-        selected: list[dict[str, Any]] = []
-        used_candidate_positions: dict[str, int] = {}
-        for index in range(requested_count):
-            desired = requested_types[index % len(requested_types)]
-            candidates = compatible.get(desired)
-            # The mock has no evidence-safe multiple-choice generator.  Use a
-            # compatible requested type instead; the service enforces that
-            # every emitted item is allowed, not that every allowed checkbox
-            # must appear in a tiny quiz.
-            if not candidates:
-                candidates = compatible["true_false"] or compatible["choice"] or compatible["short_answer"]
-            if not candidates:
-                break
-            candidate_kind = next(kind for kind, rows in compatible.items() if rows is candidates)
-            position = used_candidate_positions.get(candidate_kind, 0)
-            item = dict(candidates[position % len(candidates)])
-            # Reused evidence can still support independently numbered drills.
-            # Keep the factual statement after the colon untouched so the
-            # grounding verifier can match it exactly.
-            if any(item["stem"] == prior["stem"] for prior in selected):
-                if "：" in item["stem"]:
-                    item["stem"] = item["stem"].replace("：", f"（练习 {index + 1}）：", 1)
-                else:
-                    item["stem"] = f"{item['stem']}（练习 {index + 1}）"
-            selected.append(item)
-            used_candidate_positions[candidate_kind] = position + 1
-        questions = selected
-
-    for index, question in enumerate(questions[:requested_count]):
-        question["difficulty"] = bands[index] if index < len(bands) else "medium"
-    return {"title": "课程资料测验", "questions": questions[:requested_count]}
+        if qtype == "choice":
+            questions.append({**base, "question_type": "single_choice", "stem": f"以下哪项与课程资料原文一致（第{sequence_index + 1}题）？", "options": [quote, f"并非：{quote}", f"与资料无关：{sequence_index + 1}", f"反向陈述：{quote[::-1]}"], "answer": "A", "rubric": []})
+        elif qtype == "multiple_choice":
+            midpoint = max(1, len(quote) // 2)
+            left, right = quote[:midpoint], quote[midpoint:]
+            questions.append({**base, "question_type": "multiple_choice", "stem": f"以下哪些片段直接来自课程资料（第{sequence_index + 1}题）？", "options": [left, right, f"资料未给出的结论：{sequence_index + 1}", f"不支持的反向结论：{sequence_index + 1}"], "answer": ["A", "B"], "rubric": []})
+        elif qtype == "true_false":
+            questions.append({**base, "question_type": "true_false", "stem": f"以下说法是否正确：{quote}", "options": [], "answer": True, "rubric": []})
+        else:
+            candidates = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z][A-Za-z0-9_-]{2,}", quote)
+            answer = candidates[0] if candidates else quote[: max(3, len(quote) // 3)]
+            questions.append({**base, "question_type": "short_answer", "stem": f"根据课程资料，写出与“{answer}”相关的关键内容（第{sequence_index + 1}题）。", "options": [], "answer": answer, "rubric": [{"criterion": f"包含关键词“{answer}”", "keywords": [answer], "weight": 1.0, "evidence_ids": [chunk_id], "required": True}]})
+    return {"title": "课程资料测验", "questions": questions}
 
 
 def _mock_citation_verify(prompt: str = "") -> dict[str, Any]:
