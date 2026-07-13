@@ -59,10 +59,26 @@ def _preserved_ddl(conn) -> list[str]:
     return list(rows)
 
 
+def _run_stage(stage: str, conn) -> None:
+    """Named migration seam for deterministic fault-injection tests.
+
+    Production calls are intentionally no-ops. Tests monkeypatch this narrow
+    seam to raise at a transaction boundary and prove that SQLite rolls the
+    entire table rebuild back rather than leaving a half-migrated table.
+    """
+    _ = (stage, conn)
+
+
 def up(db, engine: Engine) -> None:
     if "material_pages" not in inspect(engine).get_table_names() or _has_unique_constraint(engine):
         return
     with engine.begin() as conn:
+        # pysqlite's legacy transaction mode may defer BEGIN until the first
+        # DML statement. SQLite DDL executed before that point is autocommitted
+        # and leaves ``material_pages_new`` behind after a failure. Force a
+        # real transaction before CREATE/DROP/ALTER so this rebuild is atomic.
+        if conn.dialect.name == "sqlite":
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
         if conn.execute(text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_pages_new'")).scalar():
             raise RuntimeError("Leftover table 'material_pages_new' detected; refusing migration.")
         duplicates = conn.execute(text("""
@@ -84,15 +100,23 @@ def up(db, engine: Engine) -> None:
               updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(material_version_id, page_no)
             )
         """))
+        _run_stage("create", conn)
         conn.execute(text(f"INSERT INTO material_pages_new ({', '.join(SNAPSHOT_FIELDS)}) SELECT {', '.join(SNAPSHOT_FIELDS)} FROM material_pages"))
+        _run_stage("copy", conn)
         if _compute_snapshot(conn, "material_pages_new") != before:
             raise RuntimeError("Temporary table snapshot mismatch; rolling back.")
+        _run_stage("snapshot_temp", conn)
         conn.execute(text("DROP TABLE material_pages"))
+        _run_stage("drop", conn)
         conn.execute(text("ALTER TABLE material_pages_new RENAME TO material_pages"))
+        _run_stage("rename", conn)
         for statement in ddl:
             conn.execute(text(statement))
+        _run_stage("restore_ddl", conn)
         violations = conn.execute(text("PRAGMA foreign_key_check")).fetchall()
         if violations:
             raise RuntimeError(f"Foreign-key check failed: {violations}")
+        _run_stage("foreign_key_check", conn)
         if _compute_snapshot(conn) != before:
             raise RuntimeError("Final snapshot mismatch before commit; rolling back.")
+        _run_stage("snapshot_final", conn)
