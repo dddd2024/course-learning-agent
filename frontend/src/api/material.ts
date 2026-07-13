@@ -61,6 +61,16 @@ export interface MaterialPage {
   clean_text: string
   removed_lines: string
   blocks: string
+  page_asset?: {
+    id: number
+    file_url: string
+    width?: number | null
+    height?: number | null
+    dpi?: number | null
+    sha256?: string | null
+    status: 'ready' | 'failed' | 'pending'
+    error_code?: string | null
+  } | null
 }
 
 export function getMaterialPages(materialId: number): AxiosPromise<{ items: MaterialPage[] }> {

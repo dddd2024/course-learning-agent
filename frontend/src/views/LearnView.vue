@@ -42,9 +42,9 @@
         />
       </el-select>
       <el-radio-group v-model="readerMode" size="small" aria-label="资料展示模式">
-        <el-radio-button label="clean">清洗</el-radio-button>
-        <el-radio-button label="raw">原文</el-radio-button>
         <el-radio-button label="page">原页</el-radio-button>
+        <el-radio-button label="clean">结构化文本</el-radio-button>
+        <el-radio-button label="raw">原文</el-radio-button>
       </el-radio-group>
     </div>
 
@@ -200,18 +200,8 @@
             </div>
           </div>
 
-          <!-- Document chunks -->
-          <!-- Raw mode deliberately renders only stored page text. -->
-          <div v-if="readerMode === 'raw'" class="doc-chunks" @mouseup="handleSelection">
-            <div v-for="page in materialPages" :id="`page-${page.page_no}`" :key="`reader-${page.id}`" class="doc-chunk">
-              <div class="doc-chunk-head"><span class="doc-chunk-page">第 {{ page.page_no }} 页</span></div>
-              <div class="doc-chunk-text">{{ readerMode === 'raw' ? page.raw_text : page.clean_text }}</div>
-            </div>
-          </div>
-          <!-- Native-file preview is intentionally separate from extracted text. -->
-          <div v-else-if="readerMode === 'page'" class="doc-chunks">
-            <iframe v-if="selectedMaterial?.file_url" :src="selectedMaterial.file_url" title="资料原页预览" class="material-page-preview" />
-          </div>
+          <PageCanvas v-if="readerMode === 'page'" :pages="materialPages" />
+          <PageTextPanel v-else-if="readerMode === 'raw'" :pages="materialPages" mode="raw" @select="handleSelection" />
           <!-- Clean mode renders semantic chunks once; do not duplicate page.clean_text. -->
           <div v-else class="doc-chunks" @mouseup="handleSelection">
             <div
@@ -394,6 +384,8 @@ import { parseApiError } from '../utils/error'
 import { renderMarkdown } from '../utils/markdown'
 import request from '../api'
 import { recordTaskEvent, verifyTask } from '../api/plan'
+import PageCanvas from '../components/document/PageCanvas.vue'
+import PageTextPanel from '../components/document/PageTextPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -411,7 +403,7 @@ const selectedMaterialId = ref<number | null>(null)
 const rawChunks = ref<Chunk[]>([])
 const chunks = ref<Chunk[]>([])
 const materialPages = ref<MaterialPage[]>([])
-const readerMode = ref<'clean' | 'raw' | 'page'>('clean')
+const readerMode = ref<'clean' | 'raw' | 'page'>('page')
 const selectedMaterial = computed(() => materials.value.find((item) => item.id === selectedMaterialId.value) || null)
 const imageUrls = ref<Record<number, string>>({})
 const showFilteredImages = ref(false)
