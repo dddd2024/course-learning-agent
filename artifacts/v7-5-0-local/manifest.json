@@ -1,0 +1,167 @@
+{
+  "version": "v7.5.0",
+  "base_sha": "63a2a176e891059023c4dd2bad630c5c9a0218bc",
+  "head_sha": "38c057ba299de9d05d26278f563862e7d61550e4",
+  "generated_at": "2026-07-13T14:45:11.746714+00:00",
+  "commands": [
+    {
+      "label": "git-status-before",
+      "command": [
+        "git",
+        "status",
+        "--short"
+      ],
+      "working_dir": ".",
+      "started_at": "2026-07-13T14:45:11.746815+00:00",
+      "finished_at": "2026-07-13T14:45:11.773749+00:00",
+      "exit_code": 0,
+      "stdout_log_path": "artifacts/v7-5-0-local/logs/git-status-before.stdout.log",
+      "stdout_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_log_path": "artifacts/v7-5-0-local/logs/git-status-before.stderr.log",
+      "stderr_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "backend-full",
+      "command": [
+        "backend/.venv/Scripts/python.exe",
+        "-m",
+        "pytest",
+        "-q",
+        "backend/app/tests"
+      ],
+      "working_dir": ".",
+      "started_at": "2026-07-13T14:45:11.774311+00:00",
+      "finished_at": "2026-07-13T14:49:49.450715+00:00",
+      "exit_code": 0,
+      "stdout_log_path": "artifacts/v7-5-0-local/logs/backend-full.stdout.log",
+      "stdout_log_sha256": "ad70790a9b6315540da78130292891c0b2dbe35a736d41b6ffdf1cf85f429dfd",
+      "stderr_log_path": "artifacts/v7-5-0-local/logs/backend-full.stderr.log",
+      "stderr_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "document-fidelity",
+      "command": [
+        "backend/.venv/Scripts/python.exe",
+        "-m",
+        "pytest",
+        "-q",
+        "backend/app/tests/test_v7_5_0_document_fidelity.py"
+      ],
+      "working_dir": ".",
+      "started_at": "2026-07-13T14:49:49.465364+00:00",
+      "finished_at": "2026-07-13T14:49:52.685988+00:00",
+      "exit_code": 0,
+      "stdout_log_path": "artifacts/v7-5-0-local/logs/document-fidelity.stdout.log",
+      "stdout_log_sha256": "f698120a4a4315ffd5e48f8a654298548b43f2062027b78d8f46cf0fc41f1c52",
+      "stderr_log_path": "artifacts/v7-5-0-local/logs/document-fidelity.stderr.log",
+      "stderr_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "frontend-typecheck",
+      "command": [
+        "npm.cmd",
+        "run",
+        "type-check"
+      ],
+      "working_dir": "frontend",
+      "started_at": "2026-07-13T14:49:52.702753+00:00",
+      "finished_at": "2026-07-13T14:49:58.363830+00:00",
+      "exit_code": 0,
+      "stdout_log_path": "artifacts/v7-5-0-local/logs/frontend-typecheck.stdout.log",
+      "stdout_log_sha256": "154c40135ff1ee0416368f84b93007a807bd32e84fdb7f106010a72be46c8b5c",
+      "stderr_log_path": "artifacts/v7-5-0-local/logs/frontend-typecheck.stderr.log",
+      "stderr_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "frontend-build",
+      "command": [
+        "npm.cmd",
+        "run",
+        "build"
+      ],
+      "working_dir": "frontend",
+      "started_at": "2026-07-13T14:49:58.377171+00:00",
+      "finished_at": "2026-07-13T14:50:05.542702+00:00",
+      "exit_code": 0,
+      "stdout_log_path": "artifacts/v7-5-0-local/logs/frontend-build.stdout.log",
+      "stdout_log_sha256": "71991ce889886aedbd584fd7484f14d84f9ced9a9c567a9dd9c13a2ef6ccbfe7",
+      "stderr_log_path": "artifacts/v7-5-0-local/logs/frontend-build.stderr.log",
+      "stderr_log_sha256": "4cdb50617efff73be6005d6e09bf6df7c32d06eac603c62f96c864cddcb47ae1"
+    },
+    {
+      "label": "browser-e2e",
+      "command": [
+        "powershell.exe",
+        "-NoProfile",
+        "-Command",
+        "$env:E2E_BACKEND_PORT='18000'; $env:E2E_WORKER_PORT='18001'; $env:E2E_FRONTEND_PORT='15173'; $env:DATABASE_URL='sqlite:///F:/course-learning-agent/e2e-v7-5-0.db'; $env:PLAYWRIGHT_JSON_OUTPUT='../artifacts/v7-5-0-local/browser-results.json'; $env:PLAYWRIGHT_OUTPUT_DIR='../artifacts/v7-5-0-local/browser-test-results'; npm.cmd run test:e2e -- tests/e2e/v7-5-0-document-reader.spec.ts"
+      ],
+      "working_dir": "frontend",
+      "started_at": "2026-07-13T14:50:05.559354+00:00",
+      "finished_at": "2026-07-13T14:50:19.813489+00:00",
+      "exit_code": 0,
+      "stdout_log_path": "artifacts/v7-5-0-local/logs/browser-e2e.stdout.log",
+      "stdout_log_sha256": "e86cc6c213fbd361d53d27e3b69c4b00eede55a0bb05fb7ffbdebe90965d384b",
+      "stderr_log_path": "artifacts/v7-5-0-local/logs/browser-e2e.stderr.log",
+      "stderr_log_sha256": "823d5ec8d551fffcaa7d44d6f01db214dc21b76af5c7b8fa95d770433aba4d46"
+    },
+    {
+      "label": "git-diff-check",
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "working_dir": ".",
+      "started_at": "2026-07-13T14:50:19.834564+00:00",
+      "finished_at": "2026-07-13T14:50:19.863282+00:00",
+      "exit_code": 0,
+      "stdout_log_path": "artifacts/v7-5-0-local/logs/git-diff-check.stdout.log",
+      "stdout_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_log_path": "artifacts/v7-5-0-local/logs/git-diff-check.stderr.log",
+      "stderr_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "files": [
+    {
+      "path": "docs/engineering/v7-execution-state.json",
+      "sha256": "e65fbb497883fac7c8876837a9983a9a3932605bd19dde508bdbe832c2174d46",
+      "size": 4478
+    },
+    {
+      "path": "scripts/collect_local_evidence.py",
+      "sha256": "dde886ac42f1803aec21e50dca5092ef33029246c87dc500d37c51ca8c2b930e",
+      "size": 6771
+    },
+    {
+      "path": "scripts/verify_local_evidence.py",
+      "sha256": "ecd234f0e7382d7a7e45dd05660385f596ef68fc6113f3c6eb86178dd44c6598",
+      "size": 7396
+    },
+    {
+      "path": "scripts/verify_document_assets.py",
+      "sha256": "1a46818420f1dee6f1605d65ce3b0c6399c3bcca20e6be656ed118eca5740998",
+      "size": 1379
+    },
+    {
+      "path": "artifacts/v7-5-0-local/run-plan.json",
+      "sha256": "612a2fe219aa4566620501741891176ff69879ab536f9768e5e6d4edbbf5d413",
+      "size": 1554
+    },
+    {
+      "path": "backend/app/tests/test_v7_5_0_document_fidelity.py",
+      "sha256": "8faec420d67b8cfc25b3531e2a58f524256b098d01f582114a6a80fee888c63b",
+      "size": 10693
+    },
+    {
+      "path": "frontend/src/components/document/PageCanvas.vue",
+      "sha256": "b0d51912824eeb3b13ee51543ebc313129ae11f2baa7b791144932e3af889da0",
+      "size": 2343
+    },
+    {
+      "path": "frontend/src/components/document/PageTextPanel.vue",
+      "sha256": "14d0ad73b155c4650f9392d4ab9ac0bd95ff54b98ed2ae985df87dde2ef52abb",
+      "size": 960
+    }
+  ]
+}

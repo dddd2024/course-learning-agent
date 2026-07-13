@@ -1,0 +1,132 @@
+........................................................................ [  8%]
+........................................................................ [ 16%]
+........................................................................ [ 25%]
+........................................................................ [ 33%]
+........................................................................ [ 42%]
+........................................................................ [ 50%]
+........................................................................ [ 59%]
+........................................................................ [ 67%]
+........................................................................ [ 75%]
+........................................................................ [ 84%]
+........................................................................ [ 92%]
+..............................................................           [100%]
+============================== warnings summary ===============================
+backend\.venv\Lib\site-packages\fastapi\testclient.py:1
+  F:\course-learning-agent\backend\.venv\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+backend/app/tests/test_agent_error_log_bridge.py: 2 warnings
+backend/app/tests/test_chat_stream.py: 3 warnings
+backend/app/tests/test_error_logs.py: 6 warnings
+  F:\course-learning-agent\backend\.venv\Lib\site-packages\sqlalchemy\sql\schema.py:3623: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    return util.wrap_callable(lambda ctx: fn(), fn)  # type: ignore
+
+backend/app/tests/test_agent_error_log_bridge.py: 2 warnings
+backend/app/tests/test_agent_user_config_integration.py: 6 warnings
+backend/app/tests/test_api_contracts.py: 13 warnings
+backend/app/tests/test_audit.py: 7 warnings
+backend/app/tests/test_audit_enhanced.py: 6 warnings
+backend/app/tests/test_auth.py: 7 warnings
+backend/app/tests/test_auth_security.py: 9 warnings
+backend/app/tests/test_chat.py: 8 warnings
+backend/app/tests/test_chat_citations.py: 1 warning
+backend/app/tests/test_chat_retrieval.py: 8 warnings
+backend/app/tests/test_chat_stream.py: 6 warnings
+backend/app/tests/test_chunks.py: 4 warnings
+backend/app/tests/test_citations.py: 3 warnings
+backend/app/tests/test_concept_graph_api.py: 10 warnings
+backend/app/tests/test_concept_graph_permissions.py: 3 warnings
+backend/app/tests/test_conversations.py: 3 warnings
+backend/app/tests/test_courses.py: 8 warnings
+backend/app/tests/test_dashboard.py: 4 warnings
+backend/app/tests/test_e2e_learning_flow.py: 1 warning
+backend/app/tests/test_error_log_redaction.py: 4 warnings
+backend/app/tests/test_error_logs.py: 4 warnings
+backend/app/tests/test_general_error_logs.py: 15 warnings
+backend/app/tests/test_health.py: 3 warnings
+backend/app/tests/test_knowledge_points.py: 6 warnings
+backend/app/tests/test_llm_configs_api.py: 11 warnings
+backend/app/tests/test_material_overview.py: 5 warnings
+backend/app/tests/test_material_timezone.py: 2 warnings
+backend/app/tests/test_material_upload_error_log.py: 5 warnings
+backend/app/tests/test_materials.py: 11 warnings
+backend/app/tests/test_multi_plans.py: 10 warnings
+backend/app/tests/test_parse.py: 9 warnings
+backend/app/tests/test_parse_background_session.py: 2 warnings
+backend/app/tests/test_parse_background_tasks.py: 3 warnings
+backend/app/tests/test_parse_retry_timeout.py: 5 warnings
+backend/app/tests/test_plans.py: 11 warnings
+backend/app/tests/test_quizzes.py: 17 warnings
+backend/app/tests/test_search.py: 13 warnings
+backend/app/tests/test_security_scan.py: 1 warning
+backend/app/tests/test_v3_agent_status.py: 3 warnings
+backend/app/tests/test_v3_course_delete.py: 3 warnings
+backend/app/tests/test_v3_evidence_gate.py: 3 warnings
+backend/app/tests/test_v3_plan_execution.py: 5 warnings
+backend/app/tests/test_v3_quiz_grounding.py: 4 warnings
+backend/app/tests/test_v3_ssrf.py: 2 warnings
+backend/app/tests/test_v6_kp_titles.py: 4 warnings
+backend/app/tests/test_v6_multi_plan.py: 9 warnings
+backend/app/tests/test_v6_parse_worker.py: 1 warning
+backend/app/tests/test_v7_3_multi_plan_lifecycle.py: 6 warnings
+backend/app/tests/test_v7_4_1_multi_plan_safety.py: 7 warnings
+backend/app/tests/test_v7_4_1_quiz_atomic.py: 5 warnings
+backend/app/tests/test_v7_4_1_quiz_contract.py: 1 warning
+backend/app/tests/test_v7_4_2_kp_history.py: 7 warnings
+backend/app/tests/test_v7_4_2_plan_safety.py: 8 warnings
+backend/app/tests/test_v7_4_2_quiz_atomic.py: 7 warnings
+backend/app/tests/test_v7_4_2_reschedule_diff.py: 11 warnings
+backend/app/tests/test_v7_4_3_kp_readonly.py: 1 warning
+backend/app/tests/test_v7_4_3_plan_safety.py: 1 warning
+backend/app/tests/test_v7_4_3_quiz_atomic.py: 1 warning
+backend/app/tests/test_v7_4_3_reschedule_history.py: 1 warning
+backend/app/tests/test_v7_4_4_plan_history.py: 4 warnings
+backend/app/tests/test_v7_4_4_reschedule_behavior.py: 6 warnings
+backend/app/tests/test_v7_4_kp_generation_ux.py: 4 warnings
+backend/app/tests/test_v7_4_multi_plan_lifecycle.py: 9 warnings
+backend/app/tests/test_v7_5_0_document_fidelity.py: 1 warning
+backend/app/tests/test_v7_document_ir_pipeline.py: 1 warning
+  F:\course-learning-agent\backend\app\tests\conftest.py:88: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: material_versions, materials; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=test_engine)
+
+backend/app/tests/test_concept_compare_agent.py: 15 warnings
+backend/app/tests/test_concept_graph_models.py: 4 warnings
+backend/app/tests/test_concept_graph_service.py: 11 warnings
+backend/app/tests/test_llm_config_security.py: 3 warnings
+backend/app/tests/test_parse_started_at_preserved.py: 1 warning
+backend/app/tests/test_v3_agent_status.py: 2 warnings
+backend/app/tests/test_v3_course_delete.py: 3 warnings
+backend/app/tests/test_v4_plan_execution.py: 2 warnings
+backend/app/tests/test_v5_image_integrity.py: 2 warnings
+backend/app/tests/test_v5_knowledge_grounding.py: 3 warnings
+backend/app/tests/test_v5_material_delete.py: 1 warning
+backend/app/tests/test_v5_multi_schedule.py: 1 warning
+backend/app/tests/test_v5_parse_jobs.py: 1 warning
+backend/app/tests/test_v5_plan_state.py: 1 warning
+backend/app/tests/test_v5_plan_target_evidence.py: 1 warning
+backend/app/tests/test_v5_retrieval.py: 1 warning
+backend/app/tests/test_v6_cleaning.py: 3 warnings
+backend/app/tests/test_v6_fts_index.py: 10 warnings
+backend/app/tests/test_v6_quiz_constraints.py: 12 warnings
+backend/app/tests/test_v6_state_machine.py: 25 warnings
+backend/app/tests/test_v6_task_flows.py: 6 warnings
+backend/app/tests/test_v7_4_3_kp_readonly.py: 3 warnings
+backend/app/tests/test_v7_4_4_kp_rebind.py: 1 warning
+backend/app/tests/test_v7_4_4_quiz_provider_contract.py: 7 warnings
+backend/app/tests/test_v7_5_0_document_fidelity.py: 6 warnings
+backend/app/tests/test_v7_document_ir_pipeline.py: 3 warnings
+backend/app/tests/test_v7_learn_evidence.py: 4 warnings
+  F:\course-learning-agent\backend\app\tests\conftest.py:113: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: material_versions, materials; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=test_engine)
+
+backend/app/tests/test_v6_parse_worker.py: 10 warnings
+  F:\course-learning-agent\backend\app\tests\test_v6_parse_worker.py:80: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: material_versions, materials; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=conn)
+
+backend/app/tests/test_v7_5_0_document_fidelity.py::test_self_contained_pdf_fixture_parse_activates_complete_versioned_page_assets[embedded_image]
+backend/app/tests/test_v7_5_0_document_fidelity.py::test_self_contained_pdf_fixture_parse_activates_complete_versioned_page_assets[scanned]
+  F:\course-learning-agent\backend\app\retrieval\image_extractor.py:39: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
+    values = list(small.getdata())
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+854 passed, 517 warnings in 273.39s (0:04:33)
