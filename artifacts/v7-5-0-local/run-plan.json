@@ -17,6 +17,7 @@
     {"label":"document-fidelity","command":["backend/.venv/Scripts/python.exe","-m","pytest","-q","backend/app/tests/test_v7_5_0_document_fidelity.py"]},
     {"label":"frontend-typecheck","cwd":"frontend","command":["npm.cmd","run","type-check"]},
     {"label":"frontend-build","cwd":"frontend","command":["npm.cmd","run","build"]},
+    {"label":"browser-e2e","cwd":"frontend","command":["powershell.exe","-NoProfile","-Command","$env:E2E_BACKEND_PORT='18000'; $env:E2E_WORKER_PORT='18001'; $env:E2E_FRONTEND_PORT='15173'; $env:DATABASE_URL='sqlite:///F:/course-learning-agent/e2e-v7-5-0.db'; $env:PLAYWRIGHT_JSON_OUTPUT='../artifacts/v7-5-0-local/browser-results.json'; $env:PLAYWRIGHT_OUTPUT_DIR='../artifacts/v7-5-0-local/browser-test-results'; npm.cmd run test:e2e -- tests/e2e/v7-5-0-document-reader.spec.ts"]},
     {"label":"git-diff-check","command":["git","diff","--check"]}
   ]
 }

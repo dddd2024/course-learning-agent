@@ -63,7 +63,7 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  outputDir: 'test-results',
+  outputDir: process.env.PLAYWRIGHT_OUTPUT_DIR || 'test-results',
   webServer: [
     {
       command: `cd ../backend && ${pythonExe} -c "from app.models import Base; from app.core.database import engine; Base.metadata.create_all(engine); print('DB initialized')" && ${pythonExe} ../scripts/migrate.py && ${pythonExe} -m uvicorn app.main:app --host 127.0.0.1 --port ${backendPort}`,

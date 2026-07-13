@@ -18,7 +18,7 @@ REQUIRED_V7_4_4_LABELS = {
 }
 REQUIRED_V7_5_0_LABELS = {
     "backend-full", "document-fidelity", "frontend-typecheck", "frontend-build",
-    "git-diff-check", "git-status-before",
+    "browser-e2e", "git-diff-check", "git-status-before",
 }
 
 
