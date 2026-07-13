@@ -209,7 +209,11 @@ class QuizResultItemOut(BaseModel):
 
 
 class QuizResultOut(BaseModel):
-    """Result of POST /quizzes/{id}/submit."""
+    """Result of POST /quizzes/{id}/submit.
+
+    V7.4.2-04: Includes percentage, pass_score, passed, and task_verification
+    so the frontend can display results and task status from a single response.
+    """
 
     id: int
     score: int
@@ -217,6 +221,11 @@ class QuizResultOut(BaseModel):
     items: List[QuizResultItemOut]
     # V6-32: explainable weak point changes from this submission.
     weak_point_changes: List[dict] = []
+    # V7.4.2-04: Single-request atomic submission fields
+    percentage: int = 0
+    pass_score: int = 60
+    passed: bool = False
+    task_verification: Optional[dict] = None
 
 
 class WeakPointOut(BaseModel):

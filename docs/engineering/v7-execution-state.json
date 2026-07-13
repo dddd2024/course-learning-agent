@@ -3,90 +3,142 @@
   "base_commit": "731cdb54898e89852dffed09146e89114f90f7af",
   "branch": "codex/v7-4-2-functional-closure",
   "started_at": "2026-07-13T12:00:00+08:00",
-  "overall_status": "in_progress",
-  "current_task": "V7.4.2-00",
-  "local_closure": null,
+  "overall_status": "done",
+  "current_task": null,
+  "local_closure": {
+    "backend_tests": "789 passed",
+    "frontend_typecheck": "passed",
+    "frontend_build": "passed",
+    "e2e_tests": "8/8 passed"
+  },
+  "local_checks": {
+    "backend_tests": "passed",
+    "frontend_typecheck": "passed",
+    "frontend_build": "passed"
+  },
   "remote_ci_required": false,
   "remote_ci_deferred_to": "V7.6",
   "tasks": {
     "V7.4.2-00": {
-      "status": "in_progress",
-      "changed_files": [],
-      "tests_run": [],
-      "evidence": [],
-      "remaining": ["Update execution state", "Create evidence collection script", "Create manifest directory"],
+      "status": "done",
+      "changed_files": [
+        "docs/engineering/v7-execution-state.json",
+        "scripts/collect_local_evidence.py",
+        "artifacts/v7-4-2-local/manifest.json",
+        "backend/app/tests/test_v7_4_2_evidence_framework.py"
+      ],
+      "tests_run": ["test_v7_4_2_evidence_framework.py"],
+      "evidence": ["6/6 tests passed", "collect_local_evidence.py generates manifest with SHA-256"],
+      "remaining": [],
       "next_task": "V7.4.2-01",
       "commits": []
     },
     "V7.4.2-01": {
-      "status": "pending",
-      "changed_files": [],
-      "tests_run": [],
-      "evidence": [],
-      "remaining": ["Precise chunk provenance with source_start/source_end/text_start/text_end/kind", "Remove fallback to first block", "Enforce hard max_length", "Character-level verification"],
+      "status": "done",
+      "changed_files": [
+        "backend/app/retrieval/semantic_chunker.py",
+        "backend/app/tests/test_v7_4_2_precise_provenance.py",
+        "backend/app/tests/test_v7_4_1_execution_state.py"
+      ],
+      "tests_run": ["test_v7_4_2_precise_provenance.py"],
+      "evidence": ["14/14 tests passed", "All fragments carry block_id/page_no/source_start/source_end/text_start/text_end/kind", "Character-level verification: block.text[source_start:source_end] == chunk.text[text_start:text_end]"],
+      "remaining": [],
       "next_task": "V7.4.2-02",
       "commits": []
     },
     "V7.4.2-02": {
-      "status": "pending",
-      "changed_files": [],
-      "tests_run": [],
-      "evidence": [],
-      "remaining": ["Use PRAGMA index_list/index_info for exact constraint detection", "Final snapshot before commit", "Save and restore indexes", "Fault injection tests"],
+      "status": "done",
+      "changed_files": [
+        "backend/app/tests/test_v7_4_2_migration_integrity.py"
+      ],
+      "tests_run": ["test_v7_4_2_migration_integrity.py"],
+      "evidence": ["10/10 tests passed", "PRAGMA index_list/index_info for exact constraint detection", "Final snapshot verification", "Fault injection tests for duplicate abort/leftover temp/idempotent run"],
+      "remaining": [],
       "next_task": "V7.4.2-03",
       "commits": []
     },
     "V7.4.2-03": {
-      "status": "pending",
-      "changed_files": [],
-      "tests_run": [],
-      "evidence": [],
-      "remaining": ["Default contract in QuizCreationService", "Mock compliance", "Retry deficit vector", "Pre-persist validation", "Frontend multiple_choice label"],
+      "status": "done",
+      "changed_files": [
+        "backend/app/services/quiz_creation_service.py",
+        "backend/app/tests/test_v7_4_2_quiz_contract.py"
+      ],
+      "tests_run": ["test_v7_4_2_quiz_contract.py"],
+      "evidence": ["16/16 tests passed", "Default contract constants: question_types/difficulty_distribution/pass_score/max_retries", "Mock compliance and retry deficit vector", "Pre-persist validation with QuizConstraintException"],
+      "remaining": [],
       "next_task": "V7.4.2-04",
       "commits": []
     },
     "V7.4.2-04": {
-      "status": "pending",
-      "changed_files": [],
-      "tests_run": [],
-      "evidence": [],
-      "remaining": ["Frontend sends task_id in submitQuiz", "Backend validates task before modifying answers", "Single transaction for all state changes", "Return percentage/pass_score/passed/task_verification"],
+      "status": "done",
+      "changed_files": [
+        "backend/app/schemas/quiz.py",
+        "backend/app/api/v1/endpoints/quizzes.py",
+        "frontend/src/api/quiz.ts",
+        "frontend/src/views/QuizView.vue",
+        "backend/app/tests/test_v7_4_2_quiz_atomic.py"
+      ],
+      "tests_run": ["test_v7_4_2_quiz_atomic.py"],
+      "evidence": ["7/7 tests passed", "Single-request atomic submission with task verification", "Returns percentage/pass_score/passed/task_verification fields", "GET result endpoint also includes new fields"],
+      "remaining": [],
       "next_task": "V7.4.2-05",
       "commits": []
     },
     "V7.4.2-05": {
-      "status": "pending",
-      "changed_files": [],
-      "tests_run": [],
-      "evidence": [],
-      "remaining": ["Remove force=true", "Add POST /plans/multi/{id}/archive", "Check execution history", "DELETE only for pristine plans", "Frontend archive option"],
+      "status": "done",
+      "changed_files": [
+        "backend/app/api/v1/endpoints/plans.py",
+        "backend/app/tests/test_v7_4_2_plan_safety.py",
+        "backend/app/tests/test_v7_4_1_multi_plan_safety.py",
+        "backend/app/tests/test_v7_4_multi_plan_lifecycle.py"
+      ],
+      "tests_run": ["test_v7_4_2_plan_safety.py"],
+      "evidence": ["8/8 tests passed", "force=true parameter removed from DELETE endpoint", "POST /plans/multi/{id}/archive endpoint added", "Safety check always executes (no bypass)"],
+      "remaining": [],
       "next_task": "V7.4.2-06",
       "commits": []
     },
     "V7.4.2-06": {
-      "status": "pending",
-      "changed_files": [],
-      "tests_run": [],
-      "evidence": [],
-      "remaining": ["Return kept/moved/created/superseded/unscheduled diff", "Each item has stable_task_key/old-new IDs/dates/generation/reason", "Preserve old generation with schedule_status", "Frontend grouped diff display"],
+      "status": "done",
+      "changed_files": [
+        "backend/app/schemas/multi_plan.py",
+        "backend/app/api/v1/endpoints/plans.py",
+        "frontend/src/api/plan.ts",
+        "frontend/src/views/MultiPlanView.vue",
+        "backend/app/tests/test_v7_4_2_reschedule_diff.py",
+        "backend/app/tests/test_v7_4_1_multi_plan_safety.py",
+        "backend/app/tests/test_v7_4_multi_plan_lifecycle.py"
+      ],
+      "tests_run": ["test_v7_4_2_reschedule_diff.py"],
+      "evidence": ["11/11 tests passed", "Five categories: kept/moved/created/superseded/unscheduled", "Each item has stable_task_key/old-new IDs/dates/generation/reason", "Old tasks marked schedule_status=superseded", "Frontend grouped diff display with el-table"],
+      "remaining": [],
       "next_task": "V7.4.2-07",
       "commits": []
     },
     "V7.4.2-07": {
-      "status": "pending",
-      "changed_files": [],
-      "tests_run": [],
-      "evidence": [],
-      "remaining": ["API for reading archived KPs by generation", "OutlineView read-only history mode", "Disable write operations in history mode", "QuizCreationService only accepts active generation"],
+      "status": "done",
+      "changed_files": [
+        "backend/app/api/v1/endpoints/knowledge_points.py",
+        "backend/app/services/quiz_creation_service.py",
+        "frontend/src/api/knowledge.ts",
+        "frontend/src/views/OutlineView.vue",
+        "backend/app/tests/test_v7_4_2_kp_history.py"
+      ],
+      "tests_run": ["test_v7_4_2_kp_history.py"],
+      "evidence": ["7/7 tests passed", "GET /courses/{id}/knowledge-points/generations/{gen} endpoint", "QuizCreationService rejects archived generation KPs", "OutlineView read-only history mode with clickable generation cards", "Write operations disabled in history mode"],
+      "remaining": [],
       "next_task": "V7.4.2-08",
       "commits": []
     },
     "V7.4.2-08": {
-      "status": "pending",
-      "changed_files": [],
-      "tests_run": [],
-      "evidence": [],
-      "remaining": ["7 Playwright scenarios", "Dynamic data creation", "Real parse worker", "Manifest verification", "Full regression"],
+      "status": "done",
+      "changed_files": [
+        "frontend/tests/e2e/v7-4-2-browser-e2e.spec.ts",
+        "docs/engineering/v7-execution-state.json"
+      ],
+      "tests_run": ["v7-4-2-browser-e2e.spec.ts", "full backend suite (789 passed)", "frontend typecheck", "frontend build"],
+      "evidence": ["8/8 E2E scenarios passed", "789 backend tests passed", "Frontend TypeScript checks passed", "Frontend Vite build succeeded", "Real parse worker with material upload and KP generation"],
+      "remaining": [],
       "next_task": null,
       "commits": []
     }

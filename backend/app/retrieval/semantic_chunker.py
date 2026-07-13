@@ -241,6 +241,32 @@ def _split_table_text(table_text: str, max_length: int) -> list[str]:
     return chunks
 
 
+def _make_fragment(
+    block_id: str,
+    page_no: int,
+    source_start: int,
+    source_end: int,
+    text_start: int,
+    text_end: int,
+    kind: str = "source",
+) -> dict:
+    """Create a fragment dict with all 7 required fields.
+
+    Required fields: block_id, page_no, source_start, source_end,
+    text_start, text_end, kind.
+    kind must be "source" or "repeated_header".
+    """
+    return {
+        "block_id": block_id,
+        "page_no": page_no,
+        "source_start": source_start,
+        "source_end": source_end,
+        "text_start": text_start,
+        "text_end": text_end,
+        "kind": kind,
+    }
+
+
 def _build_chunk(
     text: str,
     title: str,
@@ -256,6 +282,9 @@ def _build_chunk(
     leading/trailing whitespace from text. The strip_offset and
     stripped_length are used to shift fragment offsets so they
     remain valid indices into the final chunk["text"].
+
+    V7.4.2-01: Fragments preserve all 7 required fields:
+    block_id, page_no, source_start, source_end, text_start, text_end, kind.
     """
     page_nos_sorted = sorted(page_nos)
     # V7.4-02 P1-03: Track leading whitespace for offset adjustment
@@ -275,8 +304,12 @@ def _build_chunk(
             if start < end:  # Only include non-empty fragments
                 adjusted_fragments.append({
                     "block_id": frag["block_id"],
+                    "page_no": frag.get("page_no", 0),
+                    "source_start": frag.get("source_start", 0),
+                    "source_end": frag.get("source_end", frag.get("text_end", end) - frag.get("text_start", 0) + frag.get("source_start", 0)),
                     "text_start": start,
                     "text_end": end,
+                    "kind": frag.get("kind", "source"),
                 })
 
     # V7.4-02 P1-04: Use dict.fromkeys to preserve insertion order
@@ -301,25 +334,35 @@ def _split_fragments(fragments: list[dict], split_pos: int) -> tuple[list[dict],
 
     Returns (first_part_fragments, second_part_fragments) where each
     fragment's text_start/text_end are adjusted to be relative to the
-    respective part's text.
+    respective part's text.  Source offsets (source_start/source_end)
+    are adjusted proportionally so that block.text[source_start:source_end]
+    still equals chunk.text[text_start:text_end] in each part.
     """
     first: list[dict] = []
     second: list[dict] = []
     for frag in fragments:
-        start = frag["text_start"]
-        end = frag["text_end"]
-        if start < split_pos:
-            first.append({
-                "block_id": frag["block_id"],
-                "text_start": start,
-                "text_end": min(end, split_pos),
-            })
-        if end > split_pos:
-            second.append({
-                "block_id": frag["block_id"],
-                "text_start": max(0, start - split_pos),
-                "text_end": end - split_pos,
-            })
+        ts = frag["text_start"]
+        te = frag["text_end"]
+        ss = frag.get("source_start", 0)
+        se = frag.get("source_end", te - ts)
+        page_no = frag.get("page_no", 0)
+        kind = frag.get("kind", "source")
+        block_id = frag["block_id"]
+
+        if ts < split_pos:
+            cut = min(te, split_pos)
+            # Source offset for the cut point
+            src_cut = ss + (cut - ts)
+            first.append(_make_fragment(
+                block_id, page_no, ss, src_cut, ts, cut, kind,
+            ))
+        if te > split_pos:
+            cut = max(ts, split_pos)
+            # Source offset for the cut point
+            src_cut = ss + (cut - ts)
+            second.append(_make_fragment(
+                block_id, page_no, src_cut, se, max(0, ts - split_pos), te - split_pos, kind,
+            ))
     return first, second
 
 
@@ -364,21 +407,234 @@ def _adjust_protected_split(chunks: list[dict], idx: int, max_length: int) -> No
 
 
 def _rewrite_chunk_text(chunks: list[dict], idx: int, new_text: str) -> None:
-    """Replace a chunk's text in place and rebuild a single covering
-    fragment so that fragment offsets stay valid.
+    """Replace a chunk's text in place and rebuild fragments.
 
-    This is used by :func:`_adjust_protected_split` where exact per-block
-    provenance is secondary to keeping chunk boundaries correct.
+    V7.4.2-01: Instead of mapping everything to the first block, preserve
+    existing fragment source information and adjust text offsets to match
+    the new text length.
     """
     stripped = new_text.strip()
     chunks[idx]["text"] = stripped
+    old_frags = chunks[idx].get("source_fragments_json", [])
     bids = chunks[idx].get("source_block_ids", [])
     if stripped and bids:
-        chunks[idx]["source_fragments_json"] = [
-            {"block_id": bids[0], "text_start": 0, "text_end": len(stripped)}
-        ]
+        # Try to preserve source information from existing fragments
+        if old_frags:
+            # Scale existing fragment text offsets to new text
+            old_text_len = chunks[idx].get("_old_text_len", len(stripped))
+            if old_text_len > 0:
+                new_frags = []
+                for frag in old_frags:
+                    old_ts = frag["text_start"]
+                    old_te = frag["text_end"]
+                    new_ts = int(old_ts * len(stripped) / old_text_len)
+                    new_te = int(old_te * len(stripped) / old_text_len)
+                    if new_ts < new_te:
+                        new_frags.append(_make_fragment(
+                            frag["block_id"],
+                            frag.get("page_no", 0),
+                            frag.get("source_start", 0),
+                            frag.get("source_end", new_te - new_ts),
+                            new_ts, new_te,
+                            frag.get("kind", "source"),
+                        ))
+                if new_frags:
+                    chunks[idx]["source_fragments_json"] = new_frags
+                else:
+                    chunks[idx]["source_fragments_json"] = [
+                        _make_fragment(bids[0], 0, 0, len(stripped), 0, len(stripped))
+                    ]
+            else:
+                chunks[idx]["source_fragments_json"] = [
+                    _make_fragment(bids[0], 0, 0, len(stripped), 0, len(stripped))
+                ]
+        else:
+            chunks[idx]["source_fragments_json"] = [
+                _make_fragment(bids[0], 0, 0, len(stripped), 0, len(stripped))
+            ]
     else:
         chunks[idx]["source_fragments_json"] = []
+
+
+def _build_line_source_map(
+    table_text: str,
+    table_block_info: list[tuple[str, int, str, str]],
+) -> list[tuple[str, int, int, int]]:
+    """Map each line in table_text to (block_id, page_no, source_start, source_end).
+
+    source_start/source_end are offsets within the block's text (without trailing "\n").
+    """
+    lines = table_text.split("\n")
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    # Build block start/end positions in table_text
+    block_ranges: list[tuple[int, int, str, int, str]] = []  # (start, end, bid, page, btxt)
+    pos = 0
+    for bid, bpage, btxt, btext in table_block_info:
+        block_ranges.append((pos, pos + len(btxt), bid, bpage, btxt))
+        pos += len(btext)
+
+    line_sources: list[tuple[str, int, int, int]] = []
+    line_start = 0  # Position of line start in table_text
+
+    for line in lines:
+        line_len = len(line)
+        # Find which block this line starts in
+        found = False
+        for bs, be, bid, bpage, btxt in block_ranges:
+            if line_start < be:
+                src_start = line_start - bs
+                src_start = max(0, min(src_start, len(btxt)))
+                src_end = min(src_start + line_len, len(btxt))
+                line_sources.append((bid, bpage, src_start, src_end))
+                found = True
+                break
+        if not found and block_ranges:
+            bs, be, bid, bpage, btxt = block_ranges[0]
+            line_sources.append((bid, bpage, 0, 0))
+
+        line_start += line_len + 1  # +1 for "\n"
+
+    return line_sources
+
+
+def _split_table_with_fragments(
+    table_text: str,
+    table_block_info: list[tuple[str, int, str, str]],
+    max_length: int,
+) -> list[tuple[str, list[dict]]]:
+    """Split table text into pieces, returning (piece_text, fragments) for each.
+
+    V7.4.2-01: Each fragment has all 7 required fields.
+    Repeated headers are marked with kind="repeated_header".
+    """
+    lines = table_text.split("\n")
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not lines:
+        return []
+
+    header = lines[0]
+    header_len = len(header)
+
+    # Build line-to-source mapping
+    line_sources = _build_line_source_map(table_text, table_block_info)
+    if not line_sources:
+        return []
+
+    header_src = line_sources[0]  # (block_id, page_no, source_start, source_end)
+
+    # Header row alone exceeds the limit — treat as single long line
+    if len(header) > max_length:
+        full_text = table_text.strip()
+        pieces = _split_long_line(full_text, max_length)
+        result = []
+        text_offset = 0
+        for piece in pieces:
+            # Find source for this piece by matching text
+            frags = []
+            piece_start = 0
+            for src_bid, src_page, src_ss, src_se in line_sources:
+                src_text = None
+                for bid, bpage, btxt, btext in table_block_info:
+                    if bid == src_bid:
+                        src_text = btxt[src_ss:src_se]
+                        break
+                if src_text and src_text in piece:
+                    frag_ts = piece.index(src_text)
+                    frag_te = frag_ts + len(src_text)
+                    frags.append(_make_fragment(
+                        src_bid, src_page, src_ss, src_se,
+                        frag_ts, frag_te, "source",
+                    ))
+            if not frags:
+                frags.append(_make_fragment(
+                    header_src[0], header_src[1],
+                    header_src[2], min(header_src[3], len(piece)),
+                    0, len(piece), "source",
+                ))
+            result.append((piece, frags))
+        return result
+
+    header_prefix = header + "\n"
+    data_line_sources = line_sources[1:]  # Skip header
+    data_lines = lines[1:]
+
+    result: list[tuple[str, list[dict]]] = []
+    current_text = header_prefix
+    current_frags: list[dict] = []
+
+    # First piece: header is source
+    current_frags.append(_make_fragment(
+        header_src[0], header_src[1],
+        header_src[2], header_src[3],
+        0, header_len, "source",
+    ))
+
+    def _make_header_frag(kind: str) -> dict:
+        """Create a fragment for the (possibly repeated) header."""
+        return _make_fragment(
+            header_src[0], header_src[1],
+            header_src[2], header_src[3],
+            0, header_len, kind,
+        )
+
+    data_idx = 0
+    for line in data_lines:
+        if not line.strip():
+            data_idx += 1
+            continue
+
+        src = data_line_sources[data_idx] if data_idx < len(data_line_sources) else header_src
+
+        if len(line) > max_length:
+            # Sub-split a long row
+            if current_text.strip():
+                result.append((current_text.rstrip("\n"), current_frags))
+                current_text = header_prefix
+                current_frags = [_make_header_frag("repeated_header")]
+
+            sub_lines = _split_long_line(line, max_length)
+            sub_offset = 0  # Offset within the line's source
+            for sub in sub_lines:
+                if not current_text:
+                    current_text = header_prefix
+                    current_frags = [_make_header_frag("repeated_header")]
+                if len(current_text) + len(sub) + 1 > max_length and current_text.strip():
+                    result.append((current_text.rstrip("\n"), current_frags))
+                    current_text = header_prefix
+                    current_frags = [_make_header_frag("repeated_header")]
+                sub_start = len(current_text)
+                current_text += sub + "\n"
+                current_frags.append(_make_fragment(
+                    src[0], src[1],
+                    src[2] + sub_offset, src[2] + sub_offset + len(sub),
+                    sub_start, sub_start + len(sub), "source",
+                ))
+                sub_offset += len(sub)
+        else:
+            if not current_text:
+                current_text = header_prefix
+                current_frags = [_make_header_frag("repeated_header")]
+            if len(current_text) + len(line) + 1 > max_length and current_text.strip():
+                result.append((current_text.rstrip("\n"), current_frags))
+                current_text = header_prefix
+                current_frags = [_make_header_frag("repeated_header")]
+            line_start = len(current_text)
+            current_text += line + "\n"
+            current_frags.append(_make_fragment(
+                src[0], src[1],
+                src[2], src[3],
+                line_start, line_start + len(line), "source",
+            ))
+
+        data_idx += 1
+
+    if current_text.strip():
+        result.append((current_text.rstrip("\n"), current_frags))
+
+    return result
 
 
 def semantic_chunk(
@@ -445,7 +701,7 @@ def semantic_chunk(
                 current_text = block.text + "\n"
                 current_block_ids = [block.block_id]
                 current_page_nos = {page_no}
-                current_fragments = [{"block_id": block.block_id, "text_start": 0, "text_end": len(current_text)}]
+                current_fragments = [_make_fragment(block.block_id, page_no, 0, len(block.text), 0, len(block.text))]
                 i += 1
                 continue
 
@@ -467,32 +723,44 @@ def semantic_chunk(
                             _flush("list")
                         # Split the list block text at newline boundaries
                         lines = b.text.split("\n")
+                        src_offset = 0  # Offset within b.text
                         for line in lines:
                             if not line.strip():
+                                src_offset += len(line) + 1  # +1 for "\n"
                                 continue
                             # A single list line may itself exceed
                             # max_length — sub-split it at sentence /
                             # space / hard-limit boundaries.
                             if len(line) > max_length:
                                 sub_lines = _split_long_line(line, max_length)
+                                sub_offset = 0  # Offset within line
                                 for sub in sub_lines:
                                     if len(current_text) + len(sub) + 1 > max_length and current_text.strip():
                                         _flush("list")
                                     block_start = len(current_text)
                                     current_text += sub + "\n"
-                                    block_end = len(current_text)
                                     current_block_ids.append(b.block_id)
                                     current_page_nos.add(page_no)
-                                    current_fragments.append({"block_id": b.block_id, "text_start": block_start, "text_end": block_end})
+                                    current_fragments.append(_make_fragment(
+                                        b.block_id, page_no,
+                                        src_offset + sub_offset,
+                                        src_offset + sub_offset + len(sub),
+                                        block_start, block_start + len(sub),
+                                    ))
+                                    sub_offset += len(sub)
                             else:
                                 if len(current_text) + len(line) + 1 > max_length and current_text.strip():
                                     _flush("list")
                                 block_start = len(current_text)
                                 current_text += line + "\n"
-                                block_end = len(current_text)
                                 current_block_ids.append(b.block_id)
                                 current_page_nos.add(page_no)
-                                current_fragments.append({"block_id": b.block_id, "text_start": block_start, "text_end": block_end})
+                                current_fragments.append(_make_fragment(
+                                    b.block_id, page_no,
+                                    src_offset, src_offset + len(line),
+                                    block_start, block_start + len(line),
+                                ))
+                            src_offset += len(line) + 1  # +1 for "\n"
                         i += 1
                         continue
                     # If adding this item exceeds max_length, flush and start new
@@ -500,10 +768,12 @@ def semantic_chunk(
                         _flush("list")
                     block_start = len(current_text)
                     current_text += item_text
-                    block_end = len(current_text)
                     current_block_ids.append(b.block_id)
                     current_page_nos.add(page_no)
-                    current_fragments.append({"block_id": b.block_id, "text_start": block_start, "text_end": block_end})
+                    current_fragments.append(_make_fragment(
+                        b.block_id, page_no, 0, len(b.text),
+                        block_start, block_start + len(b.text),
+                    ))
                     i += 1
                 continue
 
@@ -511,13 +781,14 @@ def semantic_chunk(
             if _is_table(block):
                 table_text = ""
                 table_ids: list[str] = []
-                table_block_texts: list[tuple[str, str]] = []
+                # V7.4.2-01: Track (block_id, page_no, block_text, btext) for provenance
+                table_block_info: list[tuple[str, int, str, str]] = []
                 while i < len(blocks) and _is_table(blocks[i]):
                     b = blocks[i]
                     btext = b.text + "\n"
                     table_text += btext
                     table_ids.append(b.block_id)
-                    table_block_texts.append((b.block_id, btext))
+                    table_block_info.append((b.block_id, page_no, b.text, btext))
                     i += 1
 
                 if len(current_text) + len(table_text) > max_length:
@@ -526,29 +797,35 @@ def semantic_chunk(
                     # row boundaries (with header repetition).
                     if current_text.strip():
                         _flush("table")
-                    table_pieces = _split_table_text(table_text, max_length)
-                    for piece in table_pieces:
-                        if len(current_text) + len(piece) + 1 > max_length and current_text.strip():
+                    # V7.4.2-01: Split with proper provenance tracking
+                    pieces_with_frags = _split_table_with_fragments(
+                        table_text, table_block_info, max_length,
+                    )
+                    for piece_text, piece_frags in pieces_with_frags:
+                        if len(current_text) + len(piece_text) + 1 > max_length and current_text.strip():
                             _flush("table")
-                        block_start = len(current_text)
-                        current_text += piece + "\n"
-                        block_end = len(current_text)
+                        piece_start = len(current_text)
+                        current_text += piece_text + "\n"
+                        # Adjust fragment text offsets to be relative to current_text
+                        for frag in piece_frags:
+                            current_fragments.append(_make_fragment(
+                                frag["block_id"], frag["page_no"],
+                                frag["source_start"], frag["source_end"],
+                                piece_start + frag["text_start"],
+                                piece_start + frag["text_end"],
+                                frag["kind"],
+                            ))
                         current_block_ids.extend(table_ids)
                         current_page_nos.add(page_no)
-                        current_fragments.append({
-                            "block_id": table_ids[0],
-                            "text_start": block_start,
-                            "text_end": block_end,
-                        })
                 else:
                     table_start = len(current_text)
                     offset = 0
-                    for bid, btext in table_block_texts:
-                        current_fragments.append({
-                            "block_id": bid,
-                            "text_start": table_start + offset,
-                            "text_end": table_start + offset + len(btext),
-                        })
+                    for bid, bpage, btxt, btext in table_block_info:
+                        # V7.4.2-01: Include all 7 fields, exclude trailing "\n" from text_end
+                        current_fragments.append(_make_fragment(
+                            bid, bpage, 0, len(btxt),
+                            table_start + offset, table_start + offset + len(btxt),
+                        ))
                         offset += len(btext)
                     current_text += table_text
                     current_block_ids.extend(table_ids)
@@ -569,7 +846,7 @@ def semantic_chunk(
                     current_text = block_text + "\n"
                     current_block_ids = [block.block_id]
                     current_page_nos = {page_no}
-                    current_fragments = [{"block_id": block.block_id, "text_start": 0, "text_end": len(current_text)}]
+                    current_fragments = [_make_fragment(block.block_id, page_no, 0, len(block_text), 0, len(block_text))]
                 else:
                     # Current text is under target but adding block exceeds max.
                     # Split the combined text at a safe point.
@@ -586,11 +863,23 @@ def semantic_chunk(
                     # The new block's text is appended after current_text, so
                     # its fragment starts at len(current_text) and ends at len(combined).
                     new_block_start = len(current_text)
-                    new_block_end = len(combined)
+                    block_text_end = new_block_start + len(block_text)  # Exclude "\n"
                     if new_block_start < split_pos:
-                        first_frags.append({"block_id": block.block_id, "text_start": new_block_start, "text_end": min(new_block_end, split_pos)})
-                    if new_block_end > split_pos:
-                        second_frags.append({"block_id": block.block_id, "text_start": max(0, new_block_start - split_pos), "text_end": new_block_end - split_pos})
+                        frag_te = min(block_text_end, split_pos)
+                        if new_block_start < frag_te:
+                            first_frags.append(_make_fragment(
+                                block.block_id, page_no, 0, frag_te - new_block_start,
+                                new_block_start, frag_te,
+                            ))
+                    if block_text_end > split_pos:
+                        frag_ts = max(0, new_block_start - split_pos)
+                        frag_te = block_text_end - split_pos
+                        if frag_ts < frag_te:
+                            second_frags.append(_make_fragment(
+                                block.block_id, page_no,
+                                max(0, split_pos - new_block_start), len(block_text),
+                                frag_ts, frag_te,
+                            ))
 
                     # Determine which block IDs are in each part
                     first_block_ids = list(dict.fromkeys(f["block_id"] for f in first_frags))
@@ -611,15 +900,17 @@ def semantic_chunk(
                 current_text = block_text + "\n"
                 current_block_ids = [block.block_id]
                 current_page_nos = {page_no}
-                current_fragments = [{"block_id": block.block_id, "text_start": 0, "text_end": len(current_text)}]
+                current_fragments = [_make_fragment(block.block_id, page_no, 0, len(block_text), 0, len(block_text))]
             else:
                 # Add block to current chunk
                 block_start = len(current_text)
                 current_text += block_text + "\n"
-                block_end = len(current_text)
                 current_block_ids.append(block.block_id)
                 current_page_nos.add(page_no)
-                current_fragments.append({"block_id": block.block_id, "text_start": block_start, "text_end": block_end})
+                current_fragments.append(_make_fragment(
+                    block.block_id, page_no, 0, len(block_text),
+                    block_start, block_start + len(block_text),
+                ))
 
                 # If current text exceeds target_length, check if we should
                 # split at a sentence boundary. Only do this when there are
@@ -689,11 +980,15 @@ def semantic_chunk(
             # Adjust second chunk's fragments to be relative to the merged text
             offset = len(end_text) + 1  # +1 for the newline
             for frag in chunks[idx + 1].get("source_fragments_json", []):
-                merged_frags.append({
-                    "block_id": frag["block_id"],
-                    "text_start": frag["text_start"] + offset,
-                    "text_end": frag["text_end"] + offset,
-                })
+                merged_frags.append(_make_fragment(
+                    frag["block_id"],
+                    frag.get("page_no", 0),
+                    frag.get("source_start", 0),
+                    frag.get("source_end", frag["text_end"] - frag["text_start"]),
+                    frag["text_start"] + offset,
+                    frag["text_end"] + offset,
+                    frag.get("kind", "source"),
+                ))
             merged_pages = set()
             if chunks[idx]["page_start"]:
                 for p in range(chunks[idx]["page_start"], chunks[idx]["page_end"] + 1):

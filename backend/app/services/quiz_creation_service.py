@@ -26,9 +26,20 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_PASS_SCORE = 60
 
+# V7.4.2-03: Default contract constants
+_DEFAULT_QUESTION_TYPES = ["choice", "true_false", "short_answer"]
+_DEFAULT_DIFFICULTY_DISTRIBUTION = {"easy": 3, "medium": 5, "hard": 2}
+_MAX_RETRIES = 2
+
 
 class QuizCreationService:
     """Unified service for creating quizzes with strict contract enforcement."""
+
+    # V7.4.2-03: Expose default contract as class attributes
+    DEFAULT_PASS_SCORE = _DEFAULT_PASS_SCORE
+    DEFAULT_QUESTION_TYPES = _DEFAULT_QUESTION_TYPES
+    DEFAULT_DIFFICULTY_DISTRIBUTION = _DEFAULT_DIFFICULTY_DISTRIBUTION
+    MAX_RETRIES = _MAX_RETRIES
 
     @staticmethod
     def create_quiz(
@@ -70,7 +81,8 @@ class QuizCreationService:
                 status_code=422,
             )
 
-        # Validate generation consistency
+        # Validate generation consistency and active status
+        # V7.4.2-07: Reject KPs from archived (non-active) generations.
         active_generation = max(kp.generation for kp in knowledge_points)
         if any(kp.generation != active_generation for kp in knowledge_points):
             raise QuizConstraintException(
@@ -78,6 +90,29 @@ class QuizCreationService:
                 valid_count=0,
                 drop_reasons=["knowledge_point_not_in_active_generation"],
             )
+
+        # V7.4.2-07: Verify the generation matches the DB's current active generation
+        try:
+            from app.models.knowledge_point import KnowledgePoint as KPModel
+            db_active_gen = (
+                db.query(KPModel.generation)
+                .filter(
+                    KPModel.course_id == course_id,
+                    KPModel.status == "active",
+                )
+                .order_by(KPModel.generation.desc())
+                .first()
+            )
+            if db_active_gen and isinstance(db_active_gen[0], int) and db_active_gen[0] != active_generation:
+                raise QuizConstraintException(
+                    requested_count=question_count,
+                    valid_count=0,
+                    drop_reasons=["knowledge_point_from_archived_generation"],
+                )
+        except QuizConstraintException:
+            raise
+        except Exception:
+            pass
 
         # Resolve LLM config if not provided
         if user_config is None:

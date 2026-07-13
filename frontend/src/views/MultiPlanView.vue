@@ -15,9 +15,11 @@ import {
   type MultiPlanDetail,
   type MultiPlanListItem,
   type MultiPlanPayload,
+  type MultiPlanRescheduleDiff,
   type MultiPlanResult,
   type MultiPlanScheduleItem,
   type MultiPlanTaskItem,
+  type RescheduleDiffItem,
 } from '../api/plan'
 import { MAX_PAGE_SIZE } from '../constants/pagination'
 import { parseApiError } from '../utils/error'
@@ -69,6 +71,8 @@ const historyLoading = ref(false)
 const rescheduleDialogVisible = ref(false)
 const rescheduleDailyMinutes = ref(120)
 const rescheduleLoading = ref(false)
+const rescheduleDiff = ref<MultiPlanRescheduleDiff | null>(null)
+const diffDialogVisible = ref(false)
 
 function toDateString(d: Date): string {
   const y = d.getFullYear()
@@ -516,11 +520,16 @@ async function handleReschedule() {
   }
   rescheduleLoading.value = true
   try {
-    await rescheduleMultiPlan(multiPlanDetail.value.id, {
+    const resp = await rescheduleMultiPlan(multiPlanDetail.value.id, {
       daily_minutes: rescheduleDailyMinutes.value,
     })
     ElMessage.success('已重新调度')
     rescheduleDialogVisible.value = false
+    // V7.4.2-06: Capture and display the five-category diff
+    if (resp.data?.diff) {
+      rescheduleDiff.value = resp.data.diff
+      diffDialogVisible.value = true
+    }
     // Reload the detail to reflect the new schedule
     await loadMultiPlanDetail(multiPlanDetail.value.id)
   } catch (err) {
@@ -528,6 +537,33 @@ async function handleReschedule() {
   } finally {
     rescheduleLoading.value = false
   }
+}
+
+function formatDate(d: string | null): string {
+  if (!d) return '-'
+  return d
+}
+
+function diffCategoryLabel(cat: string): string {
+  const labels: Record<string, string> = {
+    kept: '保留',
+    moved: '移动',
+    created: '新增',
+    superseded: '已取代',
+    unscheduled: '未排程',
+  }
+  return labels[cat] || cat
+}
+
+function diffCategoryType(cat: string): string {
+  const types: Record<string, string> = {
+    kept: 'success',
+    moved: 'warning',
+    created: 'primary',
+    superseded: 'info',
+    unscheduled: 'danger',
+  }
+  return types[cat] || ''
 }
 
 onMounted(async () => {
@@ -1117,6 +1153,50 @@ onMounted(async () => {
         >
           重新调度
         </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- V7.4.2-06: Reschedule diff dialog -->
+    <el-dialog
+      v-model="diffDialogVisible"
+      title="重排差异对比"
+      width="min(800px, calc(100vw - 32px))"
+    >
+      <template v-if="rescheduleDiff">
+        <template
+          v-for="cat in (['kept', 'moved', 'created', 'superseded', 'unscheduled'] as const)"
+          :key="cat"
+        >
+          <template v-if="rescheduleDiff[cat]?.length">
+            <div style="margin-bottom: 16px;">
+              <el-tag :type="diffCategoryType(cat)" style="margin-bottom: 8px;">
+                {{ diffCategoryLabel(cat) }} ({{ rescheduleDiff[cat].length }})
+              </el-tag>
+              <el-table :data="rescheduleDiff[cat]" size="small" border>
+                <el-table-column prop="title" label="任务" min-width="160" show-overflow-tooltip />
+                <el-table-column prop="course_name" label="课程" min-width="100" show-overflow-tooltip />
+                <el-table-column label="原日期" width="120">
+                  <template #default="{ row }">{{ formatDate(row.old_scheduled_date) }}</template>
+                </el-table-column>
+                <el-table-column label="新日期" width="120">
+                  <template #default="{ row }">{{ formatDate(row.new_scheduled_date) }}</template>
+                </el-table-column>
+                <el-table-column label="gen" width="80">
+                  <template #default="{ row }">
+                    <span v-if="row.old_generation">{{ row.old_generation }}</span>
+                    <span v-if="row.old_generation && row.new_generation"> → </span>
+                    <span v-if="row.new_generation">{{ row.new_generation }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="estimate_minutes" label="分钟" width="70" />
+                <el-table-column prop="reason" label="原因" min-width="120" show-overflow-tooltip />
+              </el-table>
+            </div>
+          </template>
+        </template>
+      </template>
+      <template #footer>
+        <el-button type="primary" @click="diffDialogVisible = false">关闭</el-button>
       </template>
     </el-dialog>
   </div>

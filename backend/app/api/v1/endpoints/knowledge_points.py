@@ -362,6 +362,38 @@ def list_kp_generations(
     return list(gen_map.values())
 
 
+@router.get(
+    "/{course_id}/knowledge-points/generations/{generation}",
+    response_model=KnowledgePointListResponse,
+)
+def list_kps_by_generation(
+    course_id: int,
+    generation: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> KnowledgePointListResponse:
+    """V7.4.2-07: List knowledge points for a specific generation.
+
+    Returns all KPs (both active and archived) belonging to the given
+    generation number, allowing the frontend to display a read-only
+    historical view of any past generation.
+    """
+    _get_owned_course(db, course_id, current_user.id)
+
+    rows = (
+        db.query(KnowledgePoint)
+        .filter(
+            KnowledgePoint.course_id == course_id,
+            KnowledgePoint.user_id == current_user.id,
+            KnowledgePoint.generation == generation,
+        )
+        .order_by(KnowledgePoint.id.asc())
+        .all()
+    )
+    items = [KnowledgePointResponse.model_validate(r) for r in rows]
+    return KnowledgePointListResponse(items=items, total=len(items))
+
+
 def _safe_add_step(
     db: Session,
     run_id: int | None,

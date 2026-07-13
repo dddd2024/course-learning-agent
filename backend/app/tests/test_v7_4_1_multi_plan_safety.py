@@ -2,12 +2,12 @@
 
 Verifies:
 1. Safe delete rejects when tasks have execution history (non-pending status)
-2. Safe delete with force=true succeeds even with execution history
-3. Reschedule returns a diff with added/removed/changed arrays
-4. Reschedule diff correctly identifies added tasks
-5. Reschedule diff correctly identifies removed tasks
+2. Archive endpoint allows archiving plans with execution history
+3. Reschedule returns a diff with kept/moved/created/superseded/unscheduled
+4. Reschedule diff correctly identifies created tasks
+5. Reschedule diff correctly identifies superseded tasks
 6. Reschedule preserves course names and deadlines
-7. Deleting a plan with only pending tasks succeeds without force
+7. Deleting a plan with only pending tasks succeeds
 """
 from __future__ import annotations
 
@@ -89,17 +89,20 @@ class TestSafeDelete:
         assert resp.status_code == 200
 
     def test_force_delete_succeeds_with_execution_history(self, client: TestClient):
-        """Delete with force=true succeeds even with execution history."""
+        """V7.4.2-05: Archive endpoint succeeds even with execution history."""
         plan_id, task_ids, headers = _make_plan_with_tasks(
             client, "safedel2", task_status="completed"
         )
 
-        resp = client.delete(f"/api/v1/plans/multi/{plan_id}?force=true", headers=headers)
-        assert resp.status_code == 204, resp.text
+        # Archive instead of force delete
+        resp = client.post(f"/api/v1/plans/multi/{plan_id}/archive", headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "archived"
 
-        # Verify plan is gone
+        # Verify plan is archived (not deleted)
         resp = client.get(f"/api/v1/plans/multi/{plan_id}", headers=headers)
-        assert resp.status_code == 404
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "archived"
 
     def test_delete_succeeds_with_only_pending_tasks(self, client: TestClient):
         """Delete succeeds without force when all tasks are pending."""
@@ -116,7 +119,7 @@ class TestSafeDelete:
 
 
 class TestRescheduleDiff:
-    """V7.4.1-05: Reschedule must return a diff with added/removed/changed."""
+    """V7.4.2-06: Reschedule must return a five-category diff."""
 
     def test_reschedule_returns_diff(self, client: TestClient):
         """Reschedule response must include a diff object."""
@@ -133,12 +136,12 @@ class TestRescheduleDiff:
         body = resp.json()
         assert "diff" in body
         diff = body["diff"]
-        assert "added" in diff
-        assert "removed" in diff
-        assert "changed" in diff
+        # V7.4.2-06: five categories
+        for cat in ("kept", "moved", "created", "superseded", "unscheduled"):
+            assert cat in diff
 
     def test_reschedule_diff_has_added_tasks(self, client: TestClient):
-        """Reschedule with more daily_minutes should add tasks to the diff."""
+        """Reschedule diff should have entries in the five categories."""
         plan_id, _, headers = _make_plan_with_tasks(
             client, "resched2", task_status="pending"
         )
@@ -157,8 +160,11 @@ class TestRescheduleDiff:
         body = resp.json()
         diff = body["diff"]
 
-        # The diff should have entries (added or removed or changed)
-        total_diff = len(diff["added"]) + len(diff["removed"]) + len(diff["changed"])
+        # The diff should have entries across the five categories
+        total_diff = (
+            len(diff["kept"]) + len(diff["moved"]) + len(diff["created"])
+            + len(diff["superseded"]) + len(diff["unscheduled"])
+        )
         assert total_diff > 0, "Reschedule diff must have at least some changes"
 
     def test_reschedule_preserves_course_names(self, client: TestClient):
@@ -182,7 +188,7 @@ class TestRescheduleDiff:
                 assert len(task["course_name"]) > 0, "Course name must not be empty"
 
     def test_reschedule_diff_removed_has_old_tasks(self, client: TestClient):
-        """Removed tasks in diff must reference old schedule items."""
+        """Superseded tasks in diff must reference old schedule items."""
         plan_id, _, headers = _make_plan_with_tasks(
             client, "resched4", task_status="pending"
         )
@@ -199,8 +205,8 @@ class TestRescheduleDiff:
         assert resp.status_code == 200, resp.text
         diff = resp.json()["diff"]
 
-        # If the schedule changed, removed should have items from old schedule
-        # or added should have new items
-        if len(diff["removed"]) > 0:
-            for item in diff["removed"]:
+        # If the schedule changed, superseded should have items from old schedule
+        # or created should have new items
+        if len(diff["superseded"]) > 0:
+            for item in diff["superseded"]:
                 assert "title" in item or "course_name" in item
