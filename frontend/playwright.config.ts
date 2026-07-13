@@ -31,9 +31,10 @@ const frontendPort = Number(process.env.E2E_FRONTEND_PORT || '5173')
 
 // Use an absolute UPLOAD_DIR so the backend (CWD=backend/) and the
 // parse worker (CWD=project-root) resolve to the same directory.
-// Without this, the relative default "../storage/uploads" resolves
-// to different absolute paths for each process.
-const uploadDir = resolve(__dirname, '..', 'storage', 'uploads').replace(/\\/g, '/')
+// V7.5.1-05: E2E tests must use an isolated upload directory, separate
+// from storage/uploads used by real data, to prevent polluting actual
+// user files.
+const uploadDir = resolve(__dirname, '..', 'storage', 'e2e-uploads').replace(/\\/g, '/')
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: false,

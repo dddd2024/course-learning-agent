@@ -171,6 +171,19 @@ def retry_image_extraction(material_id: int, db: Session = Depends(get_db), curr
     return reextract_images(db, _get_owned_material(db, material_id, current_user.id))
 
 
+@router.post("/{material_id}/page-assets/rebuild")
+def rebuild_page_assets_endpoint(material_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+    """Rebuild page-level visual assets for an existing PDF material.
+
+    V7.5.1-01: Allows the frontend to repair materials that were parsed
+    before page rendering was introduced, without re-uploading or
+    re-parsing the file.
+    """
+    from app.services.material_page_asset_service import rebuild_page_assets
+    material = _get_owned_material(db, material_id, current_user.id)
+    return rebuild_page_assets(db, material)
+
+
 @router.get("/{material_id}/parse-jobs")
 def list_parse_jobs(material_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
     _get_owned_material(db, material_id, current_user.id)
@@ -216,7 +229,7 @@ def list_chunks(
     current_user: User = Depends(get_current_user),
 ) -> ChunkListResponse:
     """Return paginated chunks for a material owned by the current user."""
-    _get_owned_material(db, material_id, current_user.id)
+    material = _get_owned_material(db, material_id, current_user.id)
 
     query = db.query(MaterialChunk).filter(
         MaterialChunk.material_id == material_id,
@@ -243,6 +256,13 @@ def list_chunks(
             MaterialImage.material_id == material_id,
             MaterialImage.page_no.in_(page_nos),
         )
+        if material.active_version_id:
+            # V7.5.1-04: Only return images for the active version, but
+            # also include legacy images that have no version_id (NULL).
+            image_query = image_query.filter(
+                (MaterialImage.material_version_id == material.active_version_id)
+                | (MaterialImage.material_version_id.is_(None))
+            )
         if not include_decorative:
             image_query = image_query.filter(MaterialImage.is_decorative == 0)
         imgs = image_query.all()

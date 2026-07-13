@@ -200,6 +200,15 @@ def parse_with_retry(
                     update_fts_index(db, old_chunk_ids + reactivated_ids)
                 except Exception as fts_exc:
                     logger.warning("FTS index update failed for material %s: %s", material_id, fts_exc)
+                # V7.5.1-01: Ensure page assets exist for the reused
+                # version.  Legacy PDFs parsed before page rendering may
+                # reuse an existing version but still lack page images.
+                if material.file_type.lower() == "pdf":
+                    try:
+                        from app.services.material_page_asset_service import ensure_active_page_assets
+                        ensure_active_page_assets(db, material)
+                    except Exception as pa_exc:
+                        logger.warning("Page-asset backfill failed for material %s: %s", material_id, pa_exc)
                 return "ready", _count_existing_chunks(db, material_id)
             next_version = (db.query(MaterialVersion.version).filter(
                 MaterialVersion.material_id == material_id

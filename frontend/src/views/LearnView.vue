@@ -126,7 +126,7 @@
           <el-icon class="is-loading"><Loading /></el-icon>
           加载资料中...
         </div>
-        <div v-else-if="chunks.length === 0" class="doc-empty">
+        <div v-else-if="chunks.length === 0 && materialPages.length === 0" class="doc-empty">
           <el-empty description="请选择一份资料开始学习" :image-size="100" />
         </div>
         <div v-else class="doc-content">
@@ -139,19 +139,36 @@
             />
           </div>
 
-          <!-- V6-14: image error banner with re-extract button -->
-          <div v-if="brokenImageIds.size > 0" class="image-error-banner">
+          <!-- V7.5.1-03: non-blocking hint when page fallback is ready -->
+          <div v-if="brokenImageIds.size > 0 && imageIntegrityData?.status === 'page_fallback_ready'" class="image-info-banner">
+            <el-alert type="info" :closable="false" show-icon>
+              <template #title>
+                <span>独立图片不可拆分，已使用原页预览（{{ imageIntegrityData?.ready_pages || 0 }}/{{ imageIntegrityData?.expected_pages || 0 }} 页可读）</span>
+              </template>
+              <el-button
+                type="primary"
+                size="small"
+                :loading="reextractingImages"
+                @click="handleRepairDocument"
+              >
+                修复文档预览
+              </el-button>
+            </el-alert>
+          </div>
+
+          <!-- V6-14: image error banner with re-extract button (only when NOT page_fallback_ready) -->
+          <div v-else-if="brokenImageIds.size > 0 && imageIntegrityData?.status !== 'page_fallback_ready'" class="image-error-banner">
             <el-alert type="warning" :closable="false" show-icon>
               <template #title>
-                <span>检测到 {{ brokenImageIds.size }} 张图片缺失</span>
+                <span>检测到 {{ brokenImageIds.size }} 张图片缺失，页图也不可用，文档可能无法完整阅读</span>
               </template>
               <el-button
                 type="warning"
                 size="small"
                 :loading="reextractingImages"
-                @click="handleReextractImages"
+                @click="handleRepairDocument"
               >
-                重新提取图片
+                修复文档预览
               </el-button>
             </el-alert>
           </div>
@@ -371,7 +388,7 @@ import { nextTick, onMounted, ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ChatDotRound, CopyDocument, InfoFilled, Loading, MagicStick, Aim, PictureRounded } from '@element-plus/icons-vue'
-import { listMaterials, getChunks, getMaterialPages, generateMaterialStudyGuide, reextractImages, getImageIntegrity, type Material, type Chunk, type MaterialPage } from '../api/material'
+import { listMaterials, getChunks, getMaterialPages, generateMaterialStudyGuide, reextractImages, getImageIntegrity, rebuildPageAssets, type Material, type Chunk, type MaterialPage, type ImageIntegrityResult } from '../api/material'
 import { listCourses, type Course } from '../api/course'
 import {
   createConversation,
@@ -442,6 +459,7 @@ const readProgress = ref(0)
 const brokenImageIds = ref<Set<number>>(new Set())
 const reextractingImages = ref(false)
 const imageIntegrityStatus = ref<string>('')
+const imageIntegrityData = ref<ImageIntegrityResult | null>(null)
 
 // V6-14: derive a human-readable page title from the first heading block
 function derivePageTitle(page: MaterialPage): string {
@@ -742,6 +760,18 @@ async function loadChunks() {
         kpSourceChunkIds.value.has(c.id),
       )
       chunks.value = filtered
+      // V7.5.1-04: load materialPages for the best-matching material so
+      // the default page mode has data to render.
+      try {
+        materialPages.value = (await getMaterialPages(bestMaterialId)).data.items
+      } catch {
+        materialPages.value = []
+      }
+      // V7.5.1-02: auto-select reader mode
+      const hasReadyPageAssets = materialPages.value.some(
+        (p) => p.page_asset?.status === 'ready' && p.page_asset?.file_url,
+      )
+      readerMode.value = hasReadyPageAssets ? 'page' : 'clean'
     } else {
       const materialChunks = await getAllMaterialChunks(selectedMaterialId.value)
       rawChunks.value = materialChunks
@@ -749,6 +779,17 @@ async function loadChunks() {
       // content; do not hide a valid citation with a second UI heuristic.
       chunks.value = materialChunks
       materialPages.value = (await getMaterialPages(selectedMaterialId.value)).data.items
+      // V7.5.1-02: auto-select reader mode based on material capabilities.
+      // If ready page assets exist, use 'page' mode; otherwise fall back
+      // to 'clean' (structured text) for non-PDF or assets-less materials.
+      const hasReadyPageAssets = materialPages.value.some(
+        (p) => p.page_asset?.status === 'ready' && p.page_asset?.file_url,
+      )
+      if (hasReadyPageAssets) {
+        readerMode.value = 'page'
+      } else {
+        readerMode.value = 'clean'
+      }
     }
     await preloadImages(chunks.value)
     // V6-52: load image integrity status (best-effort, non-blocking)
@@ -862,8 +903,68 @@ async function loadImageIntegrity() {
   try {
     const { data } = await getImageIntegrity(selectedMaterialId.value)
     imageIntegrityStatus.value = data.status
+    imageIntegrityData.value = data
   } catch {
     imageIntegrityStatus.value = ''
+    imageIntegrityData.value = null
+  }
+}
+
+// V7.5.1-03: combined document repair — rebuild page assets + re-extract images
+async function handleRepairDocument() {
+  if (!selectedMaterialId.value || reextractingImages.value) return
+  reextractingImages.value = true
+  try {
+    // Step 1: Rebuild page assets (page images)
+    let pageResult: { expected_pages: number; ready_pages: number; missing_pages: number; status: string } | null = null
+    try {
+      const { data } = await rebuildPageAssets(selectedMaterialId.value)
+      pageResult = data
+    } catch {
+      // Page rebuild failure is non-fatal; continue with image re-extraction
+    }
+
+    // Step 2: Re-extract standalone images
+    let imgFound = 0
+    let imgExtracted = 0
+    try {
+      const { data: result } = await reextractImages(selectedMaterialId.value)
+      if (result.status === 'forbidden') {
+        // Non-PDF — skip image extraction
+      } else if (result.status === 'missing') {
+        // Source file missing — skip
+      } else {
+        imgFound = result.found ?? 0
+        imgExtracted = result.extracted ?? 0
+      }
+    } catch {
+      // Image extraction failure is non-fatal
+    }
+
+    // Reload integrity to get current state
+    await loadImageIntegrity()
+
+    const readyPages = imageIntegrityData.value?.ready_pages ?? 0
+    const expectedPages = imageIntegrityData.value?.expected_pages ?? 0
+    const stillMissing = imageIntegrityData.value?.missing ?? 0
+
+    if (pageResult && pageResult.status === 'ready' && stillMissing === 0) {
+      ElMessage.success(`文档预览已修复：${readyPages}/${expectedPages} 页可读，提取 ${imgExtracted} 张独立图片`)
+    } else if (readyPages > 0) {
+      ElMessage.warning(
+        `部分修复：${readyPages}/${expectedPages} 页可读，仍有 ${expectedPages - readyPages} 页缺失，${stillMissing} 张独立图片缺失`,
+      )
+    } else {
+      ElMessage.error('文档预览修复失败，旧版本仍可使用')
+    }
+
+    // Reload chunks to show the new images
+    brokenImageIds.value.clear()
+    await loadChunks()
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '修复文档预览失败，旧版本仍可使用'))
+  } finally {
+    reextractingImages.value = false
   }
 }
 
@@ -1148,6 +1249,19 @@ async function confirmTaskLearning() {
 }
 
 .image-error-banner .el-alert__content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+/* V7.5.1-03: non-blocking image info banner */
+.image-info-banner {
+  margin-bottom: 16px;
+}
+
+.image-info-banner .el-alert__content {
   display: flex;
   align-items: center;
   justify-content: space-between;

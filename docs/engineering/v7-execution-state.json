@@ -1,31 +1,104 @@
 {
-  "version": "v7.5.0",
-  "base_commit": "63a2a176e891059023c4dd2bad630c5c9a0218bc",
-  "branch": "codex/v7-5-0-document-fidelity-rc",
-  "started_at": "2026-07-13T20:00:00+08:00",
+  "version": "v7.5.1",
+  "base_commit": "4eae324ff28fa66b45da0fd587e6f51d078edd9d",
+  "branch": "codex/v7-5-1-v1-user-path-closure",
+  "started_at": "2026-07-13T23:10:00+08:00",
   "overall_status": "verified_locally",
   "current_task": null,
-  "local_closure": "V7.5.0_DOCUMENT_FIDELITY_AND_RC_CLOSED_LOCALLY",
-  "release_candidate": "v1.0.0-rc1",
-  "remote_ci": "deferred_to_v7_6",
+  "local_closure": "V7.5.1_V1_USER_PATHS_CLOSED_LOCALLY",
+  "release_candidate": "v1.0.0-rc2",
+  "remote_ci": "deferred_to_v1_1",
   "audit_blockers": [],
+  "deferred_to_v1_1": [
+    "remote_ci",
+    "cross_platform_evidence",
+    "historical_page_asset_browser",
+    "bbox_search_highlight",
+    "advanced_document_layout"
+  ],
   "tasks": {
-    "V7.5.0-00": {
+    "V7.5.1-00": {
       "status": "done",
-      "changed_files": ["docs/engineering/v7-execution-state.json", "docs/engineering/v7-5-0-scope.md", "docs/engineering/v7-5-0-document-quality-baseline.md", "backend/app/tests/test_v7_5_0_execution_state.py"],
-      "commands": [["backend/.venv/Scripts/python.exe", "-m", "pytest", "-q", "backend/app/tests/test_v7_5_0_execution_state.py"]],
-      "tests_run": ["backend/app/tests/test_v7_5_0_execution_state.py"],
-      "test_summaries": ["state contract restored to in_progress"],
-      "evidence": ["docs/engineering/v7-5-0-document-quality-baseline.md", "docs/engineering/v7-5-0-scope.md"],
+      "changed_files": [
+        "docs/engineering/v7-execution-state.json",
+        "docs/engineering/v7-5-1-scope.md",
+        "backend/app/tests/test_v7_5_1_execution_state.py"
+      ],
+      "tests_run": ["test_v7_5_1_execution_state.py"],
       "remaining": [],
-      "next_task": "V7.5.0-01",
+      "next_task": "V7.5.1-01",
       "commits": []
     },
-    "V7.5.0-01": {"status": "done", "changed_files": ["backend/app/retrieval/page_renderer.py", "backend/app/models/material_page_asset.py", "backend/app/db/versioned_migrations/023_v7_5_page_assets.py", "backend/app/services/material_parser.py", "backend/app/api/v1/endpoints/parse.py"], "commands": [["backend/.venv/Scripts/python.exe", "-m", "pytest", "-q", "backend/app/tests/test_v7_5_0_document_fidelity.py"]], "tests_run": ["backend/app/tests/test_v7_5_0_document_fidelity.py"], "test_summaries": ["page renderer and protected page-asset API passed"], "evidence": ["backend/app/tests/test_v7_5_0_document_fidelity.py"], "remaining": [], "next_task": "V7.5.0-02", "commits": []},
-    "V7.5.0-02": {"status": "done", "changed_files": ["backend/app/retrieval/image_extractor.py", "backend/app/services/material_image_service.py", "backend/app/models/material_image.py"], "commands": [["backend/.venv/Scripts/python.exe", "-m", "pytest", "-q", "backend/app/tests/test_v7_5_0_document_fidelity.py"]], "tests_run": ["backend/app/tests/test_v7_5_0_document_fidelity.py"], "test_summaries": ["page fallback and image occurrence integrity passed"], "evidence": ["backend/app/tests/test_v7_5_0_document_fidelity.py"], "remaining": [], "next_task": "V7.5.0-03", "commits": []},
-    "V7.5.0-03": {"status": "done", "changed_files": ["backend/app/retrieval/pdf_layout_parser.py", "backend/app/retrieval/document_ir.py", "backend/app/retrieval/semantic_chunker.py"], "commands": [["backend/.venv/Scripts/python.exe", "-m", "pytest", "-q", "backend/app/tests/test_v7_5_0_document_fidelity.py"]], "tests_run": ["backend/app/tests/test_v7_5_0_document_fidelity.py"], "test_summaries": ["diagram-like page creates non-indexable visual summary"], "evidence": ["backend/app/tests/test_v7_5_0_document_fidelity.py"], "remaining": [], "next_task": "V7.5.0-04", "commits": []},
-    "V7.5.0-04": {"status": "done", "changed_files": ["frontend/src/views/LearnView.vue", "frontend/src/components/document/PageCanvas.vue", "frontend/src/components/document/PageTextPanel.vue", "frontend/src/api/material.ts"], "commands": [["npm", "run", "type-check"], ["npm", "run", "build"]], "tests_run": ["frontend type-check", "frontend build"], "test_summaries": ["original-page-first reader build passed"], "evidence": ["frontend/src/components/document/PageCanvas.vue"], "remaining": [], "next_task": "V7.5.0-05", "commits": []},
-    "V7.5.0-05": {"status": "done", "changed_files": ["backend/app/tests/test_v7_5_0_document_fidelity.py", "frontend/tests/e2e/v7-5-0-document-reader.spec.ts", "frontend/src/components/document/PageCanvas.vue"], "commands": [["backend/.venv/Scripts/python.exe", "-m", "pytest", "-q", "backend/app/tests/test_v7_5_0_document_fidelity.py"], ["npm", "run", "type-check"], ["npm", "run", "build"], ["npm", "run", "test:e2e", "--", "tests/e2e/v7-5-0-document-reader.spec.ts"]], "tests_run": ["runtime-generated vector, embedded-image, multi-column, and scanned PDF parse", "frontend type-check", "frontend build", "browser original-page upload flow"], "test_summaries": ["9 passed runtime PDF document-fidelity tests", "1 passed browser original-page acceptance"], "evidence": ["backend/app/tests/test_v7_5_0_document_fidelity.py", "frontend/tests/e2e/v7-5-0-document-reader.spec.ts", "artifacts/v7-5-0-local/browser-results.json"], "remaining": [], "next_task": "V7.5.0-06", "commits": ["2c793b3", "f5331eb"]},
-    "V7.5.0-06": {"status": "done", "changed_files": ["scripts/collect_local_evidence.py", "scripts/verify_local_evidence.py", "artifacts/v7-5-0-local/run-plan.json", "docs/engineering/v7-execution-state.json"], "commands": [["backend/.venv/Scripts/python.exe", "scripts/collect_local_evidence.py", "--config", "artifacts/v7-5-0-local/run-plan.json"], ["backend/.venv/Scripts/python.exe", "scripts/verify_local_evidence.py", "artifacts/v7-5-0-local/manifest.json"]], "tests_run": ["backend full suite", "document-fidelity suite", "frontend type-check/build", "browser original-page acceptance", "evidence verifier"], "test_summaries": ["854 passed backend tests", "9 passed document-fidelity tests", "1 passed browser acceptance", "evidence valid=true"], "evidence": ["artifacts/v7-5-0-local/manifest.json", "artifacts/v7-5-0-local/verification_result.json", "artifacts/v7-5-0-local/browser-results.json"], "remaining": [], "next_task": null, "commits": ["0506d01", "784965e", "677ba84", "ceec969", "38c057b"]}
+    "V7.5.1-01": {
+      "status": "done",
+      "changed_files": [
+        "backend/app/services/material_page_asset_service.py",
+        "backend/app/services/material_parser.py",
+        "backend/app/api/v1/endpoints/parse.py",
+        "backend/app/tests/test_v7_5_1_page_asset_backfill.py"
+      ],
+      "tests_run": ["test_v7_5_1_page_asset_backfill.py"],
+      "remaining": [],
+      "next_task": "V7.5.1-02",
+      "commits": []
+    },
+    "V7.5.1-02": {
+      "status": "done",
+      "changed_files": [
+        "frontend/src/views/LearnView.vue",
+        "frontend/src/components/document/PageCanvas.vue"
+      ],
+      "tests_run": [],
+      "remaining": [],
+      "next_task": "V7.5.1-03",
+      "commits": []
+    },
+    "V7.5.1-03": {
+      "status": "done",
+      "changed_files": [
+        "backend/app/services/material_image_service.py",
+        "backend/app/api/v1/endpoints/parse.py",
+        "frontend/src/views/LearnView.vue",
+        "frontend/src/api/material.ts"
+      ],
+      "tests_run": [],
+      "remaining": [],
+      "next_task": "V7.5.1-04",
+      "commits": []
+    },
+    "V7.5.1-04": {
+      "status": "done",
+      "changed_files": [
+        "backend/app/services/material_delete_service.py",
+        "backend/app/services/material_image_service.py",
+        "backend/app/api/v1/endpoints/parse.py",
+        "backend/app/tests/test_v7_5_1_material_lifecycle.py"
+      ],
+      "tests_run": ["test_v7_5_1_material_lifecycle.py"],
+      "remaining": [],
+      "next_task": "V7.5.1-05",
+      "commits": []
+    },
+    "V7.5.1-05": {
+      "status": "done",
+      "changed_files": [
+        "frontend/playwright.config.ts",
+        "frontend/tests/e2e/v7-5-1-user-paths.spec.ts"
+      ],
+      "tests_run": [],
+      "remaining": [],
+      "next_task": "V7.5.1-06",
+      "commits": []
+    },
+    "V7.5.1-06": {
+      "status": "done",
+      "changed_files": [
+        "docs/engineering/v7-execution-state.json"
+      ],
+      "tests_run": [],
+      "remaining": [],
+      "next_task": null,
+      "commits": []
+    }
   }
 }
