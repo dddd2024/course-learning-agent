@@ -15,6 +15,9 @@
 ## 题型要求
 {question_types}
 
+## 难度分布要求
+{difficulty_distribution}
+
 ## 输出要求
 严格输出以下 JSON 结构（不要输出任何 JSON 之外的文字）：
 

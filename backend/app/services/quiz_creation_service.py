@@ -85,6 +85,8 @@ class QuizCreationService:
             user_config = build_user_config(active_config) if active_config else None
 
         # Generate quiz items
+        # V7.4.1-03: forward the requested question_types and
+        # difficulty_distribution so they propagate into the LLM prompt.
         quiz_output = generate_quiz(
             db=db,
             user_id=user_id,
@@ -92,6 +94,8 @@ class QuizCreationService:
             knowledge_points=knowledge_points,
             course_name=course_name,
             question_count=question_count,
+            question_types=question_types,
+            difficulty_distribution=difficulty_distribution,
             user_config=user_config,
         )
 
