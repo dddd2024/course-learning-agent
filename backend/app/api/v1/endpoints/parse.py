@@ -37,6 +37,7 @@ from app.schemas.material import (
 from app.services.parse_job_service import create_or_get_job, recover_stale_jobs
 from app.models.parse_job import ParseJob
 from app.models.material_page import MaterialPage
+from app.models.material_page_asset import MaterialPageAsset
 from app.services.material_delete_service import delete_material as delete_material_service
 from app.services.material_image_service import image_integrity, image_state, reextract_images
 
@@ -101,6 +102,37 @@ def get_material_image_file(
     if not path.is_file():
         raise NotFoundException(message="图片不存在")
     return FileResponse(path, filename=image.image_filename)
+
+
+@router.get("/page-assets/{asset_id}/file")
+def get_material_page_asset_file(
+    asset_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    """Return an active-version page image without leaking another user's asset."""
+    asset = (
+        db.query(MaterialPageAsset)
+        .join(Material, Material.id == MaterialPageAsset.material_id)
+        .filter(
+            MaterialPageAsset.id == asset_id,
+            Material.user_id == current_user.id,
+            Material.active_version_id == MaterialPageAsset.material_version_id,
+            MaterialPageAsset.render_status == "ready",
+        )
+        .first()
+    )
+    if asset is None or not asset.asset_path:
+        raise NotFoundException(message="页面资源不存在")
+    path = _safe_upload_path(asset.asset_path)
+    if not path.is_file():
+        raise NotFoundException(message="页面资源不存在")
+    return FileResponse(
+        path,
+        media_type=asset.mime_type,
+        filename=path.name,
+        headers={"ETag": f'"{asset.sha256}"'} if asset.sha256 else None,
+    )
 
 
 @router.post(
@@ -261,7 +293,24 @@ def list_material_pages(material_id: int, db: Session = Depends(get_db), current
     if material.active_version_id is not None:
         query = query.filter(MaterialPage.material_version_id == material.active_version_id)
     rows = query.order_by(MaterialPage.page_no).all()
-    return {"items": [{"id": row.id, "page_no": row.page_no, "page_type": row.page_type, "parser_version": row.parser_version, "raw_text": row.raw_text or "", "clean_text": row.clean_text or "", "removed_lines": row.decisions_json or "[]", "blocks": row.blocks_json or "[]"} for row in rows]}
+    assets = {
+        asset.page_no: asset
+        for asset in db.query(MaterialPageAsset).filter(
+            MaterialPageAsset.material_id == material.id,
+            MaterialPageAsset.material_version_id == material.active_version_id,
+        ).all()
+    }
+    return {"items": [{
+        "id": row.id, "page_no": row.page_no, "page_type": row.page_type,
+        "parser_version": row.parser_version, "raw_text": row.raw_text or "",
+        "clean_text": row.clean_text or "", "removed_lines": row.decisions_json or "[]",
+        "blocks": row.blocks_json or "[]",
+        "page_asset": ({
+            "id": asset.id, "file_url": f"/api/v1/materials/page-assets/{asset.id}/file",
+            "width": asset.width, "height": asset.height, "dpi": asset.dpi,
+            "sha256": asset.sha256, "status": asset.render_status, "error_code": asset.error_code,
+        } if (asset := assets.get(row.page_no)) else None),
+    } for row in rows]}
 
 
 @router.delete(

@@ -21,6 +21,7 @@ from app.models.material import Material, MaterialVersion
 from app.models.material_chunk import MaterialChunk
 from app.models.material_image import MaterialImage
 from app.models.material_page import MaterialPage
+from app.models.material_page_asset import MaterialPageAsset
 from app.models.parse_job import ParseJob
 from app.models.plan import MultiCoursePlan, MultiCoursePlanTask, StudyGoal, StudyTask, TaskExecutionEvent, Todo
 from app.models.quiz import Quiz, QuizItem, WeakPoint
@@ -47,6 +48,7 @@ __all__ = [
     "MaterialChunk",
     "MaterialImage",
     "MaterialPage",
+    "MaterialPageAsset",
     "ParseJob",
     "MultiCoursePlan",
     "MultiCoursePlanTask",

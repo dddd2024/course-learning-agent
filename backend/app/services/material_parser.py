@@ -37,6 +37,7 @@ from app.models.material import Material, MaterialVersion
 from app.models.material_chunk import MaterialChunk
 from app.models.material_image import MaterialImage
 from app.models.material_page import MaterialPage
+from app.models.material_page_asset import MaterialPageAsset
 from app.models.security_finding import MaterialSecurityFinding
 from app.retrieval.chunker import clean_keyword_text
 from app.retrieval.semantic_chunker import semantic_chunk_document
@@ -117,6 +118,8 @@ def parse_with_retry(
     existing_chunk_count = _count_existing_chunks(db, material_id)
     staged_image_dir: Path | None = None
     promoted_image_dir: Path | None = None
+    staged_page_asset_dir: Path | None = None
+    promoted_page_asset_dir: Path | None = None
 
     def check_cancelled() -> None:
         if is_cancelled is not None and is_cancelled():
@@ -211,6 +214,37 @@ def parse_with_retry(
             for page, cleaned in zip(pages, clean_results):
                 raw = page.text
                 db.add(MaterialPage(material_id=material_id, material_version_id=version_row.id, page_no=page.page_no, page_type=page.page_type, parser_version=page.parser_version, raw_text=raw, clean_text=cleaned.text, blocks_json=json.dumps([block.to_dict() for block in page.blocks], ensure_ascii=False), decisions_json=json.dumps(cleaned.decisions, ensure_ascii=False)))
+            if material.file_type.lower() == "pdf":
+                # A rendered page is the visual source of truth.  It is staged
+                # with the version and never exposed until activation succeeds.
+                from app.retrieval.page_renderer import render_pdf_pages
+                page_root = (Path(settings.UPLOAD_DIR) / material.file_path).parent / "pages"
+                staged_page_asset_dir = page_root / f".v7-staging-{material_id}-{next_version}-{uuid4().hex}"
+                try:
+                    for rendered in render_pdf_pages(file_path, staged_page_asset_dir):
+                        db.add(MaterialPageAsset(
+                            material_id=material_id,
+                            material_version_id=version_row.id,
+                            page_no=rendered.page_no,
+                            asset_path=str((staged_page_asset_dir / rendered.filename).relative_to(Path(settings.UPLOAD_DIR))).replace("\\", "/"),
+                            width=rendered.width,
+                            height=rendered.height,
+                            dpi=rendered.dpi,
+                            sha256=rendered.sha256,
+                            render_status="ready",
+                        ))
+                except Exception as render_exc:
+                    _remove_staged_images(staged_page_asset_dir)
+                    staged_page_asset_dir = None
+                    # Keep an explicit failed record per parsed page instead
+                    # of silently pretending the original-page view exists.
+                    for page in pages:
+                        db.add(MaterialPageAsset(
+                            material_id=material_id, material_version_id=version_row.id,
+                            page_no=page.page_no, render_status="failed",
+                            error_code="PAGE_RENDER_FAILED",
+                        ))
+                    logger.warning("Page rendering failed for material %s: %s", material_id, render_exc)
             check_cancelled()  # before writing chunks
             # Collect old active chunk ids before deactivating so we can
             # update the FTS index after the commit.
@@ -335,6 +369,20 @@ def parse_with_retry(
                     ).replace("\\", "/")
                 staged_image_dir = None
 
+            if staged_page_asset_dir is not None and staged_page_asset_dir.exists():
+                promoted_page_asset_dir = staged_page_asset_dir.parent / f"v{next_version}"
+                if promoted_page_asset_dir.exists():
+                    raise RuntimeError(f"页图版本目录已存在：{promoted_page_asset_dir.name}")
+                staged_page_asset_dir.replace(promoted_page_asset_dir)
+                relative_root = Path(settings.UPLOAD_DIR)
+                for asset in db.query(MaterialPageAsset).filter(
+                    MaterialPageAsset.material_version_id == version_row.id
+                ).all():
+                    asset.asset_path = str(
+                        (promoted_page_asset_dir / Path(asset.asset_path).name).relative_to(relative_root)
+                    ).replace("\\", "/")
+                staged_page_asset_dir = None
+
             check_cancelled()  # after file promotion, before the atomic DB switch
 
             material.status = "ready"
@@ -363,6 +411,8 @@ def parse_with_retry(
             db.rollback()
             _remove_staged_images(staged_image_dir)
             _remove_staged_images(promoted_image_dir, promoted=True)
+            _remove_staged_images(staged_page_asset_dir)
+            _remove_staged_images(promoted_page_asset_dir, promoted=True)
             material = db.query(Material).filter(Material.id == material_id).first()
             if material is not None:
                 material.status = "ready" if existing_chunk_count else "uploaded"
@@ -375,6 +425,8 @@ def parse_with_retry(
             db.rollback()
             _remove_staged_images(staged_image_dir)
             _remove_staged_images(promoted_image_dir, promoted=True)
+            _remove_staged_images(staged_page_asset_dir)
+            _remove_staged_images(promoted_page_asset_dir, promoted=True)
             material = (
                 db.query(Material)
                 .filter(Material.id == material_id)
