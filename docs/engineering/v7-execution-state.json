@@ -1,32 +1,38 @@
 {
-  "version": "v7.4.4",
-  "base_commit": "9af524e9e1c7ff149256170931cf7fc9d766858e",
-  "branch": "codex/v7-4-4-v1-rc-closure",
+  "version": "v7.5.0",
+  "base_commit": "63a2a176e891059023c4dd2bad630c5c9a0218bc",
+  "branch": "codex/v7-5-0-document-fidelity-rc",
   "started_at": "2026-07-13T20:00:00+08:00",
-  "overall_status": "verified_locally",
-  "current_task": null,
-  "local_closure": "V7.4.4_V1_RC_FUNCTIONALLY_CLOSED_LOCALLY",
-  "release_candidate": "v1.0.0-rc1",
+  "overall_status": "in_progress",
+  "current_task": "V7.5.0-01",
+  "local_closure": null,
+  "release_candidate": null,
   "remote_ci": "deferred_to_v7_6",
   "audit_blockers": [
     "closure_evidence_not_reproducible",
-    "protected_term_boundary_direction_incorrect",
-    "long_table_header_first_block_fallback",
-    "pure_multiple_choice_mock_contract_unsatisfied",
-    "submitted_quiz_missing_from_plan_delete_history",
-    "unscheduled_diff_missing_stable_task_key",
-    "knowledge_point_status_and_stale_target_rebind_mismatch",
-    "browser_e2e_assertions_and_evidence_incomplete"
+    "pdf_page_fidelity_unverified",
+    "embedded_image_integrity_unverified",
+    "layout_mapping_and_bbox_navigation_unverified",
+    "document_reader_original_page_flow_unverified",
+    "real_document_regression_unverified"
   ],
   "tasks": {
-    "V7.4.4-00": {"status":"done","changed_files":["docs/engineering/v7-execution-state.json","docs/engineering/v7-4-4-audit-baseline.md","docs/engineering/v7-4-4-scope.md","backend/app/tests/test_v7_4_4_execution_state.py"],"commands":[["backend/.venv/Scripts/python.exe","-m","pytest","-q","backend/app/tests/test_v7_4_4_execution_state.py"]],"tests_run":["backend/app/tests/test_v7_4_4_execution_state.py"],"test_summaries":["3 passed"],"evidence":["docs/engineering/v7-4-4-audit-baseline.md","docs/engineering/v7-4-4-scope.md"],"remaining":[],"next_task":"V7.4.4-01","commits":["b8dfe0a"]},
-    "V7.4.4-01": {"status":"done","changed_files":["backend/app/retrieval/semantic_chunker.py","backend/app/tests/test_v7_4_4_chunk_provenance.py","docs/engineering/v7-execution-state.json"],"commands":[["backend/.venv/Scripts/python.exe","-m","pytest","-q","backend/app/tests/test_v7_4_4_chunk_provenance.py","backend/app/tests/test_v7_4_2_precise_provenance.py","backend/app/tests/test_v7_4_3_precise_provenance.py"]],"tests_run":["backend/app/tests/test_v7_4_4_chunk_provenance.py","backend/app/tests/test_v7_4_2_precise_provenance.py","backend/app/tests/test_v7_4_3_precise_provenance.py"],"test_summaries":["27 passed, 1 warning"],"evidence":["backend/app/tests/test_v7_4_4_chunk_provenance.py"],"remaining":[],"next_task":"V7.4.4-02","commits":["b8dfe0a"]},
-    "V7.4.4-02": {"status":"done","changed_files":["backend/app/db/versioned_migrations/018_v7_4_page_unique.py","backend/app/tests/test_v7_4_4_migration_faults.py","docs/engineering/v7-execution-state.json"],"commands":[["backend/.venv/Scripts/python.exe","-m","pytest","-q","backend/app/tests/test_v7_4_4_migration_faults.py","backend/app/tests/test_v7_4_2_migration_integrity.py","backend/app/tests/test_v7_4_3_migration_integrity.py"]],"tests_run":["backend/app/tests/test_v7_4_4_migration_faults.py","backend/app/tests/test_v7_4_2_migration_integrity.py","backend/app/tests/test_v7_4_3_migration_integrity.py"],"test_summaries":["20 passed, 1 warning"],"evidence":["backend/app/tests/test_v7_4_4_migration_faults.py"],"remaining":[],"next_task":"V7.4.4-03","commits":["6fceced"]},
-    "V7.4.4-03": {"status":"done","changed_files":["backend/app/agents/llm.py","backend/app/agents/quiz.py","backend/app/agents/prompts/quiz_generate_v1.md","backend/app/services/quiz_creation_service.py","backend/app/services/quiz_item_verifier.py","backend/app/tests/test_v7_4_4_quiz_provider_contract.py","docs/engineering/v7-execution-state.json"],"commands":[["backend/.venv/Scripts/python.exe","-m","pytest","-q","backend/app/tests/test_v7_4_4_quiz_provider_contract.py"],["backend/.venv/Scripts/python.exe","-m","pytest","-q","backend/app/tests/test_quizzes.py","backend/app/tests/test_v3_quiz_grounding.py","backend/app/tests/test_v6_quiz_constraints.py","backend/app/tests/test_v7_3_unified_quiz_creation.py","backend/app/tests/test_v7_4_unified_quiz.py","backend/app/tests/test_v7_4_1_quiz_atomic.py","backend/app/tests/test_v7_4_1_quiz_contract.py","backend/app/tests/test_v7_4_2_quiz_atomic.py","backend/app/tests/test_v7_4_2_quiz_contract.py","backend/app/tests/test_v7_4_3_quiz_atomic.py","backend/app/tests/test_v7_4_3_quiz_contract.py","backend/app/tests/test_v7_4_4_quiz_provider_contract.py"]],"tests_run":["backend/app/tests/test_v7_4_4_quiz_provider_contract.py","backend/app/tests/test_quizzes.py","backend/app/tests/test_v3_quiz_grounding.py","backend/app/tests/test_v6_quiz_constraints.py","backend/app/tests/test_v7_3_unified_quiz_creation.py","backend/app/tests/test_v7_4_unified_quiz.py","backend/app/tests/test_v7_4_1_quiz_atomic.py","backend/app/tests/test_v7_4_1_quiz_contract.py","backend/app/tests/test_v7_4_2_quiz_atomic.py","backend/app/tests/test_v7_4_2_quiz_contract.py","backend/app/tests/test_v7_4_3_quiz_atomic.py","backend/app/tests/test_v7_4_3_quiz_contract.py"],"test_summaries":["7 passed, 8 warnings (provider contract)","97 passed, 55 warnings (quiz regression)"],"evidence":["backend/app/tests/test_v7_4_4_quiz_provider_contract.py"],"remaining":[],"next_task":"V7.4.4-04","commits":["7fcd624"]},
-    "V7.4.4-04": {"status":"done","changed_files":["backend/app/services/multi_plan_history_service.py","backend/app/tests/test_v7_4_4_plan_history.py","docs/engineering/v7-execution-state.json"],"commands":[["backend/.venv/Scripts/python.exe","-m","pytest","-q","backend/app/tests/test_v7_4_4_plan_history.py","backend/app/tests/test_v7_4_2_plan_safety.py","backend/app/tests/test_v7_4_3_plan_safety.py"]],"tests_run":["backend/app/tests/test_v7_4_4_plan_history.py","backend/app/tests/test_v7_4_2_plan_safety.py","backend/app/tests/test_v7_4_3_plan_safety.py"],"test_summaries":["13 passed, 14 warnings"],"evidence":["backend/app/tests/test_v7_4_4_plan_history.py"],"remaining":[],"next_task":"V7.4.4-05","commits":["9515077"]},
-    "V7.4.4-05": {"status":"done","changed_files":["backend/app/models/plan.py","backend/app/db/versioned_migrations/022_v7_4_4_plan_task_identity.py","backend/app/api/v1/endpoints/plans.py","backend/app/tests/test_v7_4_4_reschedule_behavior.py","docs/engineering/v7-execution-state.json"],"commands":[["backend/.venv/Scripts/python.exe","-m","pytest","-q","backend/app/tests/test_v7_4_4_reschedule_behavior.py","backend/app/tests/test_v7_4_multi_plan_lifecycle.py","backend/app/tests/test_v7_4_1_multi_plan_safety.py","backend/app/tests/test_v7_4_2_plan_safety.py","backend/app/tests/test_v7_4_3_plan_safety.py","backend/app/tests/test_v6_multi_plan.py"]],"tests_run":["backend/app/tests/test_v7_4_4_reschedule_behavior.py","backend/app/tests/test_v7_4_multi_plan_lifecycle.py","backend/app/tests/test_v7_4_1_multi_plan_safety.py","backend/app/tests/test_v7_4_2_plan_safety.py","backend/app/tests/test_v7_4_3_plan_safety.py","backend/app/tests/test_v6_multi_plan.py"],"test_summaries":["43 passed, 41 warnings","migration 022 idempotence: stable_task_key/task_type_snapshot present"],"evidence":["backend/app/tests/test_v7_4_4_reschedule_behavior.py"],"remaining":[],"next_task":"V7.4.4-06","commits":["bdf2e5d"]},
-    "V7.4.4-06": {"status":"done","changed_files":["backend/app/services/task_execution_service.py","frontend/src/api/knowledge.ts","frontend/src/api/plan.ts","frontend/src/views/OutlineView.vue","backend/app/tests/test_v7_4_4_kp_rebind.py"],"commands":[["backend/.venv/Scripts/python.exe","-m","pytest","-q","backend/app/tests/test_v7_4_4_kp_rebind.py","backend/app/tests/test_v7_4_3_kp_readonly.py","backend/app/tests/test_v7_learn_evidence.py"],["npm","run","type-check"]],"tests_run":["backend/app/tests/test_v7_4_4_kp_rebind.py","backend/app/tests/test_v7_4_3_kp_readonly.py","backend/app/tests/test_v7_learn_evidence.py","frontend type-check"],"test_summaries":["9 passed, 10 warnings","frontend type-check passed"],"evidence":["backend/app/tests/test_v7_4_4_kp_rebind.py"],"remaining":[],"next_task":"V7.4.4-07","commits":["f2dbe7c"]},
-    "V7.4.4-07": {"status":"done","changed_files":["frontend/tests/e2e/v7-4-4-browser-e2e.spec.ts","frontend/src/views/QuizView.vue","frontend/src/views/QuizView.test.ts","frontend/src/views/MultiPlanView.vue","backend/app/db/versioned_migrations/__init__.py","frontend/playwright.config.ts"],"commands":[["npm","run","type-check"],["npm","run","test","--","--run","src/views/QuizView.test.ts"],["npx","playwright","test","tests/e2e/v7-4-4-browser-e2e.spec.ts","--retries=0"]],"tests_run":["frontend src/views/QuizView.test.ts","V7.4.4-E2E-01 through V7.4.4-E2E-08"],"test_summaries":["2 passed","8 passed (1.3m)","individual retry of E2E-03 through E2E-08 passed"],"evidence":["frontend/playwright-results.json"],"remaining":[],"next_task":"V7.4.4-08","commits":[]},
-    "V7.4.4-08": {"status":"done","changed_files":["scripts/collect_local_evidence.py","scripts/verify_local_evidence.py","artifacts/v7-4-4-local/run-plan.json","artifacts/v7-4-4-local/manifest.json","artifacts/v7-4-4-local/verification_result.json","docs/engineering/v7-execution-state.json"],"commands":[["backend/.venv/Scripts/python.exe","scripts/collect_local_evidence.py","--config","artifacts/v7-4-4-local/run-plan.json"],["backend/.venv/Scripts/python.exe","scripts/verify_local_evidence.py","artifacts/v7-4-4-local/manifest.json","--release-head","HEAD","--verify-state-summaries"]],"tests_run":["backend full","migration faults","frontend typecheck/unit/build","V7.4.4 browser E2E","git checks"],"test_summaries":["8 evidence commands exit 0","manifest verification valid"],"evidence":["artifacts/v7-4-4-local/manifest.json","artifacts/v7-4-4-local/verification_result.json"],"remaining":["Remote CI remains deferred_to_v7_6."],"next_task":null,"commits":[]}
+    "V7.5.0-00": {
+      "status": "done",
+      "changed_files": ["docs/engineering/v7-execution-state.json", "docs/engineering/v7-5-0-scope.md", "docs/engineering/v7-5-0-document-quality-baseline.md", "backend/app/tests/test_v7_5_0_execution_state.py"],
+      "commands": [["backend/.venv/Scripts/python.exe", "-m", "pytest", "-q", "backend/app/tests/test_v7_5_0_execution_state.py"]],
+      "tests_run": ["backend/app/tests/test_v7_5_0_execution_state.py"],
+      "test_summaries": ["state contract restored to in_progress"],
+      "evidence": ["docs/engineering/v7-5-0-document-quality-baseline.md", "docs/engineering/v7-5-0-scope.md"],
+      "remaining": [],
+      "next_task": "V7.5.0-01",
+      "commits": []
+    },
+    "V7.5.0-01": {"status": "in_progress", "changed_files": [], "commands": [], "tests_run": [], "test_summaries": [], "evidence": [], "remaining": ["page asset model and protected API"], "next_task": "V7.5.0-02", "commits": []},
+    "V7.5.0-02": {"status": "pending", "changed_files": [], "commands": [], "tests_run": [], "test_summaries": [], "evidence": [], "remaining": [], "next_task": "V7.5.0-03", "commits": []},
+    "V7.5.0-03": {"status": "pending", "changed_files": [], "commands": [], "tests_run": [], "test_summaries": [], "evidence": [], "remaining": [], "next_task": "V7.5.0-04", "commits": []},
+    "V7.5.0-04": {"status": "pending", "changed_files": [], "commands": [], "tests_run": [], "test_summaries": [], "evidence": [], "remaining": [], "next_task": "V7.5.0-05", "commits": []},
+    "V7.5.0-05": {"status": "pending", "changed_files": [], "commands": [], "tests_run": [], "test_summaries": [], "evidence": [], "remaining": [], "next_task": "V7.5.0-06", "commits": []},
+    "V7.5.0-06": {"status": "pending", "changed_files": [], "commands": [], "tests_run": [], "test_summaries": [], "evidence": [], "remaining": [], "next_task": null, "commits": []}
   }
 }
