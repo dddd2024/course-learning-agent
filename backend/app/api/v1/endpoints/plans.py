@@ -34,7 +34,7 @@ from app.core.exceptions import BusinessException, NotFoundException, PlanHasHis
 from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
 from app.models.material import Material
-from app.models.plan import MultiCoursePlan, MultiCoursePlanTask, StudyGoal, StudyTask, Todo
+from app.models.plan import MultiCoursePlan, MultiCoursePlanTask, MultiPlanRescheduleDiffItem, MultiPlanRescheduleRun, StudyGoal, StudyTask, Todo
 from app.models.quiz import WeakPoint
 from app.models.user import User
 from app.services.weak_point_progress import apply_mastery_decay
@@ -1228,6 +1228,45 @@ def delete_multi_plan(
     db.commit()
 
 
+@router.get("/multi/{multi_plan_id}/reschedule-runs")
+def list_reschedule_runs(
+    multi_plan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    plan = _get_owned_multi_plan(db, multi_plan_id, current_user.id)
+    runs = db.query(MultiPlanRescheduleRun).filter(
+        MultiPlanRescheduleRun.plan_id == plan.id
+    ).order_by(MultiPlanRescheduleRun.id.desc()).all()
+    return {"items": [{"id": run.id, "old_generation": run.old_generation,
+                        "new_generation": run.new_generation, "daily_minutes": run.daily_minutes,
+                        "status": run.status, "created_at": run.created_at} for run in runs]}
+
+
+@router.get("/multi/{multi_plan_id}/reschedule-runs/{run_id}")
+def get_reschedule_run(
+    multi_plan_id: int, run_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    plan = _get_owned_multi_plan(db, multi_plan_id, current_user.id)
+    run = db.query(MultiPlanRescheduleRun).filter(
+        MultiPlanRescheduleRun.id == run_id, MultiPlanRescheduleRun.plan_id == plan.id
+    ).first()
+    if run is None:
+        raise NotFoundException(message="重排记录不存在")
+    entries = db.query(MultiPlanRescheduleDiffItem).filter(
+        MultiPlanRescheduleDiffItem.run_id == run.id
+    ).order_by(MultiPlanRescheduleDiffItem.id).all()
+    return {"id": run.id, "old_generation": run.old_generation, "new_generation": run.new_generation,
+            "daily_minutes": run.daily_minutes, "status": run.status,
+            "items": [{"category": item.category, "stable_task_key": item.stable_task_key,
+                       "old_task_id": item.old_task_id, "new_task_id": item.new_task_id,
+                       "old_date": item.old_date, "new_date": item.new_date,
+                       "old_generation": item.old_generation, "new_generation": item.new_generation,
+                       "reason": item.reason, "title": item.title, "course_id": item.course_id} for item in entries]}
+
+
 @router.post("/multi/{multi_plan_id}/reschedule", response_model=MultiPlanRescheduleResponse)
 def reschedule_multi_plan(
     multi_plan_id: int,
@@ -1449,7 +1488,8 @@ def reschedule_multi_plan(
             title_snapshot=item.get("title", ""),
             generation=plan.generation_version,
         ))
-    db.commit()
+    # Build and persist the complete diff before committing the generation.
+    db.flush()
 
     # V7.4.2-06: Build five-category diff using stable_task_key matching.
     # Snapshot old tasks with their stable_task_key for precise matching.
@@ -1499,6 +1539,7 @@ def reschedule_multi_plan(
             "estimate_minutes": pt.estimate_minutes,
             "title": task.title if task else (pt.title_snapshot or ""),
             "course_name": new_course_names.get(pt.course_id, ""),
+            "course_id": pt.course_id,
             "generation": task_gen,
             "unscheduled_reason": pt.unscheduled_reason,
         })
@@ -1621,6 +1662,31 @@ def reschedule_multi_plan(
         superseded=superseded_items,
         unscheduled=unscheduled_items,
     )
+    run = MultiPlanRescheduleRun(
+        plan_id=plan.id,
+        old_generation=plan.generation_version - 1,
+        new_generation=plan.generation_version,
+        daily_minutes=payload.daily_minutes,
+        status="completed",
+    )
+    db.add(run)
+    db.flush()
+    for category, entries in {
+        "kept": kept_items, "moved": moved_items, "created": created_items,
+        "superseded": superseded_items, "unscheduled": unscheduled_items,
+    }.items():
+        for entry in entries:
+            old_item = old_by_key.get(entry.stable_task_key or "", {})
+            new_item = new_by_key.get(entry.stable_task_key or "", {})
+            db.add(MultiPlanRescheduleDiffItem(
+                run_id=run.id, category=category, stable_task_key=entry.stable_task_key,
+                old_task_id=entry.old_task_id, new_task_id=entry.new_task_id,
+                old_date=entry.old_scheduled_date, new_date=entry.new_scheduled_date,
+                old_generation=entry.old_generation, new_generation=entry.new_generation,
+                reason=entry.reason, title=entry.title,
+                course_id=new_item.get("course_id") or old_item.get("course_id"),
+            ))
+    db.commit()
 
     return MultiPlanRescheduleResponse(
         multi_plan_id=plan.id,

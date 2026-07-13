@@ -55,6 +55,35 @@ class MultiCoursePlanTask(Base, TimestampMixin):
     generation = Column(Integer, nullable=True)
 
 
+class MultiPlanRescheduleRun(Base, TimestampMixin):
+    """Immutable persisted record of one multi-plan reschedule operation."""
+    __tablename__ = "multi_plan_reschedule_runs"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    plan_id = Column(Integer, ForeignKey("multi_course_plans.id", ondelete="CASCADE"), nullable=False, index=True)
+    old_generation = Column(Integer, nullable=False)
+    new_generation = Column(Integer, nullable=False)
+    daily_minutes = Column(Integer, nullable=False)
+    status = Column(String(30), nullable=False, default="completed")
+
+
+class MultiPlanRescheduleDiffItem(Base, TimestampMixin):
+    """A durable five-category change record belonging to a reschedule run."""
+    __tablename__ = "multi_plan_reschedule_diff_items"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(Integer, ForeignKey("multi_plan_reschedule_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    category = Column(String(30), nullable=False, index=True)
+    stable_task_key = Column(String(320), nullable=True)
+    old_task_id = Column(Integer, nullable=True)
+    new_task_id = Column(Integer, nullable=True)
+    old_date = Column(Date, nullable=True)
+    new_date = Column(Date, nullable=True)
+    old_generation = Column(Integer, nullable=True)
+    new_generation = Column(Integer, nullable=True)
+    reason = Column(String(255), nullable=True)
+    title = Column(String(255), nullable=False)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=True)
+
+
 class StudyGoal(Base, TimestampMixin):
     """A user's learning objective plus planning parameters."""
 

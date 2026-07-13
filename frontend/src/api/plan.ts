@@ -299,6 +299,16 @@ export function rescheduleMultiPlan(
   return request.post(`/plans/multi/${id}/reschedule`, payload)
 }
 
+export interface RescheduleRun { id: number; old_generation: number; new_generation: number; daily_minutes: number; status: string; created_at: string }
+export interface RescheduleHistoryItem { category: keyof MultiPlanRescheduleDiff; stable_task_key: string | null; old_task_id: number | null; new_task_id: number | null; old_date: string | null; new_date: string | null; old_generation: number | null; new_generation: number | null; reason: string; title: string; course_id: number | null }
+
+export function getRescheduleRuns(id: number): AxiosPromise<{ items: RescheduleRun[] }> {
+  return request.get(`/plans/multi/${id}/reschedule-runs`)
+}
+export function getRescheduleRun(id: number, runId: number): AxiosPromise<{ id: number; items: RescheduleHistoryItem[] }> {
+  return request.get(`/plans/multi/${id}/reschedule-runs/${runId}`)
+}
+
 export function listTodos(params?: TodoListParams): AxiosPromise<TodoListResult> {
   return request.get('/todos', { params })
 }

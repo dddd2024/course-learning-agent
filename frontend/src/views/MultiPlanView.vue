@@ -9,6 +9,8 @@ import {
   deleteMultiPlan,
   getMultiPlan,
   getMultiPlanHistory,
+  getRescheduleRun,
+  getRescheduleRuns,
   listMultiPlans,
   patchMultiPlan,
   rescheduleMultiPlan,
@@ -20,6 +22,7 @@ import {
   type MultiPlanResult,
   type MultiPlanScheduleItem,
   type MultiPlanTaskItem,
+  type RescheduleRun,
 } from '../api/plan'
 import { MAX_PAGE_SIZE } from '../constants/pagination'
 import { parseApiError } from '../utils/error'
@@ -73,6 +76,7 @@ const rescheduleDailyMinutes = ref(120)
 const rescheduleLoading = ref(false)
 const rescheduleDiff = ref<MultiPlanRescheduleDiff | null>(null)
 const diffDialogVisible = ref(false)
+const rescheduleRuns = ref<RescheduleRun[]>([])
 
 function toDateString(d: Date): string {
   const y = d.getFullYear()
@@ -430,6 +434,8 @@ async function loadMultiPlanHistory(id: number) {
   try {
     const { data } = await getMultiPlanHistory(id)
     historyItems.value = data
+    const runs = await getRescheduleRuns(id)
+    rescheduleRuns.value = runs.data.items
     mode.value = 'history'
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取历史记录失败'))
@@ -500,6 +506,23 @@ async function handleDeleteMultiPlan() {
       ElMessage.error(message)
     }
   }
+}
+
+async function showPersistedRescheduleDiff(runId: number) {
+  if (!selectedMultiPlanId.value) return
+  const { data } = await getRescheduleRun(selectedMultiPlanId.value, runId)
+  const grouped: MultiPlanRescheduleDiff = { kept: [], moved: [], created: [], superseded: [], unscheduled: [] }
+  for (const item of data.items) {
+    grouped[item.category].push({
+      stable_task_key: item.stable_task_key ?? null, old_task_id: item.old_task_id ?? null,
+      new_task_id: item.new_task_id ?? null, old_scheduled_date: item.old_date ?? null,
+      new_scheduled_date: item.new_date ?? null, old_generation: item.old_generation ?? null,
+      new_generation: item.new_generation ?? null, reason: item.reason, title: item.title,
+      course_name: '', estimate_minutes: 0,
+    })
+  }
+  rescheduleDiff.value = grouped
+  diffDialogVisible.value = true
 }
 
 async function handlePatchStatus(status: string) {
@@ -1089,6 +1112,13 @@ onMounted(async () => {
             <el-button size="small" @click="loadMultiPlanDetail(selectedMultiPlanId!)">返回详情</el-button>
           </div>
         </template>
+        <el-table v-if="rescheduleRuns.length" :data="rescheduleRuns" stripe style="margin-bottom: 16px;">
+          <el-table-column prop="id" label="重排批次" width="100" />
+          <el-table-column prop="old_generation" label="旧版本" width="90" />
+          <el-table-column prop="new_generation" label="新版本" width="90" />
+          <el-table-column prop="daily_minutes" label="每日分钟" width="110" />
+          <el-table-column label="操作" width="100"><template #default="{ row }"><el-button link type="primary" @click="showPersistedRescheduleDiff(row.id)">查看差异</el-button></template></el-table-column>
+        </el-table>
         <el-table :data="historyItems" stripe empty-text="暂无历史记录">
           <el-table-column label="课程" min-width="120">
             <template #default="{ row }">
