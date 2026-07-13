@@ -310,7 +310,9 @@ def verify_task(
     verification_result: dict[str, Any] = {"method": verification_method, "verified_at": now.isoformat()}
     if task.task_type == "quiz":
         quiz = db.query(Quiz).filter(Quiz.id == task.target_id, Quiz.user_id == user_id, Quiz.course_id == task.course_id).first()
-        threshold = int(spec.get("pass_score", _DEFAULT_PASS_SCORE))
+        # Quiz.pass_score is the single authority once the task is bound.
+        # A stored target spec is creation metadata only.
+        threshold = int(quiz.pass_score) if quiz is not None else _DEFAULT_PASS_SCORE
         if quiz is None:
             verification_result.update({"passed": False, "reason": "未绑定用户自己的测验"})
         elif quiz.status != "submitted" or quiz.question_count <= 0:
