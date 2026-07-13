@@ -73,13 +73,13 @@ class TestExecutionStateValid:
         """The state file must contain the required V7.4.x fields."""
         with open(STATE_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-        assert data["version"] in ("v7.4.1", "v7.4.2", "v7.4.3", "v7.4.4", "v7.5.0")
+        assert data["version"] in ("v7.4.1", "v7.4.2", "v7.4.3", "v7.4.4", "v7.5.0", "v7.5.1")
         assert "base_commit" in data
         assert "branch" in data
         assert data["overall_status"] in ("in_progress", "verified_locally")
         assert "tasks" in data
         assert "local_closure" in data
-        assert data.get("remote_ci") in ("deferred_to_v7_6", None)
+        assert data.get("remote_ci") in ("deferred_to_v7_6", "deferred_to_v1_1", None)
 
     def test_corrupted_backup_exists(self):
         """The old corrupted file must be backed up."""

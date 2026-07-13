@@ -14,7 +14,16 @@ SCOPE_PATH = PROJECT_DIR / "docs" / "engineering" / "v7-5-0-scope.md"
 def test_v7_5_0_records_an_honest_document_fidelity_state() -> None:
     state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
 
-    assert state["version"] == "v7.5.0"
+    assert state["version"] in ("v7.5.0", "v7.5.1")
+
+    if state["version"] == "v7.5.1":
+        assert state["overall_status"] in {"in_progress", "verified_locally"}
+        assert state["tasks"]["V7.5.1-00"]["status"] == "done"
+        if state["overall_status"] == "in_progress":
+            assert state["current_task"] in state["tasks"]
+            assert state["local_closure"] is None
+        return
+
     assert state["base_commit"] == "63a2a176e891059023c4dd2bad630c5c9a0218bc"
     assert state["overall_status"] in {"in_progress", "verified_locally"}
     assert state["remote_ci"] == "deferred_to_v7_6"

@@ -9,6 +9,7 @@ from app.models.material import Material, MaterialVersion
 from app.models.material_chunk import MaterialChunk
 from app.models.material_image import MaterialImage
 from app.models.material_page import MaterialPage
+from app.models.material_page_asset import MaterialPageAsset
 from app.models.citation import Citation
 from app.models.knowledge_point import KnowledgePoint
 from app.models.quiz import QuizItem
@@ -51,7 +52,7 @@ def delete_material(db: Session, material: Material) -> dict[str, int]:
                     item.source_evidence = json.dumps(kept_evidence, ensure_ascii=False)
                     item.verification_status = "invalid" if not kept_evidence else item.verification_status
                     counts["quiz_evidence"] += len(evidence) - len(kept_evidence)
-        counts.update({"images": db.query(MaterialImage).filter(MaterialImage.material_id == material.id).delete(synchronize_session=False), "pages": db.query(MaterialPage).filter(MaterialPage.material_id == material.id).delete(synchronize_session=False), "security_findings": db.query(MaterialSecurityFinding).filter(MaterialSecurityFinding.material_id == material.id).delete(synchronize_session=False), "chunks": db.query(MaterialChunk).filter(MaterialChunk.material_id == material.id).delete(synchronize_session=False), "versions": db.query(MaterialVersion).filter(MaterialVersion.material_id == material.id).delete(synchronize_session=False)})
+        counts.update({"images": db.query(MaterialImage).filter(MaterialImage.material_id == material.id).delete(synchronize_session=False), "pages": db.query(MaterialPage).filter(MaterialPage.material_id == material.id).delete(synchronize_session=False), "page_assets": db.query(MaterialPageAsset).filter(MaterialPageAsset.material_id == material.id).delete(synchronize_session=False), "security_findings": db.query(MaterialSecurityFinding).filter(MaterialSecurityFinding.material_id == material.id).delete(synchronize_session=False), "chunks": db.query(MaterialChunk).filter(MaterialChunk.material_id == material.id).delete(synchronize_session=False), "versions": db.query(MaterialVersion).filter(MaterialVersion.material_id == material.id).delete(synchronize_session=False)})
         db.delete(material)
         db.commit()
     except Exception:

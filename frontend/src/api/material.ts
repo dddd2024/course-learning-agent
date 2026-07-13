@@ -77,13 +77,18 @@ export function getMaterialPages(materialId: number): AxiosPromise<{ items: Mate
   return request.get(`/materials/${materialId}/pages`)
 }
 
-export type ImageIntegrityStatus = 'ready' | 'partial' | 'missing' | 'unsupported'
+export type ImageIntegrityStatus = 'ready' | 'partial' | 'missing' | 'unsupported' | 'page_fallback_ready'
 
 export interface ImageIntegrityResult {
   material_id: number
   total: number
   ready: number
   missing: number
+  page_assets: number
+  page_assets_ready: number
+  expected_pages: number
+  ready_pages: number
+  missing_pages: number
   status: string
 }
 
@@ -101,6 +106,17 @@ export interface ReextractResult {
 
 export function reextractImages(materialId: number): AxiosPromise<ReextractResult> {
   return request.post(`/materials/${materialId}/images/reextract`)
+}
+
+export interface PageAssetRebuildResult {
+  expected_pages: number
+  ready_pages: number
+  missing_pages: number
+  status: string
+}
+
+export function rebuildPageAssets(materialId: number): AxiosPromise<PageAssetRebuildResult> {
+  return request.post(`/materials/${materialId}/page-assets/rebuild`)
 }
 
 export type ParseJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'

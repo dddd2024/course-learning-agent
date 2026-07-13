@@ -47,17 +47,33 @@ def _page_asset_ready(asset: MaterialPageAsset) -> bool:
 
 
 def image_integrity(db: Session, material: Material) -> dict:
-    rows = db.query(MaterialImage).filter(MaterialImage.material_id == material.id).all()
-    assets = db.query(MaterialPageAsset).filter(
-        MaterialPageAsset.material_id == material.id,
-        MaterialPageAsset.material_version_id == material.active_version_id,
-    ).all() if material.active_version_id else []
+    if material.active_version_id:
+        rows = db.query(MaterialImage).filter(
+            MaterialImage.material_id == material.id,
+            MaterialImage.material_version_id == material.active_version_id,
+        ).all()
+        assets = db.query(MaterialPageAsset).filter(
+            MaterialPageAsset.material_id == material.id,
+            MaterialPageAsset.material_version_id == material.active_version_id,
+        ).all()
+    else:
+        rows = db.query(MaterialImage).filter(
+            MaterialImage.material_id == material.id,
+        ).all()
+        assets = []
     ready = sum(image_state(row)[0] == "ready" for row in rows)
     total = len(rows)
     missing = total - ready
     page_ready = sum(_page_asset_ready(asset) for asset in assets)
-    if assets and page_ready == len(assets) and (total == 0 or missing > 0):
+    page_total = len(assets)
+    page_missing = page_total - page_ready
+    # page_fallback_ready requires full page coverage: every page asset
+    # must be ready, not just a subset.
+    page_fallback_ready = page_total > 0 and page_ready == page_total
+    if page_fallback_ready and (total == 0 or missing > 0):
         status = "page_fallback_ready"
+    elif total == 0 and page_total == 0:
+        status = "missing"
     elif total == 0:
         status = "missing"
     elif missing == 0:
@@ -66,7 +82,18 @@ def image_integrity(db: Session, material: Material) -> dict:
         status = "partial"
     else:
         status = "missing"
-    return {"material_id": material.id, "total": total, "ready": ready, "missing": missing, "page_assets": len(assets), "page_assets_ready": page_ready, "status": status}
+    return {
+        "material_id": material.id,
+        "total": total,
+        "ready": ready,
+        "missing": missing,
+        "page_assets": page_total,
+        "page_assets_ready": page_ready,
+        "expected_pages": page_total,
+        "ready_pages": page_ready,
+        "missing_pages": page_missing,
+        "status": status,
+    }
 
 
 def reextract_images(
@@ -83,6 +110,10 @@ def reextract_images(
     The parser supplies a private staging directory with ``commit=False`` so a
     cancellation cannot publish new image metadata before the corresponding
     material version is activated.
+
+    V7.5.1-04: Only deletes and rebuilds images for the target version,
+    not all versions. This prevents old-version images from being
+    accidentally removed when re-extracting for the current version.
     """
     if material.file_type.lower() != "pdf":
         return {"material_id": material.id, "status": "forbidden", "code": "IMAGE_EXTRACTION_UNSUPPORTED", "found": 0, "extracted": 0}
@@ -93,8 +124,16 @@ def reextract_images(
         return {"material_id": material.id, "status": "missing", "code": "MATERIAL_FILE_MISSING", "found": 0, "extracted": 0}
     extracted = extract_images_from_pdf(str(source))
     found = len(extracted)
-    db.query(MaterialImage).filter(MaterialImage.material_id == material.id).delete(synchronize_session=False)
-    chunks = db.query(MaterialChunk).filter(MaterialChunk.material_id == material.id, MaterialChunk.is_active == 1).all()
+    target_version_id = material_version_id or material.active_version_id
+    # V7.5.1-04: Only delete images for the target version, not all versions.
+    db.query(MaterialImage).filter(
+        MaterialImage.material_id == material.id,
+        MaterialImage.material_version_id == target_version_id,
+    ).delete(synchronize_session=False)
+    chunks = db.query(MaterialChunk).filter(
+        MaterialChunk.material_id == material.id,
+        MaterialChunk.is_active == 1,
+    ).all()
     page_to_chunk = {}
     for chunk in chunks:
         if chunk.page_no:
@@ -113,7 +152,7 @@ def reextract_images(
         full_path = image_dir / filename
         full_path.write_bytes(image.image_bytes)
         db.add(MaterialImage(
-            material_id=material.id, material_version_id=material_version_id or material.active_version_id,
+            material_id=material.id, material_version_id=target_version_id,
             course_id=material.course_id, chunk_id=page_to_chunk.get(image.page_no), page_no=image.page_no,
             image_filename=filename, image_path=str(full_path.relative_to(Path(settings.UPLOAD_DIR))).replace("\\", "/"),
             width=image.width, height=image.height, format=image.format,

@@ -34,7 +34,7 @@ class TestExecutionState:
     def test_state_is_valid_json_with_in_progress(self):
         """执行状态文件是合法 JSON 且 overall_status == in_progress。"""
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-        assert data["version"] in ("v7.4.2", "v7.4.3", "v7.4.4", "v7.5.0")
+        assert data["version"] in ("v7.4.2", "v7.4.3", "v7.4.4", "v7.5.0", "v7.5.1")
         assert data["overall_status"] in ("in_progress", "verified_locally")
         if data["overall_status"] == "in_progress":
             assert data.get("local_closure") is None
@@ -47,6 +47,8 @@ class TestExecutionState:
             "remaining", "next_task", "commits",
         }
         for task_id, task_data in data["tasks"].items():
+            if not task_id.startswith("V7.4.2"):
+                continue
             missing = required_fields - set(task_data.keys())
             assert not missing, f"{task_id} missing fields: {missing}"
 
