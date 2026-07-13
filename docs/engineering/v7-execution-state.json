@@ -3,31 +3,69 @@
   "base_commit": "6b65d0a77bf0727c794f5d743042f7163145ef8d",
   "branch": "codex/v7-4-1-critical-gap-closure",
   "started_at": "2026-07-13T00:00:00+08:00",
-  "overall_status": "in_progress",
-  "current_task": "V7.4.1-01",
+  "overall_status": "verified_locally",
+  "current_task": null,
   "remote_ci_required": false,
   "remote_ci_deferred_to": "V7.6",
   "tasks": {
     "V7.4.1-00": {
       "status": "done",
+      "commits": ["fix(v7.4.1): rebuild corrupted execution state as valid JSON"],
+      "tests_run": [{"command": "pytest test_v7_4_1_execution_state.py", "exit_code": 0, "result": "5 passed"}]
+    },
+    "V7.4.1-01": {
+      "status": "done",
+      "commits": ["fix(v7.4.1): make page migration verifiably lossless"],
+      "tests_run": [{"command": "pytest test_v7_4_1_page_migration_integrity.py", "exit_code": 0, "result": "9 passed"}]
+    },
+    "V7.4.1-02": {
+      "status": "done",
+      "commits": ["fix(v7.4.1): chunk boundary and provenance edge cases"],
+      "tests_run": [{"command": "pytest test_v7_4_1_chunk_edge_cases.py", "exit_code": 0, "result": "9 passed"}]
+    },
+    "V7.4.1-03": {
+      "status": "done",
+      "commits": ["fix(v7.4.1): propagate quiz generation contract to LLM prompt"],
+      "tests_run": [{"command": "pytest test_v7_4_1_quiz_contract.py", "exit_code": 0, "result": "5 passed"}]
+    },
+    "V7.4.1-04": {
+      "status": "done",
+      "commits": ["test(v7.4.1): quiz submission atomic transaction verification"],
+      "tests_run": [{"command": "pytest test_v7_4_1_quiz_atomic.py", "exit_code": 0, "result": "5 passed"}]
+    },
+    "V7.4.1-05": {
+      "status": "done",
+      "commits": ["test(v7.4.1): multi-plan safe delete and reschedule diff"],
+      "tests_run": [{"command": "pytest test_v7_4_1_multi_plan_safety.py", "exit_code": 0, "result": "7 passed"}]
+    },
+    "V7.4.1-06": {
+      "status": "done",
+      "commits": ["feat(v7.4.1): KP generation history frontend closure"],
+      "tests_run": [{"command": "vitest run tests/unit/kp-history.spec.ts", "exit_code": 0, "result": "4 passed"}]
+    },
+    "V7.4.1-07": {
+      "status": "done",
+      "commits": ["test(v7.4.1): real browser E2E verification"],
+      "evidence": ["Login with test/test1234 verified", "KP generation history displays in OutlineView", "Regenerate dialog says 归档 not 删除", "Multi-plan lifecycle (create/reschedule/delete) verified"]
+    },
+    "V7.4.1-08": {
+      "status": "done",
       "commits": [],
-      "changed_files": [
-        "docs/engineering/v7-execution-state.json",
-        "docs/engineering/v7-execution-state.v7.4.corrupted.json",
-        "backend/app/tests/test_v7_4_1_execution_state.py"
-      ],
       "tests_run": [
-        {
-          "command": "python -m pytest app/tests/test_v7_4_1_execution_state.py",
-          "exit_code": 0,
-          "result": "5 passed"
-        }
-      ],
-      "evidence": ["v7-execution-state.json is a single valid JSON object"],
-      "remaining": [],
-      "next_task": "V7.4.1-01"
+        {"command": "pytest app/tests/", "exit_code": 0, "result": "695 passed, 448 warnings in 304.96s"},
+        {"command": "vue-tsc --noEmit", "exit_code": 0, "result": "No errors"},
+        {"command": "vite build", "exit_code": 0, "result": "Built in 1.49s"}
+      ]
     }
   },
-  "local_checks": {},
-  "known_risks": []
+  "local_checks": {
+    "backend_tests": "695 passed",
+    "frontend_type_check": "passed",
+    "frontend_build": "passed",
+    "browser_e2e": "verified"
+  },
+  "known_risks": [
+    "Material parse requires separate worker process for background job queue",
+    "Mock LLM used for testing; real LLM integration deferred to V7.6"
+  ]
 }
