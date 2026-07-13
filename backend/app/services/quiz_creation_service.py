@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -30,6 +32,56 @@ _DEFAULT_PASS_SCORE = 60
 _DEFAULT_QUESTION_TYPES = ["choice", "true_false", "short_answer"]
 _DEFAULT_DIFFICULTY_DISTRIBUTION = {"easy": 3, "medium": 5, "hard": 2}
 _MAX_RETRIES = 2
+
+
+@dataclass(frozen=True)
+class QuizContract:
+    question_count: int
+    question_types: tuple[str, ...]
+    difficulty_distribution: MappingProxyType
+    pass_score: int
+
+
+def resolve_quiz_contract(question_count: int, question_types: list[str] | None, difficulty_distribution: dict[str, int] | None, pass_score: int) -> QuizContract:
+    """Resolve every creation input once, before any provider is invoked."""
+    if question_count < 1:
+        raise BusinessException(message="题目数量必须大于 0", status_code=422)
+    if not 0 <= pass_score <= 100:
+        raise BusinessException(message="及格线必须在 0 到 100 之间", status_code=422)
+    types = tuple(question_types or _DEFAULT_QUESTION_TYPES)
+    allowed = {"choice", "multiple_choice", "true_false", "short_answer"}
+    if not types or any(item not in allowed for item in types):
+        raise BusinessException(message="题型不合法", status_code=422)
+    if difficulty_distribution is None:
+        # Deterministic round-robin allocation keeps the three bands summing
+        # exactly to question_count for every requested size.
+        distribution = {band: 0 for band in ("easy", "medium", "hard")}
+        for index in range(question_count):
+            distribution[("easy", "medium", "hard")[index % 3]] += 1
+    else:
+        distribution = {band: int(difficulty_distribution.get(band, 0)) for band in ("easy", "medium", "hard")}
+        if any(value < 0 for value in distribution.values()) or sum(distribution.values()) != question_count:
+            raise BusinessException(message="难度分布总和必须等于题目数量", status_code=422)
+    return QuizContract(question_count, types, MappingProxyType(distribution), pass_score)
+
+
+def _item_identity(item: dict) -> tuple:
+    """Use normalized stem, knowledge point and evidence for cross-round dedupe."""
+    evidence = tuple(sorted(str(entry.get("chunk_id")) for entry in item.get("source_evidence", []) if isinstance(entry, dict)))
+    return (re.sub(r"\s+", " ", str(item.get("question_text", "")).strip().lower()), item.get("knowledge_point_id"), evidence)
+
+
+def _is_acceptable_item(item: dict, contract: QuizContract, remaining: dict[str, int], seen: set[tuple]) -> bool:
+    identity = _item_identity(item)
+    band = _difficulty_band(item)
+    return bool(
+        item.get("question_type") in contract.question_types
+        and remaining.get(band, 0) > 0
+        and item.get("knowledge_point_id") is not None
+        and item.get("source_evidence")
+        and identity[0]
+        and identity not in seen
+    )
 
 
 class QuizCreationService:
@@ -75,6 +127,11 @@ class QuizCreationService:
             QuizConstraintException: If constraints are not satisfied.
             BusinessException: If no knowledge points or evidence.
         """
+        contract = resolve_quiz_contract(question_count, question_types, difficulty_distribution, pass_score)
+        question_count = contract.question_count
+        question_types = list(contract.question_types)
+        difficulty_distribution = dict(contract.difficulty_distribution)
+        pass_score = contract.pass_score
         if not knowledge_points:
             raise BusinessException(
                 message="课程暂无知识点，请先生成知识点",
@@ -119,67 +176,39 @@ class QuizCreationService:
             active_config = get_active_config(db, user_id)
             user_config = build_user_config(active_config) if active_config else None
 
-        # Generate quiz items
-        # V7.4.1-03: forward the requested question_types and
-        # difficulty_distribution so they propagate into the LLM prompt.
-        quiz_output = generate_quiz(
-            db=db,
-            user_id=user_id,
-            course_id=course_id,
-            knowledge_points=knowledge_points,
-            course_name=course_name,
-            question_count=question_count,
-            question_types=question_types,
-            difficulty_distribution=difficulty_distribution,
-            user_config=user_config,
-        )
-
-        insufficient_evidence = quiz_output.get("insufficient_evidence", False)
-        items = quiz_output.get("items") or []
-        reasons = list(quiz_output.get("drop_reasons") or [])
-
-        # P0-03: Always enforce strict count — reject partial quizzes
-        if not items:
-            raise QuizConstraintException(
-                requested_count=question_count,
-                valid_count=0,
-                drop_reasons=reasons or ["insufficient_evidence"],
+        # The service owns gap retries. Every retry receives only the remaining
+        # count and difficulty vector; accepted items from an earlier round are
+        # never discarded or sent back through the provider.
+        items: list[dict] = []
+        seen: set[tuple] = set()
+        remaining = dict(contract.difficulty_distribution)
+        reasons: list[str] = []
+        quiz_output: dict = {}
+        for attempt in range(QuizCreationService.MAX_RETRIES + 1):
+            requested_count = sum(remaining.values())
+            if not requested_count:
+                break
+            quiz_output = generate_quiz(
+                db=db, user_id=user_id, course_id=course_id, knowledge_points=knowledge_points,
+                course_name=course_name, question_count=requested_count,
+                question_types=question_types, difficulty_distribution=remaining, user_config=user_config,
             )
-        if len(items) != question_count:
+            reasons.extend(quiz_output.get("drop_reasons") or [])
+            accepted = 0
+            for candidate in quiz_output.get("items") or []:
+                if _is_acceptable_item(candidate, contract, remaining, seen):
+                    band = _difficulty_band(candidate)
+                    seen.add(_item_identity(candidate))
+                    remaining[band] -= 1
+                    candidate["order_index"] = len(items)
+                    items.append(candidate)
+                    accepted += 1
+            logger.info("quiz contract retry attempt=%d deficit=%s retained=%d accepted=%d", attempt, remaining, len(items), accepted)
+        if sum(remaining.values()):
             raise QuizConstraintException(
-                requested_count=question_count,
-                valid_count=len(items),
-                drop_reasons=reasons or [
-                    "insufficient_evidence" if insufficient_evidence else "insufficient_questions"
-                ],
+                requested_count=question_count, valid_count=len(items),
+                drop_reasons=list(dict.fromkeys(reasons or ["contract_deficit_after_retries"])),
             )
-
-        # Validate question types if constraint is set
-        if question_types is not None and any(
-            item.get("question_type") not in question_types for item in items
-        ):
-            raise QuizConstraintException(
-                requested_count=question_count,
-                valid_count=0,
-                drop_reasons=["question_type_constraint"],
-            )
-
-        # Validate difficulty distribution if constraint is set
-        if difficulty_distribution is not None:
-            observed = {
-                name: sum(_difficulty_band(item) == name for item in items)
-                for name in ("easy", "medium", "hard")
-            }
-            requested = {
-                name: difficulty_distribution.get(name, 0)
-                for name in observed
-            }
-            if observed != requested:
-                raise QuizConstraintException(
-                    requested_count=question_count,
-                    valid_count=0,
-                    drop_reasons=["difficulty_distribution_constraint"],
-                )
 
         # Persist Quiz
         quiz = Quiz(
