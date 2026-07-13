@@ -373,7 +373,12 @@ def _split_fragments(fragments: list[dict], split_pos: int) -> tuple[list[dict],
     return first, second
 
 
-def validate_chunk_provenance(chunks: list[dict], block_index: dict[str, DocumentBlock]) -> list[str]:
+def validate_chunk_provenance(
+    chunks: list[dict],
+    block_index: dict[str, DocumentBlock],
+    *,
+    max_length: int | None = None,
+) -> list[str]:
     """Return character-level provenance errors for a set of produced chunks.
 
     This intentionally validates the production fragment representation rather
@@ -381,15 +386,34 @@ def validate_chunk_provenance(chunks: list[dict], block_index: dict[str, Documen
     """
     errors: list[str] = []
     for chunk in chunks:
+        if max_length is not None and len(chunk.get("text", "")) > max_length:
+            errors.append(
+                f"chunk {chunk['chunk_index']} exceeds max length {max_length}"
+            )
         for fragment in chunk.get("source_fragments_json", []):
             block = block_index.get(fragment["block_id"])
             if block is None:
                 errors.append(f"unknown block {fragment['block_id']}")
                 continue
+            if not (
+                0 <= fragment["source_start"] <= fragment["source_end"] <= len(block.text)
+            ):
+                errors.append(f"chunk {chunk['chunk_index']} fragment {fragment['block_id']} has invalid source offsets")
+                continue
+            if not (
+                0 <= fragment["text_start"] <= fragment["text_end"] <= len(chunk.get("text", ""))
+            ):
+                errors.append(f"chunk {chunk['chunk_index']} fragment {fragment['block_id']} has invalid text offsets")
+                continue
             source = block.text[fragment["source_start"]:fragment["source_end"]]
             rendered = chunk["text"][fragment["text_start"]:fragment["text_end"]]
             if source != rendered:
                 errors.append(f"chunk {chunk['chunk_index']} fragment {fragment['block_id']} does not map exactly")
+    for previous, current in zip(chunks, chunks[1:]):
+        if _is_protected_at_boundary(previous.get("text", ""), current.get("text", "")):
+            errors.append(
+                f"protected term split between chunks {previous['chunk_index']} and {current['chunk_index']}"
+            )
     return errors
 
 
@@ -446,27 +470,78 @@ def _adjust_protected_split(chunks: list[dict], idx: int, max_length: int) -> No
     start_text = chunks[idx + 1]["text"]
     for term in _PROTECTED_TERMS:
         for sp in range(1, len(term)):
-            suffix = term[-sp:]
-            prefix = term[:-sp]
-            if not (end_text.endswith(suffix) and start_text.startswith(prefix)):
+            left = term[:sp]
+            right = term[sp:]
+            if not (end_text.endswith(left) and start_text.startswith(right)):
                 continue
-            # Option A — move suffix to the start of the next chunk so
+            # Option A — move the left term segment to the next chunk so
             # the whole term lives in chunks[idx + 1].
-            new_end_a = end_text[:len(end_text) - len(suffix)] if suffix else end_text
-            new_start_a = suffix + start_text
-            # Option B — move prefix to the end of the previous chunk so
+            new_end_a = end_text[:len(end_text) - len(left)] if left else end_text
+            new_start_a = left + start_text
+            # Option B — move the right term segment to the previous chunk so
             # the whole term lives in chunks[idx].
-            new_end_b = end_text + prefix
-            new_start_b = start_text[len(prefix):] if prefix else start_text
+            new_end_b = end_text + right
+            new_start_b = start_text[len(right):] if right else start_text
 
             a_ok = len(new_end_a) <= max_length and len(new_start_a) <= max_length
             b_ok = len(new_end_b) <= max_length and len(new_start_b) <= max_length
             if a_ok:
-                moved_text, moved_fragments = _take_suffix(chunks[idx], len(suffix))
+                moved_text, moved_fragments = _take_suffix(chunks[idx], len(left))
                 _prepend(chunks[idx + 1], moved_text, moved_fragments)
             elif b_ok:
-                moved_text, moved_fragments = _take_prefix(chunks[idx + 1], len(prefix))
+                moved_text, moved_fragments = _take_prefix(chunks[idx + 1], len(right))
                 _append(chunks[idx], moved_text, moved_fragments)
+            else:
+                # Both neighbouring chunks are full enough that moving only a
+                # term side would overflow. Re-split their contiguous source
+                # text into two or more chunks. The splitter backs up before
+                # the protected term, so the term is preserved in one piece.
+                combined_text = end_text + start_text
+                combined_fragments = list(chunks[idx].get("source_fragments_json", []))
+                offset = len(end_text)
+                combined_fragments.extend(
+                    _make_fragment(
+                        fragment["block_id"],
+                        fragment.get("page_no", 0),
+                        fragment["source_start"],
+                        fragment["source_end"],
+                        fragment["text_start"] + offset,
+                        fragment["text_end"] + offset,
+                        fragment.get("kind", "source"),
+                    )
+                    for fragment in chunks[idx + 1].get("source_fragments_json", [])
+                )
+                replacement: list[dict] = []
+                remaining_text = combined_text
+                remaining_fragments = combined_fragments
+                while len(remaining_text) > max_length:
+                    split_pos, split_reason = _find_safe_split_point(
+                        remaining_text, max_length,
+                    )
+                    first_fragments, remaining_fragments = _split_fragments(
+                        remaining_fragments, split_pos,
+                    )
+                    replacement.append((remaining_text[:split_pos], first_fragments, split_reason))
+                    remaining_text = remaining_text[split_pos:]
+                replacement.append((remaining_text, remaining_fragments, "hard_limit_fallback"))
+
+                replacement_chunks: list[dict] = []
+                for text, fragments, reason in replacement:
+                    page_numbers = {fragment["page_no"] for fragment in fragments}
+                    replacement_chunks.append({
+                        "text": text,
+                        "title": chunks[idx]["title"] or chunks[idx + 1]["title"],
+                        "page_start": min(page_numbers) if page_numbers else None,
+                        "page_end": max(page_numbers) if page_numbers else None,
+                        "source_block_ids": list(dict.fromkeys(
+                            fragment["block_id"] for fragment in fragments
+                        )),
+                        "source_fragments_json": fragments,
+                        "split_reason": reason,
+                        "chunk_index": 0,
+                        "chunker_version": CHUNKER_VERSION,
+                    })
+                chunks[idx:idx + 2] = replacement_chunks
             return
 
 
@@ -513,6 +588,54 @@ def _build_line_source_map(
     return line_sources
 
 
+def _build_table_source_ranges(
+    table_block_info: list[tuple[str, int, str, str]],
+) -> list[tuple[int, int, str, int]]:
+    """Map absolute table-text intervals to source block intervals.
+
+    ``table_text`` is formed by concatenating each original block plus one
+    synthetic separator newline.  The ranges deliberately exclude those
+    separator characters because they do not exist in any source block.
+    """
+    ranges: list[tuple[int, int, str, int]] = []
+    cursor = 0
+    for block_id, page_no, block_text, block_text_with_separator in table_block_info:
+        ranges.append((cursor, cursor + len(block_text), block_id, page_no))
+        cursor += len(block_text_with_separator)
+    return ranges
+
+
+def _table_range_fragments(
+    ranges: list[tuple[int, int, str, int]],
+    absolute_start: int,
+    absolute_end: int,
+    text_start: int = 0,
+    kind: str = "source",
+) -> list[dict]:
+    """Build exact fragments for a table-text absolute interval.
+
+    Each returned fragment is computed from offsets, never from a text search.
+    Therefore duplicate cells, repeated rows, and long headers cannot be
+    silently attributed to the first matching source block.
+    """
+    fragments: list[dict] = []
+    for range_start, range_end, block_id, page_no in ranges:
+        overlap_start = max(absolute_start, range_start)
+        overlap_end = min(absolute_end, range_end)
+        if overlap_start >= overlap_end:
+            continue
+        fragments.append(_make_fragment(
+            block_id,
+            page_no,
+            overlap_start - range_start,
+            overlap_end - range_start,
+            text_start + overlap_start - absolute_start,
+            text_start + overlap_end - absolute_start,
+            kind,
+        ))
+    return fragments
+
+
 def _split_table_with_fragments(
     table_text: str,
     table_block_info: list[tuple[str, int, str, str]],
@@ -531,6 +654,7 @@ def _split_table_with_fragments(
 
     header = lines[0]
     header_len = len(header)
+    source_ranges = _build_table_source_ranges(table_block_info)
 
     # Build line-to-source mapping
     line_sources = _build_line_source_map(table_text, table_block_info)
@@ -543,32 +667,14 @@ def _split_table_with_fragments(
     if len(header) > max_length:
         full_text = table_text.strip()
         pieces = _split_long_line(full_text, max_length)
-        result = []
-        text_offset = 0
+        result: list[tuple[str, list[dict]]] = []
+        absolute_start = 0
         for piece in pieces:
-            # Find source for this piece by matching text
-            frags = []
-            piece_start = 0
-            for src_bid, src_page, src_ss, src_se in line_sources:
-                src_text = None
-                for bid, bpage, btxt, btext in table_block_info:
-                    if bid == src_bid:
-                        src_text = btxt[src_ss:src_se]
-                        break
-                if src_text and src_text in piece:
-                    frag_ts = piece.index(src_text)
-                    frag_te = frag_ts + len(src_text)
-                    frags.append(_make_fragment(
-                        src_bid, src_page, src_ss, src_se,
-                        frag_ts, frag_te, "source",
-                    ))
-            if not frags:
-                frags.append(_make_fragment(
-                    header_src[0], header_src[1],
-                    header_src[2], min(header_src[3], len(piece)),
-                    0, len(piece), "source",
-                ))
-            result.append((piece, frags))
+            absolute_end = absolute_start + len(piece)
+            result.append((piece, _table_range_fragments(
+                source_ranges, absolute_start, absolute_end,
+            )))
+            absolute_start = absolute_end
         return result
 
     header_prefix = header + "\n"
@@ -612,13 +718,16 @@ def _split_table_with_fragments(
             sub_lines = _split_long_line(line, max_length)
             sub_offset = 0  # Offset within the line's source
             for sub in sub_lines:
-                if not current_text:
+                if not current_text and len(header_prefix) + len(sub) + 1 <= max_length:
                     current_text = header_prefix
                     current_frags = [_make_header_frag("repeated_header")]
                 if len(current_text) + len(sub) + 1 > max_length and current_text.strip():
                     result.append((current_text.rstrip("\n"), current_frags))
-                    current_text = header_prefix
-                    current_frags = [_make_header_frag("repeated_header")]
+                    current_text = ""
+                    current_frags = []
+                    if len(header_prefix) + len(sub) + 1 <= max_length:
+                        current_text = header_prefix
+                        current_frags = [_make_header_frag("repeated_header")]
                 sub_start = len(current_text)
                 current_text += sub + "\n"
                 current_frags.append(_make_fragment(
@@ -628,13 +737,16 @@ def _split_table_with_fragments(
                 ))
                 sub_offset += len(sub)
         else:
-            if not current_text:
+            if not current_text and len(header_prefix) + len(line) + 1 <= max_length:
                 current_text = header_prefix
                 current_frags = [_make_header_frag("repeated_header")]
             if len(current_text) + len(line) + 1 > max_length and current_text.strip():
                 result.append((current_text.rstrip("\n"), current_frags))
-                current_text = header_prefix
-                current_frags = [_make_header_frag("repeated_header")]
+                current_text = ""
+                current_frags = []
+                if len(header_prefix) + len(line) + 1 <= max_length:
+                    current_text = header_prefix
+                    current_frags = [_make_header_frag("repeated_header")]
             line_start = len(current_text)
             current_text += line + "\n"
             current_frags.append(_make_fragment(
@@ -669,6 +781,14 @@ def semantic_chunk(
     """
     if not pages:
         return []
+    if max_length <= 0:
+        raise ValueError("max_length must be positive")
+    too_long_terms = [term for term in _PROTECTED_TERMS if len(term) > max_length]
+    if too_long_terms:
+        raise ValueError(
+            "max_length cannot be smaller than protected terms: "
+            + ", ".join(too_long_terms)
+        )
 
     chunks: list[dict] = []
     chunk_index = 0
@@ -997,7 +1117,8 @@ def semantic_chunk(
         _flush("paragraph")
 
     # Post-processing: verify no protected terms are split across boundaries
-    for idx in range(len(chunks) - 1):
+    idx = 0
+    while idx < len(chunks) - 1:
         end_text = chunks[idx]["text"]
         start_text = chunks[idx + 1]["text"]
         if _is_protected_at_boundary(end_text, start_text):
@@ -1006,6 +1127,7 @@ def semantic_chunk(
             # protected term when that would overflow it.
             if len(merged_text) > max_length:
                 _adjust_protected_split(chunks, idx, max_length)
+                idx += 1
                 continue
             merged_ids = list(chunks[idx]["source_block_ids"]) + list(chunks[idx + 1]["source_block_ids"])
             merged_frags = list(chunks[idx].get("source_fragments_json", []))
@@ -1041,9 +1163,11 @@ def semantic_chunk(
                 "chunker_version": CHUNKER_VERSION,
             }
             del chunks[idx + 1]
-            for j in range(len(chunks)):
-                chunks[j]["chunk_index"] = j
-            break
+            continue
+        idx += 1
+
+    for chunk_index, chunk in enumerate(chunks):
+        chunk["chunk_index"] = chunk_index
 
     return chunks
 
