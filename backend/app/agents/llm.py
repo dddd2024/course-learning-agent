@@ -604,6 +604,7 @@ def _mock_planner(prompt: str = "") -> dict[str, Any]:
 
     # Build tasks spread across the available courses
     task_templates = [
+        ("学习课程资料", "learn", 45, 4, "阅读并确认课程资料的核心段落。"),
         ("复习核心概念", "review", 60, 5, "能口述核心概念并举例。"),
         ("完成配套测验", "quiz", 45, 4, "测验正确率 ≥ 80%。"),
         ("梳理知识框架", "review", 90, 4, "能画出知识结构图。"),
@@ -686,7 +687,9 @@ def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
     questions to meet the demand (cycling through chunks if needed).
     """
     # Parse requested question count from prompt
-    count_match = re.search(r"生成\s*(\d+)\s*道", prompt)
+    # The prompt template wraps the requested count in Markdown backticks
+    # (``生成 `5` 道``); accept that as well as plain numeric wording.
+    count_match = re.search(r"生成\s*[`'\"]?(\d+)[`'\"]?\s*道", prompt)
     requested_count = int(count_match.group(1)) if count_match else 5
 
     # Parse evidence chunks from the prompt.
@@ -822,6 +825,61 @@ def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
                 ],
             })
 
+    # The production QuizCreationService enforces the requested contract.
+    # Keep the deterministic mock an honest provider by reflecting the
+    # prompt's explicit type and difficulty requirements instead of always
+    # returning medium mixed questions.
+    type_match = re.search(r"仅生成以下题型：(.+?)。", prompt)
+    requested_types = [
+        name for name in ("choice", "multiple_choice", "true_false", "short_answer")
+        if type_match and name in type_match.group(1)
+    ]
+    dist_match = re.search(r"(\d+)\s+easy,\s*(\d+)\s+medium,\s*(\d+)\s+hard", prompt)
+    bands = (
+        ["easy"] * int(dist_match.group(1))
+        + ["medium"] * int(dist_match.group(2))
+        + ["hard"] * int(dist_match.group(3))
+        if dist_match else ["medium"] * requested_count
+    )
+    if requested_types:
+        # Keep the generated payload compatible with the requested type.  Merely
+        # relabelling a choice or short-answer item as true/false loses its
+        # answer/options contract and is rightly rejected by the verifier.
+        compatible = {
+            "choice": [q for q in questions if q["question_type"] == "single_choice"],
+            "true_false": [q for q in questions if q["question_type"] == "true_false"],
+            "short_answer": [q for q in questions if q["question_type"] == "short_answer"],
+        }
+        selected: list[dict[str, Any]] = []
+        used_candidate_positions: dict[str, int] = {}
+        for index in range(requested_count):
+            desired = requested_types[index % len(requested_types)]
+            candidates = compatible.get(desired)
+            # The mock has no evidence-safe multiple-choice generator.  Use a
+            # compatible requested type instead; the service enforces that
+            # every emitted item is allowed, not that every allowed checkbox
+            # must appear in a tiny quiz.
+            if not candidates:
+                candidates = compatible["true_false"] or compatible["choice"] or compatible["short_answer"]
+            if not candidates:
+                break
+            candidate_kind = next(kind for kind, rows in compatible.items() if rows is candidates)
+            position = used_candidate_positions.get(candidate_kind, 0)
+            item = dict(candidates[position % len(candidates)])
+            # Reused evidence can still support independently numbered drills.
+            # Keep the factual statement after the colon untouched so the
+            # grounding verifier can match it exactly.
+            if any(item["stem"] == prior["stem"] for prior in selected):
+                if "：" in item["stem"]:
+                    item["stem"] = item["stem"].replace("：", f"（练习 {index + 1}）：", 1)
+                else:
+                    item["stem"] = f"{item['stem']}（练习 {index + 1}）"
+            selected.append(item)
+            used_candidate_positions[candidate_kind] = position + 1
+        questions = selected
+
+    for index, question in enumerate(questions[:requested_count]):
+        question["difficulty"] = bands[index] if index < len(bands) else "medium"
     return {"title": "课程资料测验", "questions": questions[:requested_count]}
 
 

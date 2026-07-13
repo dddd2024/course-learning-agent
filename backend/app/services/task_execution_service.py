@@ -280,12 +280,27 @@ def retry_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
     task = _get_owned_task(db, task_id, user_id)
     if task.task_type != "quiz":
         raise BusinessException(message="只有测验任务可以重新练习", status_code=422)
-    ensure_target_spec(db, task)
-    new_id = _create_quiz_for_task(db, task, user_id)
-    # The state machine owns the completed -> in_progress transition and
-    # records the previous quiz in target_spec_json as audit history.
-    transition_task(db, task, "retry", user_id, commit=False)
     spec = ensure_target_spec(db, task)
+    if task.execution_status not in {"completed", "in_progress"}:
+        raise BusinessException(message="请先开始测验任务后再重试", status_code=409)
+    new_id = _create_quiz_for_task(db, task, user_id)
+    # A passed task follows the ordinary completed -> in_progress transition.
+    # A failed verification deliberately remains in_progress, so it still
+    # needs a fresh quiz without pretending the task had completed first.
+    if task.execution_status == "completed":
+        transition_task(db, task, "retry", user_id, commit=False)
+        spec = ensure_target_spec(db, task)
+    else:
+        history = list(spec.get("history_quiz_ids") or [])
+        if task.target_id is not None:
+            history.append(task.target_id)
+        spec["history_quiz_ids"] = list(dict.fromkeys(history))
+        task.target_spec_json = json.dumps(spec, ensure_ascii=False)
+        transition_task(
+            db, task, "record_event", user_id,
+            evidence={"event_type": "task_retry", "history_quiz_ids": spec["history_quiz_ids"]},
+            commit=False,
+        )
     history = list(spec.get("history_quiz_ids") or [])
     task.target_type, task.target_id = "quiz", new_id
     db.commit()

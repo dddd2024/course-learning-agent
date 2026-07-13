@@ -26,4 +26,14 @@ describe('QuizAnswerControl', () => {
     await wrapper.findAll('input[type="checkbox"]')[0].setValue(true)
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([['A']])
   })
+
+  it('renders canonical true/false options when the API item has none', async () => {
+    const wrapper = mount(QuizAnswerControl, {
+      props: { item: { id: 3, question_type: 'true_false', options: [] }, modelValue: '' },
+    })
+
+    expect(wrapper.findAll('input[type="radio"]')).toHaveLength(2)
+    await wrapper.find('input[value="true"]').setValue()
+    expect(wrapper.emitted('update:modelValue')?.[0]).toEqual(['true'])
+  })
 })

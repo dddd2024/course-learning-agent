@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { QuizItem } from '../../api/quiz'
 
 const props = defineProps<{
@@ -9,6 +10,19 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: string | string[]]
 }>()
+
+// True/false items have no meaningful distractor list in storage.  Older
+// providers also persist an empty options array, so render the two canonical
+// values here rather than leaving an otherwise answerable item blank.
+const answerOptions = computed(() => {
+  if (props.item.question_type === 'true_false' && props.item.options.length === 0) {
+    return [
+      { label: '正确', text: '正确', value: 'true' },
+      { label: '错误', text: '错误', value: 'false' },
+    ]
+  }
+  return props.item.options
+})
 
 function updateMultiple(value: string, checked: boolean) {
   const values = Array.isArray(props.modelValue) ? [...props.modelValue] : []
@@ -22,7 +36,7 @@ function updateMultiple(value: string, checked: boolean) {
 <template>
   <div class="quiz-answer-control">
     <template v-if="item.question_type === 'choice' || item.question_type === 'true_false'">
-      <label v-for="option in item.options" :key="option.value" class="answer-option">
+      <label v-for="option in answerOptions" :key="option.value" class="answer-option">
         <input
           type="radio"
           :name="`quiz-question-${item.id}`"
@@ -34,7 +48,7 @@ function updateMultiple(value: string, checked: boolean) {
       </label>
     </template>
     <template v-else-if="item.question_type === 'multiple_choice'">
-      <label v-for="option in item.options" :key="option.value" class="answer-option">
+      <label v-for="option in answerOptions" :key="option.value" class="answer-option">
         <input
           type="checkbox"
           :value="option.value"

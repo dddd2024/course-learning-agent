@@ -490,6 +490,15 @@ def test_quiz_task_low_score_stays_in_progress(
         f"Expected pending after low score, got {task.status!r}"
     )
 
+    # A failed task has not completed, but it must still be able to create a
+    # fresh attempt without reusing the submitted quiz.
+    retry_result = retry_task(db_session, task.id, sample_user.id)
+    assert retry_result["quiz_id"] != quiz_id
+    assert quiz_id in retry_result["history_quiz_ids"]
+    db_session.refresh(task)
+    assert task.execution_status == "in_progress"
+    assert task.target_id == retry_result["quiz_id"]
+
 
 def test_quiz_submit_rolls_back_when_bound_task_transition_fails(
     db_session, sample_user, sample_course, monkeypatch

@@ -35,9 +35,11 @@ def _choose(rows: list[Any], title: str, used_ids: set[int]) -> Any | None:
     )
     candidate = ranked[0]
     candidate_tokens = _tokens(getattr(candidate, "title", "") or getattr(candidate, "filename", ""))
-    # Do not silently choose the first row when the task text has no
-    # meaningful overlap with the proposed target.
-    if wanted and not (wanted & candidate_tokens):
+    # A generic plan step can truthfully resolve to the only available
+    # course resource: there is no competing target to guess between.  With
+    # two or more candidates, however, keep the strict overlap requirement
+    # rather than silently selecting the first row.
+    if wanted and not (wanted & candidate_tokens) and len(rows) != 1:
         return None
     return candidate
 

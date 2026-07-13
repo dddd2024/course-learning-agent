@@ -220,11 +220,11 @@ function taskActionButton(task: PlanTask): { label: string; type: 'primary' | 's
   return { label: '开始', type: 'primary' }
 }
 
-/** Whether the task shows a "重新练习" button alongside "查看结果". */
+/** Whether a quiz task can produce a fresh attempt. */
 function canRetryTask(task: PlanTask): boolean {
-  return (
-    (task.execution_status === 'completed' || task.status === 'done') &&
-    task.task_type === 'quiz'
+  const failed = task.verification_result?.passed === false
+  return task.task_type === 'quiz' && (
+    task.execution_status === 'completed' || task.status === 'done' || failed
   )
 }
 
@@ -405,7 +405,7 @@ async function handleStartTask(task: PlanTask) {
 }
 
 async function handleRetryTask(task: PlanTask) {
-  // For completed quiz tasks: start a new quiz
+  // A failed in-progress task and a completed task both receive a fresh quiz.
   taskStarting.value = task.id
   try {
     const { data } = await retryTask(task.id)
