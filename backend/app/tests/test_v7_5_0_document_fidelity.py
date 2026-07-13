@@ -17,6 +17,7 @@ from app.retrieval.pdf_layout_parser import annotate_pdf_layout
 from app.retrieval.document_ir import DocumentBlock, DocumentPage
 from app.retrieval.semantic_chunker import semantic_chunk_document
 from app.services.material_image_service import image_integrity, reextract_images
+from app.services.material_parser import parse_with_retry
 
 
 def _two_page_pdf(path: Path) -> None:
@@ -146,3 +147,22 @@ def test_diagram_like_page_becomes_a_visual_summary_not_flattened_text() -> None
     assert chunks[0]["split_reason"] == "visual_page_summary"
     assert chunks[0]["is_indexable"] is False
     assert "原页视觉资产" in chunks[0]["text"]
+
+
+def test_real_pdf_parse_activates_complete_versioned_page_assets(db_session, sample_user, sample_course, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    source = tmp_path / "course-ppt.pdf"
+    _two_page_pdf(source)
+    material = Material(user_id=sample_user.id, course_id=sample_course.id, filename=source.name, file_type="pdf", file_path=source.name, status="uploaded")
+    db_session.add(material)
+    db_session.commit()
+
+    status, _ = parse_with_retry(db_session, material, sample_user.id, sleep_fn=lambda _: None)
+    db_session.refresh(material)
+    assets = db_session.query(MaterialPageAsset).filter_by(material_version_id=material.active_version_id).order_by(MaterialPageAsset.page_no).all()
+
+    assert status == material.status == "ready"
+    assert [asset.page_no for asset in assets] == [1, 2]
+    assert all(asset.render_status == "ready" for asset in assets)
+    assert all((tmp_path / asset.asset_path).read_bytes().startswith(b"\x89PNG") for asset in assets)
+    assert image_integrity(db_session, material)["page_assets_ready"] == 2
