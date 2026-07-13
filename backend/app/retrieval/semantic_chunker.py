@@ -296,17 +296,24 @@ def _build_chunk(
     adjusted_fragments = []
     if fragments:
         for frag in fragments:
-            start = frag["text_start"] - strip_offset
-            end = frag["text_end"] - strip_offset
+            original_start = frag["text_start"]
+            original_end = frag["text_end"]
+            start = original_start - strip_offset
+            end = original_end - strip_offset
             # Clamp to valid range
             start = max(0, min(start, stripped_len))
             end = max(0, min(end, stripped_len))
             if start < end:  # Only include non-empty fragments
+                # Stripping only removes characters at the two boundaries.
+                # Fragments represent source slices, so trim their source
+                # offsets by exactly the same amount (never proportionally).
+                left_trim = max(0, strip_offset - original_start)
+                right_trim = max(0, original_end - (strip_offset + stripped_len))
                 adjusted_fragments.append({
                     "block_id": frag["block_id"],
                     "page_no": frag.get("page_no", 0),
-                    "source_start": frag.get("source_start", 0),
-                    "source_end": frag.get("source_end", frag.get("text_end", end) - frag.get("text_start", 0) + frag.get("source_start", 0)),
+                    "source_start": frag.get("source_start", 0) + left_trim,
+                    "source_end": frag.get("source_end", frag.get("text_end", end) - frag.get("text_start", 0) + frag.get("source_start", 0)) - right_trim,
                     "text_start": start,
                     "text_end": end,
                     "kind": frag.get("kind", "source"),
@@ -366,6 +373,66 @@ def _split_fragments(fragments: list[dict], split_pos: int) -> tuple[list[dict],
     return first, second
 
 
+def validate_chunk_provenance(chunks: list[dict], block_index: dict[str, DocumentBlock]) -> list[str]:
+    """Return character-level provenance errors for a set of produced chunks.
+
+    This intentionally validates the production fragment representation rather
+    than a parallel test-only model.  It is useful in tests and debug tooling.
+    """
+    errors: list[str] = []
+    for chunk in chunks:
+        for fragment in chunk.get("source_fragments_json", []):
+            block = block_index.get(fragment["block_id"])
+            if block is None:
+                errors.append(f"unknown block {fragment['block_id']}")
+                continue
+            source = block.text[fragment["source_start"]:fragment["source_end"]]
+            rendered = chunk["text"][fragment["text_start"]:fragment["text_end"]]
+            if source != rendered:
+                errors.append(f"chunk {chunk['chunk_index']} fragment {fragment['block_id']} does not map exactly")
+    return errors
+
+
+def _replace_chunk(chunk: dict, text: str, fragments: list[dict]) -> None:
+    """Replace a chunk with fragments already aligned to *text* exactly."""
+    chunk["text"] = text
+    chunk["source_fragments_json"] = fragments
+    chunk["source_block_ids"] = list(dict.fromkeys(fragment["block_id"] for fragment in fragments))
+
+
+def _take_suffix(chunk: dict, count: int) -> tuple[str, list[dict]]:
+    split_at = len(chunk["text"]) - count
+    retained, moved = _split_fragments(chunk.get("source_fragments_json", []), split_at)
+    suffix = chunk["text"][split_at:]
+    _replace_chunk(chunk, chunk["text"][:split_at], retained)
+    return suffix, moved
+
+
+def _take_prefix(chunk: dict, count: int) -> tuple[str, list[dict]]:
+    moved, retained = _split_fragments(chunk.get("source_fragments_json", []), count)
+    prefix = chunk["text"][:count]
+    _replace_chunk(chunk, chunk["text"][count:], retained)
+    return prefix, moved
+
+
+def _append(chunk: dict, text: str, fragments: list[dict]) -> None:
+    offset = len(chunk["text"])
+    shifted = [_make_fragment(
+        fragment["block_id"], fragment["page_no"], fragment["source_start"], fragment["source_end"],
+        fragment["text_start"] + offset, fragment["text_end"] + offset, fragment.get("kind", "source"),
+    ) for fragment in fragments]
+    _replace_chunk(chunk, chunk["text"] + text, [*chunk.get("source_fragments_json", []), *shifted])
+
+
+def _prepend(chunk: dict, text: str, fragments: list[dict]) -> None:
+    offset = len(text)
+    shifted = [_make_fragment(
+        fragment["block_id"], fragment["page_no"], fragment["source_start"], fragment["source_end"],
+        fragment["text_start"] + offset, fragment["text_end"] + offset, fragment.get("kind", "source"),
+    ) for fragment in chunk.get("source_fragments_json", [])]
+    _replace_chunk(chunk, text + chunk["text"], [*fragments, *shifted])
+
+
 def _adjust_protected_split(chunks: list[dict], idx: int, max_length: int) -> None:
     """Move the boundary between *chunks[idx]* and *chunks[idx+1]* so a
     protected term is no longer split, **without** merging the two chunks
@@ -394,66 +461,13 @@ def _adjust_protected_split(chunks: list[dict], idx: int, max_length: int) -> No
 
             a_ok = len(new_end_a) <= max_length and len(new_start_a) <= max_length
             b_ok = len(new_end_b) <= max_length and len(new_start_b) <= max_length
-            a_max = max(len(new_end_a), len(new_start_a))
-            b_max = max(len(new_end_b), len(new_start_b))
-
-            if a_ok or (not b_ok and a_max <= b_max):
-                _rewrite_chunk_text(chunks, idx, new_end_a)
-                _rewrite_chunk_text(chunks, idx + 1, new_start_a)
-            else:
-                _rewrite_chunk_text(chunks, idx, new_end_b)
-                _rewrite_chunk_text(chunks, idx + 1, new_start_b)
+            if a_ok:
+                moved_text, moved_fragments = _take_suffix(chunks[idx], len(suffix))
+                _prepend(chunks[idx + 1], moved_text, moved_fragments)
+            elif b_ok:
+                moved_text, moved_fragments = _take_prefix(chunks[idx + 1], len(prefix))
+                _append(chunks[idx], moved_text, moved_fragments)
             return
-
-
-def _rewrite_chunk_text(chunks: list[dict], idx: int, new_text: str) -> None:
-    """Replace a chunk's text in place and rebuild fragments.
-
-    V7.4.2-01: Instead of mapping everything to the first block, preserve
-    existing fragment source information and adjust text offsets to match
-    the new text length.
-    """
-    stripped = new_text.strip()
-    chunks[idx]["text"] = stripped
-    old_frags = chunks[idx].get("source_fragments_json", [])
-    bids = chunks[idx].get("source_block_ids", [])
-    if stripped and bids:
-        # Try to preserve source information from existing fragments
-        if old_frags:
-            # Scale existing fragment text offsets to new text
-            old_text_len = chunks[idx].get("_old_text_len", len(stripped))
-            if old_text_len > 0:
-                new_frags = []
-                for frag in old_frags:
-                    old_ts = frag["text_start"]
-                    old_te = frag["text_end"]
-                    new_ts = int(old_ts * len(stripped) / old_text_len)
-                    new_te = int(old_te * len(stripped) / old_text_len)
-                    if new_ts < new_te:
-                        new_frags.append(_make_fragment(
-                            frag["block_id"],
-                            frag.get("page_no", 0),
-                            frag.get("source_start", 0),
-                            frag.get("source_end", new_te - new_ts),
-                            new_ts, new_te,
-                            frag.get("kind", "source"),
-                        ))
-                if new_frags:
-                    chunks[idx]["source_fragments_json"] = new_frags
-                else:
-                    chunks[idx]["source_fragments_json"] = [
-                        _make_fragment(bids[0], 0, 0, len(stripped), 0, len(stripped))
-                    ]
-            else:
-                chunks[idx]["source_fragments_json"] = [
-                    _make_fragment(bids[0], 0, 0, len(stripped), 0, len(stripped))
-                ]
-        else:
-            chunks[idx]["source_fragments_json"] = [
-                _make_fragment(bids[0], 0, 0, len(stripped), 0, len(stripped))
-            ]
-    else:
-        chunks[idx]["source_fragments_json"] = []
 
 
 def _build_line_source_map(
@@ -835,6 +849,25 @@ def semantic_chunk(
             # Body block
             block_text = block.text
 
+            # A single body block may be longer than max_length.  Split its
+            # original text first so every resulting fragment remains a direct
+            # character slice of the originating block.
+            if len(block_text) > max_length:
+                if current_text.strip():
+                    _flush("paragraph")
+                source_offset = 0
+                for piece in _split_long_line(block_text, max_length):
+                    current_text = piece + "\n"
+                    current_block_ids = [block.block_id]
+                    current_page_nos = {page_no}
+                    current_fragments = [_make_fragment(
+                        block.block_id, page_no, source_offset, source_offset + len(piece), 0, len(piece),
+                    )]
+                    source_offset += len(piece)
+                    _flush("hard_limit_fallback")
+                i += 1
+                continue
+
             # Check if adding this block would exceed max_length
             would_exceed_max = len(current_text) + len(block_text) + 1 > max_length
             current_exceeds_target = len(current_text) > target_length
@@ -969,10 +1002,9 @@ def semantic_chunk(
         start_text = chunks[idx + 1]["text"]
         if _is_protected_at_boundary(end_text, start_text):
             merged_text = end_text + "\n" + start_text
-            # If merging would create an oversized chunk (allowing some
-            # overflow for protected terms), skip the merge and instead
-            # adjust the split point so the term is no longer broken.
-            if len(merged_text) > max_length * 1.5:
+            # max_length is a hard production contract: never merge a
+            # protected term when that would overflow it.
+            if len(merged_text) > max_length:
                 _adjust_protected_split(chunks, idx, max_length)
                 continue
             merged_ids = list(chunks[idx]["source_block_ids"]) + list(chunks[idx + 1]["source_block_ids"])
