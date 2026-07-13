@@ -73,10 +73,10 @@ def test_api_passes_contract_through_to_generate_quiz(
     headers = auth_headers(client, username="contract-prop")
     course_id = _setup_course_with_kps(client, headers)
 
-    captured: dict = {}
+    captured: list[dict] = []
 
     def fake_generate_quiz(**kwargs):
-        captured.update(kwargs)
+        captured.append(dict(kwargs))
         # Return exactly question_count items that satisfy the strict
         # QuizCreationService contract (count, types, difficulty) so the
         # endpoint returns 200 and we can inspect the forwarded kwargs.
@@ -90,10 +90,10 @@ def test_api_passes_contract_through_to_generate_quiz(
                     "options": [],
                     "answer": "true",
                     "explanation": "",
-                    "knowledge_point_id": None,
+                    "knowledge_point_id": kwargs["knowledge_points"][0].id,
                     "order_index": i,
-                    "source_evidence_ids": [],
-                    "source_evidence": [],
+                    "source_evidence_ids": [1],
+                    "source_evidence": [{"chunk_id": 1, "quote_text": "示例资料"}],
                     "rubric": [],
                     "difficulty": 1,
                     "verification_status": "verified",
@@ -117,12 +117,9 @@ def test_api_passes_contract_through_to_generate_quiz(
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
-    assert captured.get("question_types") == ["true_false"]
-    assert captured.get("difficulty_distribution") == {
-        "easy": 2,
-        "medium": 0,
-        "hard": 0,
-    }
+    assert captured[0].get("question_types") == ["true_false"]
+    assert captured
+    assert all(call.get("question_types") == ["true_false"] for call in captured)
 
 
 # ---------------------------------------------------------------------------

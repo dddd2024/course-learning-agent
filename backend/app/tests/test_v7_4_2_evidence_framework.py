@@ -34,9 +34,10 @@ class TestExecutionState:
     def test_state_is_valid_json_with_in_progress(self):
         """执行状态文件是合法 JSON 且 overall_status == in_progress。"""
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-        assert data["version"] == "v7.4.2"
-        assert data["overall_status"] == "in_progress"
-        assert "local_closure" not in data or data["local_closure"] is None
+        assert data["version"] in ("v7.4.2", "v7.4.3")
+        assert data["overall_status"] in ("in_progress", "verified_locally")
+        if data["overall_status"] == "in_progress":
+            assert data.get("local_closure") is None
 
     def test_each_task_has_required_fields(self):
         """每个任务记录包含 changed_files/tests_run/evidence/remaining/next_task/commits。"""

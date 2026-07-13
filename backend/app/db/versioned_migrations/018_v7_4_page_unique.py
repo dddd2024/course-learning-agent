@@ -12,6 +12,11 @@ SNAPSHOT_FIELDS = ["id", "material_id", "material_version_id", "page_no", "page_
 
 def _compute_snapshot(conn, table: str = "material_pages") -> str:
     """Hash all migration fields using the caller's transaction connection."""
+    # Compatibility for read-only callers from pre-V7.4.3 tests.  The
+    # migration itself always supplies its active transaction connection.
+    if isinstance(conn, Engine):
+        with conn.connect() as read_conn:
+            return _compute_snapshot(read_conn, table)
     digest = hashlib.sha256()
     rows = conn.execute(text(f"SELECT {', '.join(SNAPSHOT_FIELDS)} FROM {table} ORDER BY id")).fetchall()
     for row in rows:

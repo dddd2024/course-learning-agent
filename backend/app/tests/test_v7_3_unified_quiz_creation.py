@@ -28,14 +28,22 @@ def test_quiz_creation_service_rejects_partial_quiz():
     mock_kp = MagicMock()
     mock_kp.id = 1
     mock_kp.generation = 1
+    mock_kp.course_id = 1
+    mock_kp.user_id = 1
+    mock_kp.status = "active"
+    mock_db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (1,)
+    mock_kp.course_id = 1
+    mock_kp.user_id = 1
+    mock_kp.status = "active"
+    mock_db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (1,)
 
     with patch("app.services.quiz_creation_service.generate_quiz") as mock_gen:
         mock_gen.return_value = {
             "items": [
                 {"question_type": "choice", "question_text": "Q1", "answer": "A",
-                 "options": ["A", "B"], "knowledge_point_id": 1, "difficulty": 3,
-                 "order_index": 0, "explanation": "exp", "source_evidence_ids": [],
-                 "source_evidence": [], "verification_status": "verified", "rubric": []},
+                 "options": ["A", "B"], "knowledge_point_id": 1, "difficulty": 1,
+                 "order_index": 0, "explanation": "exp", "source_evidence_ids": [1],
+                 "source_evidence": [{"chunk_id": 1, "quote_text": "source"}], "verification_status": "verified", "rubric": []},
             ],
             "title": "Test Quiz",
         }
@@ -75,6 +83,14 @@ def test_quiz_creation_service_enforces_question_types():
     mock_kp = MagicMock()
     mock_kp.id = 1
     mock_kp.generation = 1
+    mock_kp.course_id = 1
+    mock_kp.user_id = 1
+    mock_kp.status = "active"
+    mock_db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (1,)
+    mock_kp.course_id = 1
+    mock_kp.user_id = 1
+    mock_kp.status = "active"
+    mock_db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (1,)
 
     with patch("app.services.quiz_creation_service.generate_quiz") as mock_gen:
         mock_gen.return_value = {
@@ -109,14 +125,18 @@ def test_quiz_creation_service_persists_quiz_and_items():
     mock_kp = MagicMock()
     mock_kp.id = 1
     mock_kp.generation = 1
+    mock_kp.course_id = 1
+    mock_kp.user_id = 1
+    mock_kp.status = "active"
+    mock_db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (1,)
 
     with patch("app.services.quiz_creation_service.generate_quiz") as mock_gen:
         mock_gen.return_value = {
             "items": [
                 {"question_type": "choice", "question_text": "Q1", "answer": "A",
-                 "options": ["A", "B"], "knowledge_point_id": 1, "difficulty": 3,
-                 "order_index": 0, "explanation": "exp", "source_evidence_ids": [],
-                 "source_evidence": [], "verification_status": "verified", "rubric": []},
+                 "options": ["A", "B"], "knowledge_point_id": 1, "difficulty": 1,
+                 "order_index": 0, "explanation": "exp", "source_evidence_ids": [1],
+                 "source_evidence": [{"chunk_id": 1, "quote_text": "source"}], "verification_status": "verified", "rubric": []},
             ],
             "title": "Test Quiz",
         }
@@ -143,14 +163,18 @@ def test_quiz_creation_service_passes_pass_score():
     mock_kp = MagicMock()
     mock_kp.id = 1
     mock_kp.generation = 1
+    mock_kp.course_id = 1
+    mock_kp.user_id = 1
+    mock_kp.status = "active"
+    mock_db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (1,)
 
     with patch("app.services.quiz_creation_service.generate_quiz") as mock_gen:
         mock_gen.return_value = {
             "items": [
                 {"question_type": "choice", "question_text": "Q1", "answer": "A",
-                 "options": ["A", "B"], "knowledge_point_id": 1, "difficulty": 3,
-                 "order_index": 0, "explanation": "exp", "source_evidence_ids": [],
-                 "source_evidence": [], "verification_status": "verified", "rubric": []},
+                 "options": ["A", "B"], "knowledge_point_id": 1, "difficulty": 1,
+                 "order_index": 0, "explanation": "exp", "source_evidence_ids": [1],
+                 "source_evidence": [{"chunk_id": 1, "quote_text": "source"}], "verification_status": "verified", "rubric": []},
             ],
             "title": "Test Quiz",
         }

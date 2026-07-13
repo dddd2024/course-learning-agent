@@ -48,9 +48,9 @@ def _is_protected_at_boundary(end_text: str, start_text: str) -> bool:
     """Check if a protected term is split between end of one chunk and start of next."""
     for term in _PROTECTED_TERMS:
         for split_pos in range(1, len(term)):
-            suffix = term[-split_pos:]
-            prefix = term[:-split_pos]
-            if end_text.endswith(suffix) and start_text.startswith(prefix):
+            prefix = term[:split_pos]
+            suffix = term[split_pos:]
+            if end_text.endswith(prefix) and start_text.startswith(suffix):
                 return True
     return False
 

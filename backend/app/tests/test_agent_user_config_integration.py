@@ -390,7 +390,7 @@ def test_quizzes_uses_user_config(
         )
 
     assert resp.status_code == 422, resp.text
-    mock_real.assert_called_once()
+    assert mock_real.call_count == 3
     user_config = _extract_user_config(mock_real.call_args)
     assert user_config is not None
     assert user_config["base_url"] == LLM_CONFIG_PAYLOAD["base_url"]

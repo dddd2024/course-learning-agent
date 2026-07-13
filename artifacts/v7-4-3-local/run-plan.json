@@ -6,13 +6,44 @@
     "scripts/collect_local_evidence.py",
     "scripts/verify_local_evidence.py",
     "docs/engineering/v7-4-3-audit-baseline.md",
+    "backend/app/retrieval/semantic_chunker.py",
+    "backend/app/db/versioned_migrations/018_v7_4_page_unique.py",
     "backend/app/tests/test_v7_4_3_evidence_framework.py",
+    "frontend/tests/e2e/v7-4-3-browser-e2e.spec.ts",
     "artifacts/v7-4-3-local/run-plan.json"
   ],
   "commands": [
     {
       "label": "evidence-framework",
       "command": ["backend/.venv/Scripts/python.exe", "-m", "pytest", "-q", "backend/app/tests/test_v7_4_3_evidence_framework.py"]
+    },
+    {
+      "label": "backend-full-pytest",
+      "command": ["backend/.venv/Scripts/python.exe", "-m", "pytest", "-q", "backend/app/tests"]
+    },
+    {
+      "label": "migration-integrity",
+      "command": ["backend/.venv/Scripts/python.exe", "-m", "pytest", "-q", "backend/app/tests/test_v7_4_2_migration_integrity.py", "backend/app/tests/test_v7_4_3_migration_integrity.py"]
+    },
+    {
+      "label": "frontend-type-check",
+      "cwd": "frontend",
+      "command": ["npm", "run", "type-check"]
+    },
+    {
+      "label": "frontend-unit",
+      "cwd": "frontend",
+      "command": ["npm", "run", "test", "--", "--run"]
+    },
+    {
+      "label": "frontend-build",
+      "cwd": "frontend",
+      "command": ["npm", "run", "build"]
+    },
+    {
+      "label": "browser-e2e",
+      "cwd": "frontend",
+      "command": ["powershell", "-NoProfile", "-Command", "$env:CI='true'; npx playwright test tests/e2e/v7-4-3-browser-e2e.spec.ts --retries=0 --reporter=line"]
     }
   ]
 }

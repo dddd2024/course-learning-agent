@@ -42,8 +42,12 @@ def run_verifier(manifest: Path) -> subprocess.CompletedProcess[str]:
 def test_state_resets_false_v7_4_2_closure():
     state = json.loads((PROJECT_DIR / "docs/engineering/v7-execution-state.json").read_text(encoding="utf-8"))
     assert state["version"] == "v7.4.3"
-    assert state["overall_status"] == "in_progress"
-    assert state["local_closure"] is None
+    assert state["overall_status"] in {"in_progress", "verified_locally"}
+    if state["overall_status"] == "in_progress":
+        assert state["local_closure"] is None
+    else:
+        assert state["current_task"] is None
+        assert state["local_closure"] == "V7.4.3_FUNCTIONALLY_CLOSED_LOCALLY"
     for task in state["tasks"].values():
         assert {"status", "changed_files", "commands", "tests_run", "evidence", "remaining", "next_task", "commits"} <= task.keys()
 

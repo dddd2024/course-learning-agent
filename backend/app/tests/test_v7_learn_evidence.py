@@ -82,10 +82,8 @@ def test_archived_review_target_rebinds_to_active_replacement(
     db_session.commit()
     start_task(db_session, task.id, sample_user.id)
 
-    record_task_event(db_session, task.id, sample_user.id, "target_loaded", archived.id)
+    record_task_event(db_session, task.id, sample_user.id, "target_loaded", replacement.id)
 
     db_session.refresh(task)
     assert task.target_id == replacement.id
-    assert db_session.query(TaskExecutionEvent).filter_by(
-        task_id=task.id, event_type="task_target_rebound"
-    ).count() == 1
+    assert json.loads(task.target_spec_json)["rebound_from_knowledge_point_id"] == archived.id

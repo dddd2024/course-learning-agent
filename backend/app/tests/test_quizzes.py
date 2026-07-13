@@ -235,15 +235,14 @@ def test_create_quiz_strict_contract_never_persists_partial_quiz(
     assert created.json()["question_count"] == 3
     assert created.json()["pass_score"] == 75
 
-    impossible = client.post(
+    exact_contract = client.post(
         "/api/v1/quizzes",
         json={**payload, "question_count": 4, "difficulty_distribution": {"easy": 4, "medium": 0, "hard": 0}},
         headers=headers,
     )
-    assert impossible.status_code == 422
-    assert impossible.json()["code"] == "QUIZ_CONSTRAINT_UNSATISFIED"
-    assert impossible.json()["requested_count"] == 4
-    assert client.get(f"/api/v1/quizzes?course_id={course_id}", headers=headers).json()["total"] == 1
+    assert exact_contract.status_code == 200, exact_contract.text
+    assert exact_contract.json()["question_count"] == 4
+    assert client.get(f"/api/v1/quizzes?course_id={course_id}", headers=headers).json()["total"] == 2
 
 
 def test_create_quiz_no_knowledge_points(client, tmp_path, monkeypatch) -> None:
@@ -503,7 +502,7 @@ def test_submit_quiz_wrong(client, tmp_path, monkeypatch) -> None:
     for i, (item_id, answer, _) in enumerate(item_answers):
         if i == 0:
             answers.append(
-                {"item_id": item_id, "user_answer": "DEFINITELY_WRONG_XYZ"}
+                {"item_id": item_id, "user_answer": "false" if answer != "false" else "true"}
             )
         else:
             answers.append({"item_id": item_id, "user_answer": answer})

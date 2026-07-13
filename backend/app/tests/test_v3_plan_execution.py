@@ -47,7 +47,9 @@ def _create_plan_with_task(client, headers, course_id, task_type="quiz"):
     goal_id = plan["goal"]["id"]
     tasks = plan.get("tasks") or []
     assert len(tasks) >= 1, f"Expected at least 1 task, got {len(tasks)}"
-    task_id = tasks[0]["id"]
+    selected = next((task for task in tasks if task["task_type"] == task_type), None)
+    assert selected is not None, f"Expected a {task_type} task in {tasks}"
+    task_id = selected["id"]
     return goal_id, task_id
 
 
@@ -64,6 +66,8 @@ def test_task_response_includes_execution_fields(
 
     headers = auth_headers(client, username="alice")
     course_id, _ = setup_course_with_material(client, headers, content=TLB_TEXT)
+    kp_resp = client.post(f"/api/v1/courses/{course_id}/knowledge-points/generate", headers=headers)
+    assert kp_resp.status_code == 200, kp_resp.text
 
     goal_id, task_id = _create_plan_with_task(client, headers, course_id)
 
@@ -192,6 +196,10 @@ def test_quiz_task_start_binds_real_quiz_id(
 
     headers = auth_headers(client, username="alice")
     course_id, _ = setup_course_with_material(client, headers, content=TLB_TEXT)
+    kp_resp = client.post(
+        f"/api/v1/courses/{course_id}/knowledge-points/generate", headers=headers
+    )
+    assert kp_resp.status_code == 200, kp_resp.text
 
     goal_id, task_id = _create_plan_with_task(client, headers, course_id, task_type="quiz")
 
