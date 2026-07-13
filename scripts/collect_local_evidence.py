@@ -45,7 +45,15 @@ def normalise_command(command: list[str] | str) -> list[str]:
 def run_command(command: list[str] | str, cwd: Path, logs_dir: Path, label: str, project_dir: Path) -> dict[str, Any]:
     args = normalise_command(command)
     started_at = utc_now()
-    result = subprocess.run(args, capture_output=True, text=True, cwd=str(cwd), check=False)
+    result = subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(cwd),
+        check=False,
+    )
     finished_at = utc_now()
     safe_label = "".join(char if char.isalnum() or char in "-_" else "_" for char in label)
     stdout_path = logs_dir / f"{safe_label}.stdout.log"

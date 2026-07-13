@@ -62,6 +62,15 @@ def test_collector_saves_raw_streams_and_hashes(tmp_path: Path):
     assert data["files"]
 
 
+def test_collector_decodes_utf8_command_output(tmp_path: Path):
+    manifest = make_manifest(
+        tmp_path,
+        [sys.executable, "-c", "import sys; sys.stdout.buffer.write('验证'.encode('utf-8'))"],
+    )
+    record = json.loads(manifest.read_text(encoding="utf-8"))["commands"][0]
+    assert "验证" in Path(record["stdout_log_path"]).read_text(encoding="utf-8")
+
+
 def test_valid_manifest_verifies(tmp_path: Path):
     result = run_verifier(make_manifest(tmp_path))
     assert result.returncode == 0, result.stderr
