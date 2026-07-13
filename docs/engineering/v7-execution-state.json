@@ -1,146 +1,22 @@
 {
-  "version": "v7.4.2",
-  "base_commit": "731cdb54898e89852dffed09146e89114f90f7af",
-  "branch": "codex/v7-4-2-functional-closure",
-  "started_at": "2026-07-13T12:00:00+08:00",
-  "overall_status": "done",
-  "current_task": null,
-  "local_closure": {
-    "backend_tests": "789 passed",
-    "frontend_typecheck": "passed",
-    "frontend_build": "passed",
-    "e2e_tests": "8/8 passed"
-  },
-  "local_checks": {
-    "backend_tests": "passed",
-    "frontend_typecheck": "passed",
-    "frontend_build": "passed"
-  },
-  "remote_ci_required": false,
-  "remote_ci_deferred_to": "V7.6",
+  "version": "v7.4.3",
+  "base_commit": "04464dc01fe42394911e3c029dd381b75660dba9",
+  "branch": "codex/v7-4-3-authenticity-reclosure",
+  "started_at": "2026-07-13T16:35:00+08:00",
+  "overall_status": "in_progress",
+  "current_task": "V7.4.3-01",
+  "local_closure": null,
+  "remote_ci": "deferred_to_v7_6",
   "tasks": {
-    "V7.4.2-00": {
-      "status": "done",
-      "changed_files": [
-        "docs/engineering/v7-execution-state.json",
-        "scripts/collect_local_evidence.py",
-        "artifacts/v7-4-2-local/manifest.json",
-        "backend/app/tests/test_v7_4_2_evidence_framework.py"
-      ],
-      "tests_run": ["test_v7_4_2_evidence_framework.py"],
-      "evidence": ["6/6 tests passed", "collect_local_evidence.py generates manifest with SHA-256"],
-      "remaining": [],
-      "next_task": "V7.4.2-01",
-      "commits": []
-    },
-    "V7.4.2-01": {
-      "status": "done",
-      "changed_files": [
-        "backend/app/retrieval/semantic_chunker.py",
-        "backend/app/tests/test_v7_4_2_precise_provenance.py",
-        "backend/app/tests/test_v7_4_1_execution_state.py"
-      ],
-      "tests_run": ["test_v7_4_2_precise_provenance.py"],
-      "evidence": ["14/14 tests passed", "All fragments carry block_id/page_no/source_start/source_end/text_start/text_end/kind", "Character-level verification: block.text[source_start:source_end] == chunk.text[text_start:text_end]"],
-      "remaining": [],
-      "next_task": "V7.4.2-02",
-      "commits": []
-    },
-    "V7.4.2-02": {
-      "status": "done",
-      "changed_files": [
-        "backend/app/tests/test_v7_4_2_migration_integrity.py"
-      ],
-      "tests_run": ["test_v7_4_2_migration_integrity.py"],
-      "evidence": ["10/10 tests passed", "PRAGMA index_list/index_info for exact constraint detection", "Final snapshot verification", "Fault injection tests for duplicate abort/leftover temp/idempotent run"],
-      "remaining": [],
-      "next_task": "V7.4.2-03",
-      "commits": []
-    },
-    "V7.4.2-03": {
-      "status": "done",
-      "changed_files": [
-        "backend/app/services/quiz_creation_service.py",
-        "backend/app/tests/test_v7_4_2_quiz_contract.py"
-      ],
-      "tests_run": ["test_v7_4_2_quiz_contract.py"],
-      "evidence": ["16/16 tests passed", "Default contract constants: question_types/difficulty_distribution/pass_score/max_retries", "Mock compliance and retry deficit vector", "Pre-persist validation with QuizConstraintException"],
-      "remaining": [],
-      "next_task": "V7.4.2-04",
-      "commits": []
-    },
-    "V7.4.2-04": {
-      "status": "done",
-      "changed_files": [
-        "backend/app/schemas/quiz.py",
-        "backend/app/api/v1/endpoints/quizzes.py",
-        "frontend/src/api/quiz.ts",
-        "frontend/src/views/QuizView.vue",
-        "backend/app/tests/test_v7_4_2_quiz_atomic.py"
-      ],
-      "tests_run": ["test_v7_4_2_quiz_atomic.py"],
-      "evidence": ["7/7 tests passed", "Single-request atomic submission with task verification", "Returns percentage/pass_score/passed/task_verification fields", "GET result endpoint also includes new fields"],
-      "remaining": [],
-      "next_task": "V7.4.2-05",
-      "commits": []
-    },
-    "V7.4.2-05": {
-      "status": "done",
-      "changed_files": [
-        "backend/app/api/v1/endpoints/plans.py",
-        "backend/app/tests/test_v7_4_2_plan_safety.py",
-        "backend/app/tests/test_v7_4_1_multi_plan_safety.py",
-        "backend/app/tests/test_v7_4_multi_plan_lifecycle.py"
-      ],
-      "tests_run": ["test_v7_4_2_plan_safety.py"],
-      "evidence": ["8/8 tests passed", "force=true parameter removed from DELETE endpoint", "POST /plans/multi/{id}/archive endpoint added", "Safety check always executes (no bypass)"],
-      "remaining": [],
-      "next_task": "V7.4.2-06",
-      "commits": []
-    },
-    "V7.4.2-06": {
-      "status": "done",
-      "changed_files": [
-        "backend/app/schemas/multi_plan.py",
-        "backend/app/api/v1/endpoints/plans.py",
-        "frontend/src/api/plan.ts",
-        "frontend/src/views/MultiPlanView.vue",
-        "backend/app/tests/test_v7_4_2_reschedule_diff.py",
-        "backend/app/tests/test_v7_4_1_multi_plan_safety.py",
-        "backend/app/tests/test_v7_4_multi_plan_lifecycle.py"
-      ],
-      "tests_run": ["test_v7_4_2_reschedule_diff.py"],
-      "evidence": ["11/11 tests passed", "Five categories: kept/moved/created/superseded/unscheduled", "Each item has stable_task_key/old-new IDs/dates/generation/reason", "Old tasks marked schedule_status=superseded", "Frontend grouped diff display with el-table"],
-      "remaining": [],
-      "next_task": "V7.4.2-07",
-      "commits": []
-    },
-    "V7.4.2-07": {
-      "status": "done",
-      "changed_files": [
-        "backend/app/api/v1/endpoints/knowledge_points.py",
-        "backend/app/services/quiz_creation_service.py",
-        "frontend/src/api/knowledge.ts",
-        "frontend/src/views/OutlineView.vue",
-        "backend/app/tests/test_v7_4_2_kp_history.py"
-      ],
-      "tests_run": ["test_v7_4_2_kp_history.py"],
-      "evidence": ["7/7 tests passed", "GET /courses/{id}/knowledge-points/generations/{gen} endpoint", "QuizCreationService rejects archived generation KPs", "OutlineView read-only history mode with clickable generation cards", "Write operations disabled in history mode"],
-      "remaining": [],
-      "next_task": "V7.4.2-08",
-      "commits": []
-    },
-    "V7.4.2-08": {
-      "status": "done",
-      "changed_files": [
-        "frontend/tests/e2e/v7-4-2-browser-e2e.spec.ts",
-        "docs/engineering/v7-execution-state.json"
-      ],
-      "tests_run": ["v7-4-2-browser-e2e.spec.ts", "full backend suite (789 passed)", "frontend typecheck", "frontend build"],
-      "evidence": ["8/8 E2E scenarios passed", "789 backend tests passed", "Frontend TypeScript checks passed", "Frontend Vite build succeeded", "Real parse worker with material upload and KP generation"],
-      "remaining": [],
-      "next_task": null,
-      "commits": []
-    }
+    "V7.4.3-00": {"status":"done","changed_files":["docs/engineering/v7-execution-state.json","docs/engineering/v7-4-3-audit-baseline.md","scripts/collect_local_evidence.py","scripts/verify_local_evidence.py","backend/app/tests/test_v7_4_3_evidence_framework.py","artifacts/v7-4-3-local/run-plan.json","artifacts/v7-4-3-local/manifest.json"],"commands":[["backend/.venv/Scripts/python.exe","-m","pytest","-q","backend/app/tests/test_v7_4_3_evidence_framework.py"],["python","scripts/verify_local_evidence.py","artifacts/v7-4-3-local/manifest.json","--verify-state-summaries"]],"tests_run":["backend/app/tests/test_v7_4_3_evidence_framework.py"],"test_summaries":[{"log_path":"artifacts/v7-4-3-local/logs/evidence-framework.stdout.log","marker":"6 passed"}],"evidence":["artifacts/v7-4-3-local/manifest.json","artifacts/v7-4-3-local/verification_result.json"],"remaining":[],"next_task":"V7.4.3-01","commits":[]},
+    "V7.4.3-01": {"status":"in_progress","changed_files":[],"commands":[],"tests_run":[],"test_summaries":[],"evidence":[],"remaining":["Not started."],"next_task":"V7.4.3-02","commits":[]},
+    "V7.4.3-02": {"status":"pending","changed_files":[],"commands":[],"tests_run":[],"test_summaries":[],"evidence":[],"remaining":["Not started."],"next_task":"V7.4.3-03","commits":[]},
+    "V7.4.3-03": {"status":"pending","changed_files":[],"commands":[],"tests_run":[],"test_summaries":[],"evidence":[],"remaining":["Not started."],"next_task":"V7.4.3-04","commits":[]},
+    "V7.4.3-04": {"status":"pending","changed_files":[],"commands":[],"tests_run":[],"test_summaries":[],"evidence":[],"remaining":["Not started."],"next_task":"V7.4.3-05","commits":[]},
+    "V7.4.3-05": {"status":"pending","changed_files":[],"commands":[],"tests_run":[],"test_summaries":[],"evidence":[],"remaining":["Not started."],"next_task":"V7.4.3-06","commits":[]},
+    "V7.4.3-06": {"status":"pending","changed_files":[],"commands":[],"tests_run":[],"test_summaries":[],"evidence":[],"remaining":["Not started."],"next_task":"V7.4.3-07","commits":[]},
+    "V7.4.3-07": {"status":"pending","changed_files":[],"commands":[],"tests_run":[],"test_summaries":[],"evidence":[],"remaining":["Not started."],"next_task":"V7.4.3-08","commits":[]},
+    "V7.4.3-08": {"status":"pending","changed_files":[],"commands":[],"tests_run":[],"test_summaries":[],"evidence":[],"remaining":["Not started."],"next_task":"V7.4.3-09","commits":[]},
+    "V7.4.3-09": {"status":"pending","changed_files":[],"commands":[],"tests_run":[],"test_summaries":[],"evidence":[],"remaining":["Not started."],"next_task":null,"commits":[]}
   }
 }

@@ -1,0 +1,18 @@
+{
+  "version": "v7.4.3",
+  "base_sha": "04464dc01fe42394911e3c029dd381b75660dba9",
+  "head_sha": "HEAD",
+  "include": [
+    "scripts/collect_local_evidence.py",
+    "scripts/verify_local_evidence.py",
+    "docs/engineering/v7-4-3-audit-baseline.md",
+    "backend/app/tests/test_v7_4_3_evidence_framework.py",
+    "artifacts/v7-4-3-local/run-plan.json"
+  ],
+  "commands": [
+    {
+      "label": "evidence-framework",
+      "command": ["backend/.venv/Scripts/python.exe", "-m", "pytest", "-q", "backend/app/tests/test_v7_4_3_evidence_framework.py"]
+    }
+  ]
+}

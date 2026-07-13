@@ -1,116 +1,161 @@
 #!/usr/bin/env python3
-"""V7.4.2-00: Collect local evidence manifest.
-
-Generates a manifest.json recording:
-- base/head SHA
-- Commands run (with working dir, time, exit code)
-- File SHA-256 hashes
-
-Usage:
-    python scripts/collect_local_evidence.py \
-        --output artifacts/v7-4-2-local/manifest.json \
-        --base-sha $(git rev-parse --short HEAD~1) \
-        --head-sha $(git rev-parse --short HEAD) \
-        --include backend/app/tests/test_v7_4_2_evidence_framework.py
-"""
+"""Collect reproducible, tamper-evident local verification evidence."""
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
-import os
+import shlex
 import subprocess
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+
+
+PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 
 def sha256_file(path: Path) -> str:
-    """Compute SHA-256 hex digest of a file."""
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(65536), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
-def run_command(cmd: list[str], cwd: str) -> dict:
-    """Run a command and return its result record."""
-    start = datetime.now(timezone.utc)
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, cwd=cwd,
-    )
-    end = datetime.now(timezone.utc)
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def relative_path(path: Path, project_dir: Path) -> str:
+    try:
+        return path.relative_to(project_dir).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def normalise_command(command: list[str] | str) -> list[str]:
+    if isinstance(command, str):
+        return shlex.split(command, posix=False)
+    if not isinstance(command, list) or not command or not all(isinstance(item, str) for item in command):
+        raise ValueError("command must be a non-empty string or array of strings")
+    return command
+
+
+def run_command(command: list[str] | str, cwd: Path, logs_dir: Path, label: str, project_dir: Path) -> dict[str, Any]:
+    args = normalise_command(command)
+    started_at = utc_now()
+    result = subprocess.run(args, capture_output=True, text=True, cwd=str(cwd), check=False)
+    finished_at = utc_now()
+    safe_label = "".join(char if char.isalnum() or char in "-_" else "_" for char in label)
+    stdout_path = logs_dir / f"{safe_label}.stdout.log"
+    stderr_path = logs_dir / f"{safe_label}.stderr.log"
+    stdout_path.write_text(result.stdout, encoding="utf-8")
+    stderr_path.write_text(result.stderr, encoding="utf-8")
     return {
-        "command": " ".join(cmd),
-        "working_dir": cwd,
-        "started_at": start.isoformat(),
-        "finished_at": end.isoformat(),
+        "label": label,
+        "command": args,
+        "working_dir": relative_path(cwd, project_dir),
+        "started_at": started_at,
+        "finished_at": finished_at,
         "exit_code": result.returncode,
-        "stdout_lines": len(result.stdout.splitlines()) if result.stdout else 0,
-        "stderr_lines": len(result.stderr.splitlines()) if result.stderr else 0,
+        "stdout_log_path": relative_path(stdout_path, project_dir),
+        "stdout_log_sha256": sha256_file(stdout_path),
+        "stderr_log_path": relative_path(stderr_path, project_dir),
+        "stderr_log_sha256": sha256_file(stderr_path),
     }
 
 
-def main():
+def resolve_path(value: str, project_dir: Path) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else project_dir / path
+
+
+def load_config(path: Path) -> dict[str, Any]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("evidence config must be an object")
+    return data
+
+
+def resolve_git_ref(value: str) -> str:
+    if value not in {"HEAD", "BASE"}:
+        return value
+    result = subprocess.run(["git", "rev-parse", value], cwd=PROJECT_DIR, capture_output=True, text=True, check=False)
+    if result.returncode:
+        raise ValueError(f"cannot resolve git ref: {value}")
+    return result.stdout.strip()
+
+
+def main() -> None:
     parser = argparse.ArgumentParser(description="Collect local evidence manifest")
-    parser.add_argument("--output", required=True, help="Output manifest.json path")
-    parser.add_argument("--base-sha", required=True, help="Base commit SHA")
-    parser.add_argument("--head-sha", required=True, help="Head commit SHA")
-    parser.add_argument("--include", action="append", default=[],
-                        help="Files to include in manifest (repeatable)")
-    parser.add_argument("--run", action="append", default=[],
-                        help="Commands to run and record (repeatable)")
+    parser.add_argument("--config", help="JSON run plan containing command arrays and included files")
+    parser.add_argument("--output", help="Output manifest.json path (legacy/direct mode)")
+    parser.add_argument("--base-sha", help="Base commit SHA (legacy/direct mode)")
+    parser.add_argument("--head-sha", help="Head commit SHA (legacy/direct mode)")
+    parser.add_argument("--include", action="append", default=[], help="File to hash (repeatable)")
+    parser.add_argument("--run", action="append", default=[], help="Command to run (repeatable; parsed with shlex)")
     args = parser.parse_args()
 
-    project_dir = Path(__file__).resolve().parent.parent
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    config: dict[str, Any] = {}
+    config_path: Path | None = None
+    if args.config:
+        config_path = resolve_path(args.config, PROJECT_DIR)
+        config = load_config(config_path)
 
-    manifest = {
-        "version": "v7.4.2",
-        "base_sha": args.base_sha,
-        "head_sha": args.head_sha,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+    output_value = args.output or config.get("output")
+    if not output_value:
+        output_value = str(config_path.parent / "manifest.json") if config_path else None
+    if not output_value:
+        parser.error("--output is required when --config is not supplied")
+    output_path = resolve_path(output_value, PROJECT_DIR)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    logs_dir = output_path.parent / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    base_sha = args.base_sha or config.get("base_sha")
+    head_sha = args.head_sha or config.get("head_sha")
+    if not base_sha or not head_sha:
+        parser.error("base_sha and head_sha are required")
+    base_sha = resolve_git_ref(base_sha)
+    head_sha = resolve_git_ref(head_sha)
+
+    command_specs = config.get("commands", [])
+    if args.run:
+        command_specs += [{"label": f"command-{index + 1}", "command": command} for index, command in enumerate(args.run)]
+    includes = list(config.get("include", [])) + args.include
+    manifest: dict[str, Any] = {
+        "version": config.get("version", "v7.4.3"),
+        "base_sha": base_sha,
+        "head_sha": head_sha,
+        "generated_at": utc_now(),
         "commands": [],
         "files": [],
     }
 
-    # Run and record commands
-    for cmd_str in args.run:
-        cmd_parts = cmd_str.split()
-        record = run_command(cmd_parts, str(project_dir))
-        manifest["commands"].append(record)
+    for index, spec in enumerate(command_specs):
+        if not isinstance(spec, dict) or "command" not in spec:
+            raise ValueError("each command must be an object with a command field")
+        cwd = resolve_path(spec.get("cwd", "."), PROJECT_DIR)
+        if not cwd.is_dir():
+            raise ValueError(f"command working directory does not exist: {cwd}")
+        manifest["commands"].append(run_command(spec["command"], cwd, logs_dir, spec.get("label", f"command-{index + 1}"), PROJECT_DIR))
 
-    # Record file hashes
-    for file_path_str in args.include:
-        file_path = Path(file_path_str)
-        if not file_path.is_absolute():
-            file_path = project_dir / file_path
-        if file_path.exists() and file_path.is_file():
-            manifest["files"].append({
-                "path": str(file_path.relative_to(project_dir)) if str(file_path).startswith(str(project_dir)) else str(file_path),
-                "sha256": sha256_file(file_path),
-                "size": file_path.stat().st_size,
-            })
+    include_values = ["docs/engineering/v7-execution-state.json", *includes]
+    seen: set[str] = set()
+    for value in include_values:
+        file_path = resolve_path(value, PROJECT_DIR)
+        key = str(file_path.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        if not file_path.is_file():
+            raise FileNotFoundError(f"declared evidence file does not exist: {file_path}")
+        manifest["files"].append({"path": relative_path(file_path, PROJECT_DIR), "sha256": sha256_file(file_path), "size": file_path.stat().st_size})
 
-    # Always include key project files
-    key_files = [
-        "docs/engineering/v7-execution-state.json",
-    ]
-    for kf in key_files:
-        fp = project_dir / kf
-        if fp.exists():
-            manifest["files"].append({
-                "path": kf,
-                "sha256": sha256_file(fp),
-                "size": fp.stat().st_size,
-            })
-
-    output_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    output_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"Manifest written to {output_path}")
-    print(f"  Commands: {len(manifest['commands'])}")
-    print(f"  Files: {len(manifest['files'])}")
+    print(f"Commands: {len(manifest['commands'])}; files: {len(manifest['files'])}")
 
 
 if __name__ == "__main__":
