@@ -1,71 +1,94 @@
 {
-  "version": "v7.4.1",
-  "base_commit": "6b65d0a77bf0727c794f5d743042f7163145ef8d",
-  "branch": "codex/v7-4-1-critical-gap-closure",
-  "started_at": "2026-07-13T00:00:00+08:00",
-  "overall_status": "verified_locally",
-  "current_task": null,
+  "version": "v7.4.2",
+  "base_commit": "731cdb54898e89852dffed09146e89114f90f7af",
+  "branch": "codex/v7-4-2-functional-closure",
+  "started_at": "2026-07-13T12:00:00+08:00",
+  "overall_status": "in_progress",
+  "current_task": "V7.4.2-00",
+  "local_closure": null,
   "remote_ci_required": false,
   "remote_ci_deferred_to": "V7.6",
   "tasks": {
-    "V7.4.1-00": {
-      "status": "done",
-      "commits": ["fix(v7.4.1): rebuild corrupted execution state as valid JSON"],
-      "tests_run": [{"command": "pytest test_v7_4_1_execution_state.py", "exit_code": 0, "result": "5 passed"}]
+    "V7.4.2-00": {
+      "status": "in_progress",
+      "changed_files": [],
+      "tests_run": [],
+      "evidence": [],
+      "remaining": ["Update execution state", "Create evidence collection script", "Create manifest directory"],
+      "next_task": "V7.4.2-01",
+      "commits": []
     },
-    "V7.4.1-01": {
-      "status": "done",
-      "commits": ["fix(v7.4.1): make page migration verifiably lossless"],
-      "tests_run": [{"command": "pytest test_v7_4_1_page_migration_integrity.py", "exit_code": 0, "result": "9 passed"}]
+    "V7.4.2-01": {
+      "status": "pending",
+      "changed_files": [],
+      "tests_run": [],
+      "evidence": [],
+      "remaining": ["Precise chunk provenance with source_start/source_end/text_start/text_end/kind", "Remove fallback to first block", "Enforce hard max_length", "Character-level verification"],
+      "next_task": "V7.4.2-02",
+      "commits": []
     },
-    "V7.4.1-02": {
-      "status": "done",
-      "commits": ["fix(v7.4.1): chunk boundary and provenance edge cases"],
-      "tests_run": [{"command": "pytest test_v7_4_1_chunk_edge_cases.py", "exit_code": 0, "result": "9 passed"}]
+    "V7.4.2-02": {
+      "status": "pending",
+      "changed_files": [],
+      "tests_run": [],
+      "evidence": [],
+      "remaining": ["Use PRAGMA index_list/index_info for exact constraint detection", "Final snapshot before commit", "Save and restore indexes", "Fault injection tests"],
+      "next_task": "V7.4.2-03",
+      "commits": []
     },
-    "V7.4.1-03": {
-      "status": "done",
-      "commits": ["fix(v7.4.1): propagate quiz generation contract to LLM prompt"],
-      "tests_run": [{"command": "pytest test_v7_4_1_quiz_contract.py", "exit_code": 0, "result": "5 passed"}]
+    "V7.4.2-03": {
+      "status": "pending",
+      "changed_files": [],
+      "tests_run": [],
+      "evidence": [],
+      "remaining": ["Default contract in QuizCreationService", "Mock compliance", "Retry deficit vector", "Pre-persist validation", "Frontend multiple_choice label"],
+      "next_task": "V7.4.2-04",
+      "commits": []
     },
-    "V7.4.1-04": {
-      "status": "done",
-      "commits": ["test(v7.4.1): quiz submission atomic transaction verification"],
-      "tests_run": [{"command": "pytest test_v7_4_1_quiz_atomic.py", "exit_code": 0, "result": "5 passed"}]
+    "V7.4.2-04": {
+      "status": "pending",
+      "changed_files": [],
+      "tests_run": [],
+      "evidence": [],
+      "remaining": ["Frontend sends task_id in submitQuiz", "Backend validates task before modifying answers", "Single transaction for all state changes", "Return percentage/pass_score/passed/task_verification"],
+      "next_task": "V7.4.2-05",
+      "commits": []
     },
-    "V7.4.1-05": {
-      "status": "done",
-      "commits": ["test(v7.4.1): multi-plan safe delete and reschedule diff"],
-      "tests_run": [{"command": "pytest test_v7_4_1_multi_plan_safety.py", "exit_code": 0, "result": "7 passed"}]
+    "V7.4.2-05": {
+      "status": "pending",
+      "changed_files": [],
+      "tests_run": [],
+      "evidence": [],
+      "remaining": ["Remove force=true", "Add POST /plans/multi/{id}/archive", "Check execution history", "DELETE only for pristine plans", "Frontend archive option"],
+      "next_task": "V7.4.2-06",
+      "commits": []
     },
-    "V7.4.1-06": {
-      "status": "done",
-      "commits": ["feat(v7.4.1): KP generation history frontend closure"],
-      "tests_run": [{"command": "vitest run tests/unit/kp-history.spec.ts", "exit_code": 0, "result": "4 passed"}]
+    "V7.4.2-06": {
+      "status": "pending",
+      "changed_files": [],
+      "tests_run": [],
+      "evidence": [],
+      "remaining": ["Return kept/moved/created/superseded/unscheduled diff", "Each item has stable_task_key/old-new IDs/dates/generation/reason", "Preserve old generation with schedule_status", "Frontend grouped diff display"],
+      "next_task": "V7.4.2-07",
+      "commits": []
     },
-    "V7.4.1-07": {
-      "status": "done",
-      "commits": ["test(v7.4.1): real browser E2E verification"],
-      "evidence": ["Login with test/test1234 verified", "KP generation history displays in OutlineView", "Regenerate dialog says 归档 not 删除", "Multi-plan lifecycle (create/reschedule/delete) verified"]
+    "V7.4.2-07": {
+      "status": "pending",
+      "changed_files": [],
+      "tests_run": [],
+      "evidence": [],
+      "remaining": ["API for reading archived KPs by generation", "OutlineView read-only history mode", "Disable write operations in history mode", "QuizCreationService only accepts active generation"],
+      "next_task": "V7.4.2-08",
+      "commits": []
     },
-    "V7.4.1-08": {
-      "status": "done",
-      "commits": [],
-      "tests_run": [
-        {"command": "pytest app/tests/", "exit_code": 0, "result": "695 passed, 448 warnings in 304.96s"},
-        {"command": "vue-tsc --noEmit", "exit_code": 0, "result": "No errors"},
-        {"command": "vite build", "exit_code": 0, "result": "Built in 1.49s"}
-      ]
+    "V7.4.2-08": {
+      "status": "pending",
+      "changed_files": [],
+      "tests_run": [],
+      "evidence": [],
+      "remaining": ["7 Playwright scenarios", "Dynamic data creation", "Real parse worker", "Manifest verification", "Full regression"],
+      "next_task": null,
+      "commits": []
     }
-  },
-  "local_checks": {
-    "backend_tests": "695 passed",
-    "frontend_type_check": "passed",
-    "frontend_build": "passed",
-    "browser_e2e": "verified"
-  },
-  "known_risks": [
-    "Material parse requires separate worker process for background job queue",
-    "Mock LLM used for testing; real LLM integration deferred to V7.6"
-  ]
+  }
 }
