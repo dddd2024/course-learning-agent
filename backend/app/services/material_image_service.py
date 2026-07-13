@@ -47,29 +47,31 @@ def _page_asset_ready(asset: MaterialPageAsset) -> bool:
 
 
 def image_integrity(db: Session, material: Material) -> dict:
+    """V7.5.2-02: Unified integrity using evaluate_page_asset_coverage."""
+    from app.services.material_page_asset_service import evaluate_page_asset_coverage
+
     if material.active_version_id:
         rows = db.query(MaterialImage).filter(
             MaterialImage.material_id == material.id,
             MaterialImage.material_version_id == material.active_version_id,
         ).all()
-        assets = db.query(MaterialPageAsset).filter(
-            MaterialPageAsset.material_id == material.id,
-            MaterialPageAsset.material_version_id == material.active_version_id,
-        ).all()
     else:
         rows = db.query(MaterialImage).filter(
             MaterialImage.material_id == material.id,
         ).all()
-        assets = []
+
     ready = sum(image_state(row)[0] == "ready" for row in rows)
     total = len(rows)
     missing = total - ready
-    page_ready = sum(_page_asset_ready(asset) for asset in assets)
-    page_total = len(assets)
-    page_missing = page_total - page_ready
-    # page_fallback_ready requires full page coverage: every page asset
-    # must be ready, not just a subset.
-    page_fallback_ready = page_total > 0 and page_ready == page_total
+
+    # V7.5.2-02: Use unified page coverage for page asset info
+    page_cov = evaluate_page_asset_coverage(db, material)
+    page_total = page_cov["expected_pages"]
+    page_ready = page_cov["ready_pages"]
+    page_missing = page_cov["missing_pages"]
+    # page_fallback_ready requires full page coverage with no issues
+    page_fallback_ready = page_cov["status"] == "ready"
+
     if page_fallback_ready and (total == 0 or missing > 0):
         status = "page_fallback_ready"
     elif total == 0 and page_total == 0:
@@ -82,6 +84,7 @@ def image_integrity(db: Session, material: Material) -> dict:
         status = "partial"
     else:
         status = "missing"
+
     return {
         "material_id": material.id,
         "total": total,
@@ -92,6 +95,9 @@ def image_integrity(db: Session, material: Material) -> dict:
         "expected_pages": page_total,
         "ready_pages": page_ready,
         "missing_pages": page_missing,
+        "missing_page_numbers": page_cov.get("missing_page_numbers", []),
+        "invalid_page_numbers": page_cov.get("invalid_page_numbers", []),
+        "duplicate_page_numbers": page_cov.get("duplicate_page_numbers", []),
         "status": status,
     }
 
@@ -122,17 +128,21 @@ def reextract_images(
     source = Path(settings.UPLOAD_DIR) / material.file_path
     if not source.is_file():
         return {"material_id": material.id, "status": "missing", "code": "MATERIAL_FILE_MISSING", "found": 0, "extracted": 0}
+    target_version_id = material_version_id or material.active_version_id
+    # V7.5.2-01: Require a valid version to bind images to
+    if target_version_id is None:
+        return {"material_id": material.id, "status": "error", "code": "NO_MATERIAL_VERSION", "found": 0, "extracted": 0}
     extracted = extract_images_from_pdf(str(source))
     found = len(extracted)
-    target_version_id = material_version_id or material.active_version_id
     # V7.5.1-04: Only delete images for the target version, not all versions.
     db.query(MaterialImage).filter(
         MaterialImage.material_id == material.id,
         MaterialImage.material_version_id == target_version_id,
     ).delete(synchronize_session=False)
+    # V7.5.2-01: Use target version's chunks, not is_active flag
     chunks = db.query(MaterialChunk).filter(
         MaterialChunk.material_id == material.id,
-        MaterialChunk.is_active == 1,
+        MaterialChunk.material_version_id == target_version_id,
     ).all()
     page_to_chunk = {}
     for chunk in chunks:

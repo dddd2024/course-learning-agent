@@ -349,6 +349,7 @@ def parse_with_retry(
                             db,
                             material,
                             image_dir=staged_image_dir,
+                            material_version_id=version_row.id,
                             commit=False,
                         )
                     logger.info("Refreshed images for material %s", material_id)
@@ -370,8 +371,10 @@ def parse_with_retry(
                     raise RuntimeError(f"图片版本目录已存在：{promoted_image_dir.name}")
                 staged_image_dir.replace(promoted_image_dir)
                 relative_root = Path(settings.UPLOAD_DIR)
+                # V7.5.2-01: Only update images for the target version
                 for image in db.query(MaterialImage).filter(
-                    MaterialImage.material_id == material_id
+                    MaterialImage.material_id == material_id,
+                    MaterialImage.material_version_id == version_row.id,
                 ).all():
                     image.image_path = str(
                         (promoted_image_dir / image.image_filename).relative_to(relative_root)

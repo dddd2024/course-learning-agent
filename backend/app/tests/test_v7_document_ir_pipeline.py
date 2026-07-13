@@ -141,7 +141,7 @@ def test_cancelled_pdf_parse_discards_staged_images_before_activation(
         calls["count"] += 1
         return calls["count"] >= 6
 
-    def fake_extract_images(db, mat, *, image_dir, commit):
+    def fake_extract_images(db, mat, *, image_dir, commit, material_version_id=None):
         calls["commit"] = commit
         image_dir.mkdir(parents=True, exist_ok=True)
         (image_dir / "staged.png").write_bytes(b"staged")

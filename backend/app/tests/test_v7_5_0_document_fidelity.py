@@ -151,6 +151,12 @@ def test_reextract_keeps_same_embedded_image_on_different_page_occurrences(db_se
     source.write_bytes(b"fixture")
     material = Material(user_id=sample_user.id, course_id=sample_course.id, filename="slides.pdf", file_type="pdf", file_path="slides.pdf", status="ready")
     db_session.add(material)
+    db_session.flush()
+    # V7.5.2-01: reextract_images requires a non-null target_version_id
+    version = MaterialVersion(material_id=material.id, version=1, status="ready")
+    db_session.add(version)
+    db_session.flush()
+    material.active_version_id = version.id
     db_session.commit()
     payload = b"same-bitmap"
     occurrences = [

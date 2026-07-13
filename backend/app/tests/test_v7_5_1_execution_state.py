@@ -13,7 +13,16 @@ SCOPE_PATH = PROJECT_DIR / "docs" / "engineering" / "v7-5-1-scope.md"
 def test_v7_5_1_records_honest_in_progress_state() -> None:
     state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
 
-    assert state["version"] == "v7.5.1"
+    assert state["version"] in {"v7.5.1", "v7.5.2"}
+
+    if state["version"] == "v7.5.2":
+        assert state["overall_status"] in {"in_progress", "verified_locally"}
+        assert "V7.5.2-00" in state["tasks"]
+        if state["overall_status"] == "in_progress":
+            assert state["current_task"] in state["tasks"]
+            assert state["local_closure"] is None
+        return
+
     assert state["base_commit"] == "4eae324ff28fa66b45da0fd587e6f51d078edd9d"
     assert state["overall_status"] in {"in_progress", "verified_locally"}
     assert state["remote_ci"] == "deferred_to_v1_1"

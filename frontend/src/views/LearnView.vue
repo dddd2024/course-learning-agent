@@ -855,48 +855,6 @@ function handleImageError(imgId: number) {
   brokenImageIds.value.add(imgId)
 }
 
-// V6-14/V6-52: re-extract images when broken images are detected
-async function handleReextractImages() {
-  if (!selectedMaterialId.value || reextractingImages.value) return
-  reextractingImages.value = true
-  try {
-    const { data: result } = await reextractImages(selectedMaterialId.value)
-    if (result.status === 'forbidden') {
-      ElMessage.warning('该资料类型不支持图片提取')
-    } else if (result.status === 'missing') {
-      ElMessage.error('原始文件缺失，无法提取图片')
-    } else {
-      const found = result.found ?? 0
-      const extracted = result.extracted ?? 0
-      // Reload integrity to get current missing count
-      let stillMissing = 0
-      try {
-        const { data: integrity } = await getImageIntegrity(selectedMaterialId.value)
-        stillMissing = integrity.missing
-        imageIntegrityStatus.value = integrity.status
-      } catch {
-        // integrity fetch is best-effort
-      }
-      if (stillMissing > 0) {
-        ElMessage.warning(
-          `重新提取完成：找到 ${found} 张图片，提取 ${extracted} 张，仍有 ${stillMissing} 张缺失（旧图片仍可用）`,
-        )
-      } else {
-        ElMessage.success(
-          `重新提取完成：找到 ${found} 张图片，成功提取 ${extracted} 张`,
-        )
-      }
-      // Reload chunks to show the new images
-      brokenImageIds.value.clear()
-      await loadChunks()
-    }
-  } catch (err) {
-    ElMessage.error(parseApiError(err, '重新提取图片失败，旧图片仍可使用'))
-  } finally {
-    reextractingImages.value = false
-  }
-}
-
 // V6-52: load image integrity status for the selected material
 async function loadImageIntegrity() {
   if (!selectedMaterialId.value) return
@@ -925,7 +883,6 @@ async function handleRepairDocument() {
     }
 
     // Step 2: Re-extract standalone images
-    let imgFound = 0
     let imgExtracted = 0
     try {
       const { data: result } = await reextractImages(selectedMaterialId.value)
@@ -934,7 +891,6 @@ async function handleRepairDocument() {
       } else if (result.status === 'missing') {
         // Source file missing — skip
       } else {
-        imgFound = result.found ?? 0
         imgExtracted = result.extracted ?? 0
       }
     } catch {

@@ -35,7 +35,15 @@ def test_v7_4_4_state_starts_honestly_in_progress() -> None:
             assert state["local_closure"] is None
         return
 
-    assert state["version"] in ('v7.4.4', 'v7.5.0', 'v7.5.1')
+    if state["version"] == "v7.5.2":
+        assert state["overall_status"] in {"in_progress", "verified_locally"}
+        assert "V7.5.2-00" in state["tasks"]
+        if state["overall_status"] == "in_progress":
+            assert state["current_task"] in state["tasks"]
+            assert state["local_closure"] is None
+        return
+
+    assert state["version"] in ('v7.4.4', 'v7.5.0', 'v7.5.1', 'v7.5.2')
     assert state["base_commit"] == "9af524e9e1c7ff149256170931cf7fc9d766858e"
     assert state["overall_status"] == "in_progress"
     assert state["current_task"] in state["tasks"]

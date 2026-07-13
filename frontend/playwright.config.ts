@@ -1,5 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
-import { existsSync } from 'fs'
+import { existsSync, rmSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -9,32 +9,32 @@ import { fileURLToPath } from 'url'
  * Starts the backend (port 8000), parse worker (port 8001), and
  * frontend (port 5173) dev servers, then runs the E2E test suite
  * against the Vite dev server.
+ *
+ * V7.5.2-04: Forces complete environment isolation — dedicated E2E
+ * database, dedicated upload directory, and CLEAN_E2E_DB to drop and
+ * recreate tables before each run.
  */
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-// Use the backend virtual-env Python when available (local dev on
-// Windows).  On CI (Ubuntu) packages are installed globally so
-// ``python`` resolves correctly.
 const venvPython = resolve(__dirname, '..', 'backend', '.venv', 'Scripts', 'python.exe')
 const pythonExe = existsSync(venvPython) ? venvPython : 'python'
 
-// Use a single shared SQLite database so the backend server and the
-// parse worker (which run from different working directories) see the
-// same data.  In CI the DATABASE_URL env var is already set by the
-// workflow, so we only set a default for local development.
-const defaultDbUrl = `sqlite:///${resolve(__dirname, '..', 'e2e-test.db').replace(/\\/g, '/')}`
+// V7.5.2-04: Dedicated E2E database, separate from dev/prod.
+const e2eDbPath = resolve(__dirname, '..', 'e2e-test.db')
+const defaultDbUrl = `sqlite:///${e2eDbPath.replace(/\\/g, '/')}`
 const dbUrl = process.env.DATABASE_URL || defaultDbUrl
 const backendPort = Number(process.env.E2E_BACKEND_PORT || '8000')
 const workerPort = Number(process.env.E2E_WORKER_PORT || '8001')
 const frontendPort = Number(process.env.E2E_FRONTEND_PORT || '5173')
 
-// Use an absolute UPLOAD_DIR so the backend (CWD=backend/) and the
-// parse worker (CWD=project-root) resolve to the same directory.
-// V7.5.1-05: E2E tests must use an isolated upload directory, separate
-// from storage/uploads used by real data, to prevent polluting actual
-// user files.
+// V7.5.2-04: Isolated upload directory.
 const uploadDir = resolve(__dirname, '..', 'storage', 'e2e-uploads').replace(/\\/g, '/')
+
+// V7.5.2-04: Delete stale E2E database before starting.
+try { rmSync(e2eDbPath, { force: true }) } catch { /* ignore */ }
+try { rmSync(uploadDir, { recursive: true, force: true }) } catch { /* ignore */ }
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: false,
@@ -72,6 +72,8 @@ export default defineConfig({
         LLM_PROVIDER: 'mock',
         DATABASE_URL: dbUrl,
         UPLOAD_DIR: uploadDir,
+        E2E_MODE: 'true',
+        CLEAN_E2E_DB: 'true',
       },
       url: `http://127.0.0.1:${backendPort}/docs`,
       reuseExistingServer: !process.env.CI,
@@ -84,6 +86,7 @@ export default defineConfig({
         DATABASE_URL: dbUrl,
         UPLOAD_DIR: uploadDir,
         PARSE_WORKER_HEALTH_PORT: String(workerPort),
+        E2E_MODE: 'true',
       },
       url: `http://127.0.0.1:${workerPort}/`,
       reuseExistingServer: !process.env.CI,
