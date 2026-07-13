@@ -53,6 +53,10 @@ class MultiCoursePlanTask(Base, TimestampMixin):
     # so they display correctly and are filtered by generation in the detail view.
     title_snapshot = Column(String(255), nullable=True)
     generation = Column(Integer, nullable=True)
+    # V7.4.4-05: identity also belongs to unscheduled entries, which have no
+    # StudyTask row to carry stable_task_key/task_type.
+    stable_task_key = Column(String(320), nullable=True, index=True)
+    task_type_snapshot = Column(String(30), nullable=True)
 
 
 class MultiPlanRescheduleRun(Base, TimestampMixin):

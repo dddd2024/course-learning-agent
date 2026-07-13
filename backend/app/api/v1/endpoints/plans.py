@@ -97,6 +97,24 @@ def _normalise_task_type(value: str | None) -> str:
     return "quiz" if value in {"practice", "exercise", "test"} else value if value in {"learn", "review", "quiz"} else "review"
 
 
+def build_stable_task_key(
+    course_id: int,
+    task_type: str | None,
+    title: str | None,
+    goal_key: str | None = None,
+) -> str:
+    """Build the one durable identity used by scheduled and overflow tasks."""
+    normalized_type = _normalise_task_type(task_type)
+    normalized_title = re.sub(r"\s+", "", title or "").lower()
+    normalized_goal = re.sub(r"\s+", "", goal_key or "").lower()
+    return ":".join(part for part in (str(course_id), normalized_type, normalized_title, normalized_goal) if part)
+
+
+def _reschedule_stage(stage: str) -> None:
+    """No-op test seam; production behavior is entirely unchanged."""
+    return None
+
+
 def _load_course_names(
     db: Session,
     course_ids: set[int],
@@ -909,7 +927,7 @@ def create_multi_plan(
             target_spec_json=json.dumps(target_spec, ensure_ascii=False),
             execution_status="pending",
             generation=parent.generation_version,
-            stable_task_key=f"{course_id}:{task_type}:{re.sub(r'\\s+', '', item['title']).lower()}",
+            stable_task_key=build_stable_task_key(course_id, task_type, item["title"]),
             schedule_status="active",
         )
         db.add(task)
@@ -922,6 +940,8 @@ def create_multi_plan(
             depends_on_json=json.dumps(item.get("depends_on", []), ensure_ascii=False),
             scheduled_date=item["scheduled_date"],
             estimate_minutes=item["estimate_minutes"],
+            stable_task_key=task.stable_task_key,
+            task_type_snapshot=task_type,
         ))
 
         todo = Todo(
@@ -950,6 +970,7 @@ def create_multi_plan(
         )
 
     for item in unscheduled_tasks:
+        task_type = _normalise_task_type(item.get("task_type"))
         db.add(MultiCoursePlanTask(
             multi_plan_id=parent.id,
             task_id=None,
@@ -960,6 +981,10 @@ def create_multi_plan(
             unscheduled_reason=item["reason"],
             title_snapshot=item.get("title", ""),
             generation=parent.generation_version,
+            stable_task_key=build_stable_task_key(
+                item["course_id"], task_type, item.get("title", "")
+            ),
+            task_type_snapshot=task_type,
         ))
     db.commit()
 
@@ -1285,11 +1310,21 @@ def reschedule_multi_plan(
     plan = _get_owned_multi_plan(db, multi_plan_id, current_user.id)
 
     # Snapshot old schedule for diff calculation.
-    old_plan_tasks = (
+    all_old_plan_tasks = (
         db.query(MultiCoursePlanTask)
         .filter(MultiCoursePlanTask.multi_plan_id == plan.id)
         .all()
     )
+    old_task_ids_all = [pt.task_id for pt in all_old_plan_tasks if pt.task_id is not None]
+    old_task_generation = {
+        task.id: task.generation
+        for task in db.query(StudyTask).filter(StudyTask.id.in_(old_task_ids_all)).all()
+    } if old_task_ids_all else {}
+    old_plan_tasks = [
+        pt for pt in all_old_plan_tasks
+        if (old_task_generation.get(pt.task_id) if pt.task_id is not None else pt.generation)
+        == plan.generation_version
+    ]
     old_task_ids = [pt.task_id for pt in old_plan_tasks if pt.task_id is not None]
     old_goal_ids: set[int] = set()
     if old_task_ids:
@@ -1434,7 +1469,7 @@ def reschedule_multi_plan(
             target_spec_json=json.dumps(target_spec, ensure_ascii=False),
             execution_status="pending",
             generation=plan.generation_version,
-            stable_task_key=f"{course_id}:{task_type}:{re.sub(r'\\s+', '', item['title']).lower()}",
+            stable_task_key=build_stable_task_key(course_id, task_type, item["title"]),
             schedule_status="active",
         )
         db.add(task)
@@ -1449,6 +1484,8 @@ def reschedule_multi_plan(
             depends_on_json=json.dumps(item.get("depends_on", []), ensure_ascii=False),
             scheduled_date=item["scheduled_date"],
             estimate_minutes=item["estimate_minutes"],
+            stable_task_key=task.stable_task_key,
+            task_type_snapshot=task_type,
         ))
 
         todo = Todo(
@@ -1477,6 +1514,7 @@ def reschedule_multi_plan(
         )
 
     for item in unscheduled_tasks:
+        task_type = _normalise_task_type(item.get("task_type"))
         db.add(MultiCoursePlanTask(
             multi_plan_id=plan.id,
             task_id=None,
@@ -1487,7 +1525,12 @@ def reschedule_multi_plan(
             unscheduled_reason=item["reason"],
             title_snapshot=item.get("title", ""),
             generation=plan.generation_version,
+            stable_task_key=build_stable_task_key(
+                item["course_id"], task_type, item.get("title", "")
+            ),
+            task_type_snapshot=task_type,
         ))
+    _reschedule_stage("new_tasks_created")
     # Build and persist the complete diff before committing the generation.
     db.flush()
 
@@ -1498,7 +1541,7 @@ def reschedule_multi_plan(
         task = old_task_by_id.get(pt.task_id) if pt.task_id else None
         old_tasks_snapshot.append({
             "task_id": pt.task_id,
-            "stable_task_key": task.stable_task_key if task else None,
+            "stable_task_key": pt.stable_task_key or (task.stable_task_key if task else None),
             "scheduled_date": pt.scheduled_date,
             "estimate_minutes": pt.estimate_minutes,
             "title": task.title if task else (pt.title_snapshot or ""),
@@ -1534,7 +1577,7 @@ def reschedule_multi_plan(
             continue
         new_tasks_snapshot.append({
             "task_id": pt.task_id,
-            "stable_task_key": task.stable_task_key if task else None,
+            "stable_task_key": pt.stable_task_key or (task.stable_task_key if task else None),
             "scheduled_date": pt.scheduled_date,
             "estimate_minutes": pt.estimate_minutes,
             "title": task.title if task else (pt.title_snapshot or ""),
@@ -1655,6 +1698,7 @@ def reschedule_multi_plan(
                 estimate_minutes=item["estimate_minutes"],
             ))
 
+    _reschedule_stage("diff_construct")
     diff = MultiPlanRescheduleDiff(
         kept=kept_items,
         moved=moved_items,
@@ -1671,6 +1715,7 @@ def reschedule_multi_plan(
     )
     db.add(run)
     db.flush()
+    _reschedule_stage("diff_write")
     for category, entries in {
         "kept": kept_items, "moved": moved_items, "created": created_items,
         "superseded": superseded_items, "unscheduled": unscheduled_items,
@@ -1686,6 +1731,7 @@ def reschedule_multi_plan(
                 reason=entry.reason, title=entry.title,
                 course_id=new_item.get("course_id") or old_item.get("course_id"),
             ))
+    _reschedule_stage("before_commit")
     db.commit()
 
     return MultiPlanRescheduleResponse(
