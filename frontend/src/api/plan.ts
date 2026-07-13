@@ -288,6 +288,10 @@ export function deleteMultiPlan(id: number): AxiosPromise<void> {
   return request.delete(`/plans/multi/${id}`)
 }
 
+export function archiveMultiPlan(id: number): AxiosPromise<MultiPlanDetail> {
+  return request.post(`/plans/multi/${id}/archive`)
+}
+
 export function rescheduleMultiPlan(
   id: number,
   payload: { daily_minutes: number },

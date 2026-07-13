@@ -4,7 +4,7 @@
   "branch": "codex/v7-4-3-authenticity-reclosure",
   "started_at": "2026-07-13T16:35:00+08:00",
   "overall_status": "in_progress",
-  "current_task": "V7.4.3-05",
+  "current_task": "V7.4.3-06",
   "local_closure": null,
   "remote_ci": "deferred_to_v7_6",
   "tasks": {
@@ -13,8 +13,8 @@
     "V7.4.3-02": {"status":"done","changed_files":["backend/app/db/versioned_migrations/018_v7_4_page_unique.py","backend/app/tests/test_v7_4_3_migration_integrity.py"],"commands":[["backend/.venv/Scripts/python.exe","-m","pytest","-q","backend/app/tests/test_v7_4_2_migration_integrity.py","backend/app/tests/test_v7_4_3_migration_integrity.py"]],"tests_run":["backend/app/tests/test_v7_4_2_migration_integrity.py","backend/app/tests/test_v7_4_3_migration_integrity.py"],"test_summaries":[],"evidence":["12 targeted migration tests passed"],"remaining":[],"next_task":"V7.4.3-03","commits":[]},
     "V7.4.3-03": {"status":"done","changed_files":["backend/app/services/quiz_creation_service.py","backend/app/tests/test_v7_4_3_quiz_contract.py"],"commands":[["backend/.venv/Scripts/python.exe","-m","pytest","-q","backend/app/tests/test_v7_4_2_quiz_contract.py","backend/app/tests/test_v7_4_3_quiz_contract.py"]],"tests_run":["backend/app/tests/test_v7_4_2_quiz_contract.py","backend/app/tests/test_v7_4_3_quiz_contract.py"],"test_summaries":[],"evidence":["25 targeted quiz-contract tests passed"],"remaining":[],"next_task":"V7.4.3-04","commits":[]},
     "V7.4.3-04": {"status":"done","changed_files":["backend/app/api/v1/endpoints/quizzes.py","backend/app/services/task_execution_service.py","backend/app/tests/test_v7_4_3_quiz_atomic.py"],"commands":[["backend/.venv/Scripts/python.exe","-m","pytest","-q","backend/app/tests/test_v7_4_2_quiz_atomic.py","backend/app/tests/test_v7_4_3_quiz_atomic.py"]],"tests_run":["backend/app/tests/test_v7_4_2_quiz_atomic.py","backend/app/tests/test_v7_4_3_quiz_atomic.py"],"test_summaries":[],"evidence":["8 targeted atomic-submit tests passed"],"remaining":[],"next_task":"V7.4.3-05","commits":[]},
-    "V7.4.3-05": {"status":"in_progress","changed_files":[],"commands":[],"tests_run":[],"test_summaries":[],"evidence":[],"remaining":["Not started."],"next_task":"V7.4.3-06","commits":[]},
-    "V7.4.3-06": {"status":"pending","changed_files":[],"commands":[],"tests_run":[],"test_summaries":[],"evidence":[],"remaining":["Not started."],"next_task":"V7.4.3-07","commits":[]},
+    "V7.4.3-05": {"status":"done","changed_files":["backend/app/core/exceptions.py","backend/app/services/multi_plan_history_service.py","backend/app/api/v1/endpoints/plans.py","backend/app/tests/test_v7_4_3_plan_safety.py","frontend/src/api/plan.ts","frontend/src/views/MultiPlanView.vue"],"commands":[["backend/.venv/Scripts/python.exe","-m","pytest","-q","backend/app/tests/test_v7_4_2_plan_safety.py","backend/app/tests/test_v7_4_3_plan_safety.py"],["npm","run","type-check"]],"tests_run":["backend/app/tests/test_v7_4_2_plan_safety.py","backend/app/tests/test_v7_4_3_plan_safety.py"],"test_summaries":[],"evidence":["9 plan-safety tests passed; frontend type-check passed"],"remaining":[],"next_task":"V7.4.3-06","commits":[]},
+    "V7.4.3-06": {"status":"in_progress","changed_files":[],"commands":[],"tests_run":[],"test_summaries":[],"evidence":[],"remaining":["Not started."],"next_task":"V7.4.3-07","commits":[]},
     "V7.4.3-07": {"status":"pending","changed_files":[],"commands":[],"tests_run":[],"test_summaries":[],"evidence":[],"remaining":["Not started."],"next_task":"V7.4.3-08","commits":[]},
     "V7.4.3-08": {"status":"pending","changed_files":[],"commands":[],"tests_run":[],"test_summaries":[],"evidence":[],"remaining":["Not started."],"next_task":"V7.4.3-09","commits":[]},
     "V7.4.3-09": {"status":"pending","changed_files":[],"commands":[],"tests_run":[],"test_summaries":[],"evidence":[],"remaining":["Not started."],"next_task":null,"commits":[]}

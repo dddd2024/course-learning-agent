@@ -20,7 +20,6 @@ import {
   type QuestionType,
   type WeakPoint,
 } from '../api/quiz'
-import { verifyTask } from '../api/plan'
 import { parseApiError } from '../utils/error'
 import EmptyState from '../components/common/EmptyState.vue'
 import QuizAnswerControl from '../components/quiz/QuizAnswerControl.vue'

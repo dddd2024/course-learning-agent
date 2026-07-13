@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox, type TableInstance } from 'element-plus'
 import { listCourses, type Course } from '../api/course'
 import {
   createMultiPlan,
+  archiveMultiPlan,
   deleteMultiPlan,
   getMultiPlan,
   getMultiPlanHistory,
@@ -19,7 +20,6 @@ import {
   type MultiPlanResult,
   type MultiPlanScheduleItem,
   type MultiPlanTaskItem,
-  type RescheduleDiffItem,
 } from '../api/plan'
 import { MAX_PAGE_SIZE } from '../constants/pagination'
 import { parseApiError } from '../utils/error'
@@ -488,7 +488,17 @@ async function handleDeleteMultiPlan() {
       delete courseConfigs[Number(id)]
     }
   } catch (err) {
-    ElMessage.error(parseApiError(err, '删除多课程计划失败'))
+    const message = parseApiError(err, '删除多课程计划失败')
+    if (message.includes('PLAN_HAS_HISTORY') || message.includes('执行历史')) {
+      try {
+        await ElMessageBox.confirm('该计划已有执行历史，是否改为归档以保留记录？', '归档计划', { confirmButtonText: '归档', cancelButtonText: '取消', type: 'warning' })
+        await archiveMultiPlan(planId)
+        ElMessage.success('多课程计划已归档')
+        await fetchMultiPlanList()
+      } catch { return }
+    } else {
+      ElMessage.error(message)
+    }
   }
 }
 

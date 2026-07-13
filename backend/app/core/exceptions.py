@@ -49,6 +49,12 @@ class BusinessException(AppException):
     default_message = "业务错误"
 
 
+class PlanHasHistoryException(BusinessException):
+    code = "PLAN_HAS_HISTORY"
+    status_code = 409
+    default_message = "计划已有执行历史，不能删除，请改为归档"
+
+
 class QuizConstraintException(BusinessException):
     """A structured 422 response when a requested quiz cannot be built."""
 

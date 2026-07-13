@@ -30,7 +30,7 @@ from app.agents.planner import generate as planner_generate
 from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.exceptions import BusinessException, NotFoundException
+from app.core.exceptions import BusinessException, NotFoundException, PlanHasHistoryException
 from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
 from app.models.material import Material
@@ -85,6 +85,7 @@ from app.services.task_execution_service import (
 )
 from app.services.task_target_resolver import resolve_target
 from app.services.plan_state_service import todo_update_allowed
+from app.services.multi_plan_history_service import has_execution_history
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -1193,24 +1194,8 @@ def delete_multi_plan(
     )
     task_ids = [pt.task_id for pt in plan_tasks if pt.task_id is not None]
 
-    # V7.4.2-05: Always check execution history (force parameter removed)
-    if task_ids:
-        tasks_with_history = (
-            db.query(StudyTask)
-            .filter(
-                StudyTask.id.in_(task_ids),
-                StudyTask.execution_status != "pending",
-            )
-            .all()
-        )
-        if tasks_with_history:
-            raise BusinessException(
-                message=(
-                    f"无法删除：{len(tasks_with_history)} 个任务已有执行记录。"
-                    "请改用归档（archive）来保留历史记录。"
-                ),
-                status_code=409,
-            )
+    if has_execution_history(db, plan.id):
+        raise PlanHasHistoryException()
 
     # Collect StudyGoal ids from the tasks (to delete the per-course goals).
     goal_ids: set[int] = set()
