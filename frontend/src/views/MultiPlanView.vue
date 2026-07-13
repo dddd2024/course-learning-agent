@@ -1229,6 +1229,11 @@ onMounted(async () => {
                   </template>
                 </el-table-column>
                 <el-table-column prop="estimate_minutes" label="分钟" width="70" />
+                <el-table-column label="稳定键" min-width="180" show-overflow-tooltip>
+                  <template #default="{ row }">
+                    <code class="stable-task-key">{{ row.stable_task_key || '—' }}</code>
+                  </template>
+                </el-table-column>
                 <el-table-column prop="reason" label="原因" min-width="120" show-overflow-tooltip />
               </el-table>
             </div>

@@ -49,6 +49,8 @@ MIGRATION_MODULES = [
     "018_v7_4_page_unique",
     "019_v7_4_chunk_fragments",
     "020_v7_4_plan_task_snapshot",
+    "021_v7_4_3_reschedule_history",
+    "022_v7_4_4_plan_task_identity",
 ]
 
 

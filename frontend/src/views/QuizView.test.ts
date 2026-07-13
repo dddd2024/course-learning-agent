@@ -128,6 +128,9 @@ const mockQuizResult: QuizResult = {
   id: 1,
   score: 70,
   total: 100,
+  percentage: 70,
+  pass_score: 60,
+  passed: true,
   items: [mockResultItem],
 }
 
@@ -171,6 +174,9 @@ describe('QuizView', () => {
     expect(html).toContain('FCFS和轮转调度')
     // Correct answer should be shown
     expect(html).toContain('正确答案')
+    // The result contract is visible to the learner, not only returned by the API.
+    expect(html).toContain('测验通过')
+    expect(html).toContain('及格线：60%')
   })
 
   it('source evidence displayed with chunk reference', async () => {

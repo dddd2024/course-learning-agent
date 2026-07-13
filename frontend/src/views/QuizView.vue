@@ -133,6 +133,7 @@ function isQuizOpenable(status: string): status is QuizStatus {
 function questionTypeLabel(t: string): string {
   const map: Record<string, string> = {
     choice: '选择题',
+    multiple_choice: '多选题',
     true_false: '判断题',
     short_answer: '简答题',
   }
@@ -579,6 +580,15 @@ onUnmounted(() => {
           :closable="false"
           show-icon
           class="result-alert"
+        />
+        <el-alert
+          v-if="quizResult.percentage !== undefined && quizResult.pass_score !== undefined && quizResult.passed !== undefined"
+          :title="quizResult.passed ? '测验通过' : '测验未通过'"
+          :description="`得分率：${quizResult.percentage}% · 及格线：${quizResult.pass_score}%`"
+          :type="quizResult.passed ? 'success' : 'warning'"
+          :closable="false"
+          show-icon
+          class="result-pass-alert"
         />
 
         <el-card
