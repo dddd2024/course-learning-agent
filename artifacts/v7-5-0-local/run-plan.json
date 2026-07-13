@@ -1,0 +1,22 @@
+{
+  "version": "v7.5.0",
+  "base_sha": "63a2a176e891059023c4dd2bad630c5c9a0218bc",
+  "head_sha": "HEAD",
+  "include": [
+    "scripts/collect_local_evidence.py",
+    "scripts/verify_local_evidence.py",
+    "scripts/verify_document_assets.py",
+    "artifacts/v7-5-0-local/run-plan.json",
+    "backend/app/tests/test_v7_5_0_document_fidelity.py",
+    "frontend/src/components/document/PageCanvas.vue",
+    "frontend/src/components/document/PageTextPanel.vue"
+  ],
+  "commands": [
+    {"label":"git-status-before","command":["git","status","--short"]},
+    {"label":"backend-full","cwd":"backend","command":[".venv/Scripts/python.exe","-m","pytest","-q","app/tests"]},
+    {"label":"document-fidelity","cwd":"backend","command":[".venv/Scripts/python.exe","-m","pytest","-q","app/tests/test_v7_5_0_document_fidelity.py"]},
+    {"label":"frontend-typecheck","cwd":"frontend","command":["npm.cmd","run","type-check"]},
+    {"label":"frontend-build","cwd":"frontend","command":["npm.cmd","run","build"]},
+    {"label":"git-diff-check","command":["git","diff","--check"]}
+  ]
+}
