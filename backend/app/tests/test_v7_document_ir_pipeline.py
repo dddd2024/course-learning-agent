@@ -179,6 +179,6 @@ def test_cancelled_pdf_parse_discards_staged_images_before_activation(
 def test_clean_reader_mode_does_not_render_page_clean_text_twice():
     source = (Path(__file__).parents[3] / "frontend" / "src" / "views" / "LearnView.vue").read_text(encoding="utf-8")
 
-    assert "v-if=\"readerMode === 'raw'\"" in source
-    assert "v-else-if=\"readerMode === 'page'\"" in source
+    assert "<PageCanvas v-if=\"readerMode === 'page'\"" in source
+    assert "<PageTextPanel v-else-if=\"readerMode === 'raw'\"" in source
     assert "v-else class=\"doc-chunks\" @mouseup=\"handleSelection\"" in source

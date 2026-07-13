@@ -19,6 +19,14 @@ REQUIRED_TASK_FIELDS = {
 def test_v7_4_4_state_starts_honestly_in_progress() -> None:
     state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
 
+    if state["version"] == "v7.5.0":
+        assert state["overall_status"] in {"in_progress", "verified_locally"}
+        assert state["tasks"]["V7.5.0-00"]["status"] == "done"
+        if state["overall_status"] == "in_progress":
+            assert state["current_task"] in state["tasks"]
+            assert state["local_closure"] is None
+        return
+
     assert state["version"] == "v7.4.4"
     assert state["base_commit"] == "9af524e9e1c7ff149256170931cf7fc9d766858e"
     assert state["overall_status"] == "in_progress"

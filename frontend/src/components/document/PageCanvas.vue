@@ -19,7 +19,13 @@ const urls = reactive<Record<number, string>>({})
 async function loadAssets() {
   await Promise.allSettled(props.pages.map(async (page) => {
     if (!page.page_asset?.file_url || urls[page.id]) return
-    const { data } = await request.get(page.page_asset.file_url, { responseType: 'blob' })
+    // The API catalogue exposes an app-root URL.  Axios already has
+    // ``/api/v1`` as its base URL, so remove that one prefix before issuing
+    // the authenticated request instead of producing ``/api/v1/api/v1/...``.
+    const fileUrl = page.page_asset.file_url.startsWith('/api/v1/')
+      ? page.page_asset.file_url.slice('/api/v1'.length)
+      : page.page_asset.file_url
+    const { data } = await request.get(fileUrl, { responseType: 'blob' })
     urls[page.id] = URL.createObjectURL(data)
   }))
 }

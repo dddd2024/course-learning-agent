@@ -19,3 +19,5 @@ Page images are the visual source of truth; text blocks and chunks are a
 separate searchable derivation. A ready asset must be physically readable by
 the authenticated API and an image decoder. Every release assertion must run
 against tracked code and leave a manifest that a fresh clone can verify.
+Automated assertions must use self-contained or runtime-generated fixtures;
+an unavailable real course PDF is optional manual evidence only.

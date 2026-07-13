@@ -25,6 +25,9 @@ const pythonExe = existsSync(venvPython) ? venvPython : 'python'
 // workflow, so we only set a default for local development.
 const defaultDbUrl = `sqlite:///${resolve(__dirname, '..', 'e2e-test.db').replace(/\\/g, '/')}`
 const dbUrl = process.env.DATABASE_URL || defaultDbUrl
+const backendPort = Number(process.env.E2E_BACKEND_PORT || '8000')
+const workerPort = Number(process.env.E2E_WORKER_PORT || '8001')
+const frontendPort = Number(process.env.E2E_FRONTEND_PORT || '5173')
 
 // Use an absolute UPLOAD_DIR so the backend (CWD=backend/) and the
 // parse worker (CWD=project-root) resolve to the same directory.
@@ -47,7 +50,7 @@ export default defineConfig({
     timeout: 10_000,
   },
   use: {
-    baseURL: 'http://127.0.0.1:5173',
+    baseURL: `http://127.0.0.1:${frontendPort}`,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -63,13 +66,13 @@ export default defineConfig({
   outputDir: 'test-results',
   webServer: [
     {
-      command: `cd ../backend && ${pythonExe} -c "from app.models import Base; from app.core.database import engine; Base.metadata.create_all(engine); print('DB initialized')" && ${pythonExe} ../scripts/migrate.py && ${pythonExe} -m uvicorn app.main:app --host 127.0.0.1 --port 8000`,
+      command: `cd ../backend && ${pythonExe} -c "from app.models import Base; from app.core.database import engine; Base.metadata.create_all(engine); print('DB initialized')" && ${pythonExe} ../scripts/migrate.py && ${pythonExe} -m uvicorn app.main:app --host 127.0.0.1 --port ${backendPort}`,
       env: {
         LLM_PROVIDER: 'mock',
         DATABASE_URL: dbUrl,
         UPLOAD_DIR: uploadDir,
       },
-      url: 'http://127.0.0.1:8000/docs',
+      url: `http://127.0.0.1:${backendPort}/docs`,
       reuseExistingServer: !process.env.CI,
       timeout: 60_000,
     },
@@ -79,14 +82,15 @@ export default defineConfig({
         LLM_PROVIDER: 'mock',
         DATABASE_URL: dbUrl,
         UPLOAD_DIR: uploadDir,
+        PARSE_WORKER_HEALTH_PORT: String(workerPort),
       },
-      url: 'http://127.0.0.1:8001/',
+      url: `http://127.0.0.1:${workerPort}/`,
       reuseExistingServer: !process.env.CI,
       timeout: 60_000,
     },
     {
-      command: 'npm run dev',
-      url: 'http://127.0.0.1:5173',
+      command: `npm run dev -- --port ${frontendPort}`,
+      url: `http://127.0.0.1:${frontendPort}`,
       reuseExistingServer: !process.env.CI,
       timeout: 60_000,
     },

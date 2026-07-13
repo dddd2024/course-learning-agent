@@ -1,6 +1,9 @@
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 
+const devPort = Number(process.env.E2E_FRONTEND_PORT || '5173')
+const backendPort = Number(process.env.E2E_BACKEND_PORT || '8000')
+
 // https://vite.dev/config/
 //
 // ERR_NETWORK fix: the dev server now binds to 127.0.0.1 (matching the
@@ -14,14 +17,14 @@ export default defineConfig({
   plugins: [vue()],
   server: {
     host: '127.0.0.1',
-    port: 5173,
+    port: devPort,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        target: `http://127.0.0.1:${backendPort}`,
         changeOrigin: true,
       },
       '/uploads': {
-        target: 'http://127.0.0.1:8000',
+        target: `http://127.0.0.1:${backendPort}`,
         changeOrigin: true,
       },
     },

@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import hashlib
+import io
 from pathlib import Path
 
 import fitz
+import pytest
+from PIL import Image, ImageDraw
 
 from app.core import database
 from app.models.material import Material, MaterialVersion
@@ -26,6 +29,37 @@ def _two_page_pdf(path: Path) -> None:
         page = document.new_page()
         page.insert_text((72, 72), label, fontsize=24)
         page.draw_rect(fitz.Rect(72, 120, 360, 260), color=(0, 0.2, 0.8), fill=(0.9, 0.95, 1))
+    document.save(path)
+    document.close()
+
+
+def _fixture_pdf(path: Path, kind: str) -> None:
+    """Create a self-contained PDF fixture; no course upload is assumed."""
+    document = fitz.open()
+    page = document.new_page()
+    if kind == "vector":
+        page.insert_text((72, 72), "Vector network topology", fontsize=20)
+        for offset in range(4):
+            page.draw_line((80, 130 + offset * 35), (360, 220 - offset * 20), color=(0, 0.2, 0.8), width=2)
+        page.draw_circle((220, 180), 38, color=(0, 0.4, 0.2), fill=(0.85, 1, 0.9))
+    elif kind == "embedded_image":
+        image = Image.new("RGB", (320, 180), "#dbeafe")
+        ImageDraw.Draw(image).rectangle((30, 30, 290, 150), outline="#1d4ed8", width=5)
+        data = io.BytesIO(); image.save(data, format="PNG")
+        page.insert_text((72, 72), "Embedded bitmap fixture", fontsize=20)
+        page.insert_image(fitz.Rect(72, 110, 392, 290), stream=data.getvalue())
+    elif kind == "multi_column":
+        page.insert_textbox(fitz.Rect(60, 60, 270, 500), "Left column\n" * 20, fontsize=12)
+        page.insert_textbox(fitz.Rect(325, 60, 535, 500), "Right column\n" * 20, fontsize=12)
+    elif kind == "scanned":
+        image = Image.new("RGB", (700, 900), "white")
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((40, 40, 660, 860), outline="black", width=4)
+        draw.text((100, 120), "Scanned page fixture", fill="black")
+        data = io.BytesIO(); image.save(data, format="PNG")
+        page.insert_image(page.rect, stream=data.getvalue())
+    else:
+        raise ValueError(kind)
     document.save(path)
     document.close()
 
@@ -149,10 +183,11 @@ def test_diagram_like_page_becomes_a_visual_summary_not_flattened_text() -> None
     assert "原页视觉资产" in chunks[0]["text"]
 
 
-def test_real_pdf_parse_activates_complete_versioned_page_assets(db_session, sample_user, sample_course, tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("fixture_kind", ["vector", "embedded_image", "multi_column", "scanned"])
+def test_self_contained_pdf_fixture_parse_activates_complete_versioned_page_assets(fixture_kind, db_session, sample_user, sample_course, tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
-    source = tmp_path / "course-ppt.pdf"
-    _two_page_pdf(source)
+    source = tmp_path / f"{fixture_kind}.pdf"
+    _fixture_pdf(source, fixture_kind)
     material = Material(user_id=sample_user.id, course_id=sample_course.id, filename=source.name, file_type="pdf", file_path=source.name, status="uploaded")
     db_session.add(material)
     db_session.commit()
@@ -162,7 +197,7 @@ def test_real_pdf_parse_activates_complete_versioned_page_assets(db_session, sam
     assets = db_session.query(MaterialPageAsset).filter_by(material_version_id=material.active_version_id).order_by(MaterialPageAsset.page_no).all()
 
     assert status == material.status == "ready"
-    assert [asset.page_no for asset in assets] == [1, 2]
+    assert [asset.page_no for asset in assets] == [1]
     assert all(asset.render_status == "ready" for asset in assets)
     assert all((tmp_path / asset.asset_path).read_bytes().startswith(b"\x89PNG") for asset in assets)
-    assert image_integrity(db_session, material)["page_assets_ready"] == 2
+    assert image_integrity(db_session, material)["page_assets_ready"] == 1

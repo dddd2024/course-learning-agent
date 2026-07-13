@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import http.server
 import logging
+import os
 import signal
 import sys
 import threading
@@ -46,14 +47,15 @@ class _HealthHandler(http.server.BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    # Start health-check HTTP server on port 8001.
+    health_port = int(os.getenv("PARSE_WORKER_HEALTH_PORT", "8001"))
+    # Start health-check HTTP server on a configurable local port.
     health_server = http.server.HTTPServer(
-        ("127.0.0.1", 8001), _HealthHandler
+        ("127.0.0.1", health_port), _HealthHandler
     )
     threading.Thread(
         target=health_server.serve_forever, daemon=True
     ).start()
-    logger.info("Health check listening on http://127.0.0.1:8001")
+    logger.info("Health check listening on http://127.0.0.1:%s", health_port)
 
     # Start the parse worker.
     worker = ParseWorker(
