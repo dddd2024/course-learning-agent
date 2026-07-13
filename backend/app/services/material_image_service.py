@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
+import io
+import json
 
 from sqlalchemy.orm import Session
 
@@ -9,21 +12,53 @@ from app.core.config import settings
 from app.models.material import Material
 from app.models.material_chunk import MaterialChunk
 from app.models.material_image import MaterialImage
+from app.models.material_page_asset import MaterialPageAsset
 
 
 def image_state(image: MaterialImage) -> tuple[str, str | None]:
     path = Path(settings.UPLOAD_DIR) / image.image_path
-    if path.is_file():
+    if not path.is_file() or path.stat().st_size == 0:
+        return "missing", "MATERIAL_IMAGE_FILE_MISSING"
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(path.read_bytes())) as decoded:
+            decoded.verify()
+        if image.sha256 and hashlib.sha256(path.read_bytes()).hexdigest() != image.sha256:
+            return "missing", "MATERIAL_IMAGE_HASH_MISMATCH"
         return "ready", None
-    return "missing", "MATERIAL_IMAGE_FILE_MISSING"
+    except Exception:
+        return "missing", "MATERIAL_IMAGE_DECODE_FAILED"
+
+
+def _page_asset_ready(asset: MaterialPageAsset) -> bool:
+    if asset.render_status != "ready" or not asset.asset_path:
+        return False
+    path = Path(settings.UPLOAD_DIR) / asset.asset_path
+    if not path.is_file() or path.stat().st_size == 0:
+        return False
+    try:
+        from PIL import Image
+        payload = path.read_bytes()
+        with Image.open(io.BytesIO(payload)) as decoded:
+            decoded.verify()
+        return not asset.sha256 or hashlib.sha256(payload).hexdigest() == asset.sha256
+    except Exception:
+        return False
 
 
 def image_integrity(db: Session, material: Material) -> dict:
     rows = db.query(MaterialImage).filter(MaterialImage.material_id == material.id).all()
+    assets = db.query(MaterialPageAsset).filter(
+        MaterialPageAsset.material_id == material.id,
+        MaterialPageAsset.material_version_id == material.active_version_id,
+    ).all() if material.active_version_id else []
     ready = sum(image_state(row)[0] == "ready" for row in rows)
     total = len(rows)
     missing = total - ready
-    if total == 0:
+    page_ready = sum(_page_asset_ready(asset) for asset in assets)
+    if assets and page_ready == len(assets) and (total == 0 or missing > 0):
+        status = "page_fallback_ready"
+    elif total == 0:
         status = "missing"
     elif missing == 0:
         status = "ready"
@@ -31,7 +66,7 @@ def image_integrity(db: Session, material: Material) -> dict:
         status = "partial"
     else:
         status = "missing"
-    return {"material_id": material.id, "total": total, "ready": ready, "missing": missing, "status": status}
+    return {"material_id": material.id, "total": total, "ready": ready, "missing": missing, "page_assets": len(assets), "page_assets_ready": page_ready, "status": status}
 
 
 def reextract_images(
@@ -39,6 +74,7 @@ def reextract_images(
     material: Material,
     *,
     image_dir: Path | None = None,
+    material_version_id: int | None = None,
     commit: bool = True,
 ) -> dict:
     """Extract images into ``image_dir`` and stage their metadata.
@@ -65,21 +101,27 @@ def reextract_images(
             page_to_chunk.setdefault(chunk.page_no, chunk.id)
     image_dir = image_dir or ((Path(settings.UPLOAD_DIR) / material.file_path).parent / "images")
     image_dir.mkdir(parents=True, exist_ok=True)
-    hashes: set[str] = set()
+    occurrences: set[tuple[int, str]] = set()
     count = 0
     for index, image in enumerate(extracted):
-        if image.perceptual_hash and image.perceptual_hash in hashes:
+        bbox_json = json.dumps(list(getattr(image, "bbox", (0, 0, 0, 0))))
+        occurrence = (image.page_no, bbox_json)
+        if occurrence in occurrences:
             continue
-        hashes.add(image.perceptual_hash or f"index:{index}")
+        occurrences.add(occurrence)
         filename = f"page{image.page_no}_{index}.{image.format}"
         full_path = image_dir / filename
         full_path.write_bytes(image.image_bytes)
-        db.add(MaterialImage(material_id=material.id, course_id=material.course_id,
-            chunk_id=page_to_chunk.get(image.page_no), page_no=image.page_no,
+        db.add(MaterialImage(
+            material_id=material.id, material_version_id=material_version_id or material.active_version_id,
+            course_id=material.course_id, chunk_id=page_to_chunk.get(image.page_no), page_no=image.page_no,
             image_filename=filename, image_path=str(full_path.relative_to(Path(settings.UPLOAD_DIR))).replace("\\", "/"),
             width=image.width, height=image.height, format=image.format,
             is_decorative=1 if image.is_decorative else 0, decorative_reason=image.decorative_reason,
-            perceptual_hash=image.perceptual_hash, color_variance=image.color_variance, coverage_ratio=image.coverage_ratio))
+            perceptual_hash=image.perceptual_hash, color_variance=image.color_variance, coverage_ratio=image.coverage_ratio,
+            sha256=hashlib.sha256(image.image_bytes).hexdigest(), xref=image.xref, bbox_json=bbox_json,
+            render_status="ready",
+        ))
         count += 1
     if commit:
         db.commit()

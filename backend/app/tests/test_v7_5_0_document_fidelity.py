@@ -10,7 +10,10 @@ from app.core import database
 from app.models.material import Material, MaterialVersion
 from app.models.material_page import MaterialPage
 from app.models.material_page_asset import MaterialPageAsset
+from app.models.material_image import MaterialImage
+from app.retrieval.image_extractor import ImageInfo
 from app.retrieval.page_renderer import render_pdf_pages
+from app.services.material_image_service import image_integrity, reextract_images
 
 
 def _two_page_pdf(path: Path) -> None:
@@ -76,3 +79,50 @@ def test_page_asset_api_is_version_scoped_and_user_isolated(client, tmp_path, mo
     response = client.get(f"/api/v1/materials/page-assets/{asset_id}/file", headers=alice_headers)
     assert response.status_code == 200
     assert response.headers["etag"] == f'"{digest}"'
+
+
+def test_broken_embedded_image_uses_ready_page_fallback(db_session, sample_user, sample_course, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    material = Material(user_id=sample_user.id, course_id=sample_course.id, filename="slides.pdf", file_type="pdf", file_path="slides.pdf", status="ready")
+    db_session.add(material)
+    db_session.flush()
+    version = MaterialVersion(material_id=material.id, version=1, status="ready")
+    db_session.add(version)
+    db_session.flush()
+    material.active_version_id = version.id
+    source = tmp_path / "fallback.pdf"
+    _two_page_pdf(source)
+    page_dir = tmp_path / "pages"
+    rendered = render_pdf_pages(source, page_dir)[0]
+    page_path = page_dir / rendered.filename
+    db_session.add_all([
+        MaterialPageAsset(material_id=material.id, material_version_id=version.id, page_no=1, asset_path=f"pages/{rendered.filename}", sha256=rendered.sha256, render_status="ready"),
+        MaterialImage(material_id=material.id, material_version_id=version.id, course_id=sample_course.id, page_no=1, image_filename="bad.png", image_path="missing/bad.png", format="png"),
+    ])
+    db_session.commit()
+
+    result = image_integrity(db_session, material)
+    assert result["status"] == "page_fallback_ready"
+    assert result["missing"] == 1
+    assert result["page_assets_ready"] == 1
+
+
+def test_reextract_keeps_same_embedded_image_on_different_page_occurrences(db_session, sample_user, sample_course, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("app.core.config.settings.UPLOAD_DIR", str(tmp_path))
+    source = tmp_path / "slides.pdf"
+    source.write_bytes(b"fixture")
+    material = Material(user_id=sample_user.id, course_id=sample_course.id, filename="slides.pdf", file_type="pdf", file_path="slides.pdf", status="ready")
+    db_session.add(material)
+    db_session.commit()
+    payload = b"same-bitmap"
+    occurrences = [
+        ImageInfo(page_no=1, image_bytes=payload, width=100, height=100, xref=7, bbox=(1, 1, 50, 50)),
+        ImageInfo(page_no=2, image_bytes=payload, width=100, height=100, xref=7, bbox=(2, 2, 51, 51)),
+    ]
+    monkeypatch.setattr("app.retrieval.image_extractor.extract_images_from_pdf", lambda _: occurrences)
+
+    result = reextract_images(db_session, material, image_dir=tmp_path / "images")
+    rows = db_session.query(MaterialImage).filter_by(material_id=material.id).order_by(MaterialImage.page_no).all()
+    assert result["extracted"] == 2
+    assert [row.page_no for row in rows] == [1, 2]
+    assert len({row.bbox_json for row in rows}) == 2

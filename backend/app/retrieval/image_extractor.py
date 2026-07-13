@@ -20,6 +20,7 @@ class ImageInfo:
     height: Optional[int] = None
     format: str = "png"
     xref: Optional[int] = None
+    bbox: tuple[float, float, float, float] = (0, 0, 0, 0)
     is_decorative: bool = False
     decorative_reason: Optional[str] = None
     perceptual_hash: Optional[str] = None
@@ -112,19 +113,23 @@ def extract_images_from_pdf(file_path: str, *, min_size: int = 50) -> List[Image
                         reason = "low_color_variance"
                     elif coverage_ratio > 0.8 and color_variance < 30:
                         reason = "background_coverage"
-                    images.append(ImageInfo(
-                        page_no=page_no,
-                        image_bytes=img_bytes,
-                        width=width,
-                        height=height,
-                        format=img_format,
-                        xref=xref,
-                        is_decorative=reason is not None,
-                        decorative_reason=reason,
-                        perceptual_hash=digest,
-                        color_variance=color_variance,
-                        coverage_ratio=coverage_ratio,
-                    ))
+                    # One xref can occur on several pages or regions.  Keep
+                    # every occurrence so the reader never loses placement.
+                    for rect in rects or [page.rect]:
+                        images.append(ImageInfo(
+                            page_no=page_no,
+                            image_bytes=img_bytes,
+                            width=width,
+                            height=height,
+                            format=img_format,
+                            xref=xref,
+                            bbox=(float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)),
+                            is_decorative=reason is not None,
+                            decorative_reason=reason,
+                            perceptual_hash=digest,
+                            color_variance=color_variance,
+                            coverage_ratio=coverage_ratio,
+                        ))
                 except Exception as e:
                     logger.debug("Failed to extract image xref=%s on page %d: %s", xref, page_no, e)
                     continue
