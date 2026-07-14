@@ -1,0 +1,55 @@
+name: Apply V7.5.2-00 Test Compatibility Fixes
+
+on:
+  push:
+    branches:
+      - codex/v7-5-2-00-test-compat
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/v7-5-2-00-test-compat
+      - name: Apply targeted fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          backend = Path('backend/app/tests/test_v7_4_2_reschedule_diff.py')
+          text = backend.read_text(encoding='utf-8')
+          old = "def _stable_key(course_id: int, task_type: str, title: str) -> str:\n    return f\"{course_id}:{task_type}:{re.sub(r'\\\\s+', '', title).lower()}\"\n"
+          new = "def _stable_key(course_id: int, task_type: str, title: str) -> str:\n    normalized_title = re.sub(r\"\\s+\", \"\", title).lower()\n    return f\"{course_id}:{task_type}:{normalized_title}\"\n"
+          if text.count(old) != 1:
+              raise SystemExit('backend patch target count was not exactly 1')
+          backend.write_text(text.replace(old, new), encoding='utf-8')
+
+          frontend = Path('frontend/src/views/LearnView.test.ts')
+          text = frontend.read_text(encoding='utf-8')
+          old = "vi.mock('../api/material', () => ({\n  listMaterials: vi.fn(),\n  getChunks: vi.fn(),\n  generateMaterialStudyGuide: vi.fn(),\n}))"
+          new = "vi.mock('../api/material', () => ({\n  listMaterials: vi.fn(),\n  getChunks: vi.fn(),\n  getMaterialPages: vi.fn(),\n  getImageIntegrity: vi.fn().mockResolvedValue({\n    data: { status: 'ready', total: 0, ready: 0, missing: 0, expected_pages: 0, ready_pages: 0, missing_pages: 0 },\n  }),\n  reextractImages: vi.fn(),\n  rebuildPageAssets: vi.fn(),\n  generateMaterialStudyGuide: vi.fn(),\n}))"
+          if text.count(old) != 1:
+              raise SystemExit('frontend mock patch target count was not exactly 1')
+          text = text.replace(old, new)
+          target = "const { listMaterials, getChunks } = await import('../api/material')\n    vi.mocked(listMaterials).mockResolvedValue"
+          replacement = "const { listMaterials, getChunks, getMaterialPages } = await import('../api/material')\n    vi.mocked(getMaterialPages).mockResolvedValue({ data: { items: [] } } as any)\n    vi.mocked(listMaterials).mockResolvedValue"
+          if text.count(target) != 2:
+              raise SystemExit('frontend test setup patch target count was not exactly 2')
+          frontend.write_text(text.replace(target, replacement), encoding='utf-8')
+          PY
+      - name: Remove temporary workflow and commit fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/apply-v7-5-2-00-test-compat.yml
+          git add backend/app/tests/test_v7_4_2_reschedule_diff.py frontend/src/views/LearnView.test.ts
+          git diff --cached --check
+          git commit -m "fix(regression): restore Python 3.11 and LearnView test compatibility"
+          git push origin HEAD:codex/v7-5-2-00-test-compat
