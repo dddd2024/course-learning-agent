@@ -695,8 +695,10 @@ onMounted(async () => {
         ? materials.value.find((m) => m.public_id === publicMaterial)
         : queryMaterialId ? materials.value.find((m) => m.id === queryMaterialId) : null
       selectedMaterialId.value = match ? match.id : materials.value[0].id
-      syncPublicMaterialRoute()
       await loadChunks()
+      // Preserve legacy numeric parameters until task-load evidence has been
+      // recorded; normalize the address only after the reader is ready.
+      syncPublicMaterialRoute()
       // Load knowledge-point terms for highlighting (course-level, non-blocking).
       loadKeyTerms()
 
