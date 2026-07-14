@@ -42,23 +42,20 @@ from app.services.material_delete_service import delete_material as delete_mater
 from app.services.material_image_service import image_integrity, image_state, reextract_images
 from app.services.material_readiness_service import material_readiness
 from app.services.material_page_catalog_service import build_material_page_catalog
+from app.services.material_identity_service import resolve_owned_material
 
 router = APIRouter()
 
 
 def _get_owned_material(
-    db: Session, material_id: int, user_id: int
+    db: Session, material_id: str | int, user_id: int
 ) -> Material:
     """Return the material if it belongs to ``user_id``, else 404.
 
     Scoping by ``user_id`` ensures cross-user access returns 404 rather
     than 403 so existence is never leaked.
     """
-    material = (
-        db.query(Material)
-        .filter(Material.id == material_id, Material.user_id == user_id)
-        .first()
-    )
+    material = resolve_owned_material(db, material_id, user_id)
     if material is None:
         raise NotFoundException(message="资料不存在")
     return material
@@ -75,7 +72,7 @@ def _safe_upload_path(relative_path: str) -> Path:
 
 @router.get("/{material_id}/file")
 def get_material_file(
-    material_id: int,
+    material_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> FileResponse:
@@ -142,7 +139,7 @@ def get_material_page_asset_file(
     response_model=ParseResponse,
 )
 def parse_material(
-    material_id: int,
+    material_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ParseResponse:
@@ -157,7 +154,7 @@ def parse_material(
     create_or_get_job(db, material, current_user.id)
 
     return ParseResponse(
-        material_id=material_id,
+        material_id=material.id,
         status="processing",
         chunk_count=0,
     )
@@ -165,7 +162,7 @@ def parse_material(
 
 @router.get("/{material_id}/readiness")
 def get_material_readiness(
-    material_id: int,
+    material_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
@@ -174,17 +171,17 @@ def get_material_readiness(
 
 
 @router.get("/{material_id}/image-integrity")
-def get_image_integrity(material_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+def get_image_integrity(material_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
     return image_integrity(db, _get_owned_material(db, material_id, current_user.id))
 
 
 @router.post("/{material_id}/images/reextract")
-def retry_image_extraction(material_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+def retry_image_extraction(material_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
     return reextract_images(db, _get_owned_material(db, material_id, current_user.id))
 
 
 @router.post("/{material_id}/page-assets/rebuild")
-def rebuild_page_assets_endpoint(material_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+def rebuild_page_assets_endpoint(material_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
     """Rebuild page-level visual assets for an existing PDF material.
 
     V7.5.1-01: Allows the frontend to repair materials that were parsed
@@ -197,17 +194,17 @@ def rebuild_page_assets_endpoint(material_id: int, db: Session = Depends(get_db)
 
 
 @router.get("/{material_id}/parse-jobs")
-def list_parse_jobs(material_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
-    _get_owned_material(db, material_id, current_user.id)
+def list_parse_jobs(material_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+    material = _get_owned_material(db, material_id, current_user.id)
     recover_stale_jobs(db)
-    rows = db.query(ParseJob).filter(ParseJob.material_id == material_id, ParseJob.user_id == current_user.id).order_by(ParseJob.id.desc()).all()
+    rows = db.query(ParseJob).filter(ParseJob.material_id == material.id, ParseJob.user_id == current_user.id).order_by(ParseJob.id.desc()).all()
     return {"items": [{"id": row.id, "status": row.status, "attempt": row.attempt, "started_at": row.started_at, "heartbeat_at": row.heartbeat_at, "error": row.error_message} for row in rows]}
 
 
 @router.post("/{material_id}/parse-jobs/{job_id}/retry")
-def retry_parse_job(material_id: int, job_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+def retry_parse_job(material_id: str, job_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
     material = _get_owned_material(db, material_id, current_user.id)
-    old = db.query(ParseJob).filter(ParseJob.id == job_id, ParseJob.material_id == material_id, ParseJob.user_id == current_user.id).first()
+    old = db.query(ParseJob).filter(ParseJob.id == job_id, ParseJob.material_id == material.id, ParseJob.user_id == current_user.id).first()
     if old is None:
         raise NotFoundException(message="解析任务不存在")
     if old.status in {"queued", "running"}:
@@ -217,9 +214,9 @@ def retry_parse_job(material_id: int, job_id: int, db: Session = Depends(get_db)
 
 
 @router.post("/{material_id}/parse-jobs/{job_id}/cancel")
-def cancel_parse_job(material_id: int, job_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
-    _get_owned_material(db, material_id, current_user.id)
-    job = db.query(ParseJob).filter(ParseJob.id == job_id, ParseJob.material_id == material_id, ParseJob.user_id == current_user.id).first()
+def cancel_parse_job(material_id: str, job_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+    material = _get_owned_material(db, material_id, current_user.id)
+    job = db.query(ParseJob).filter(ParseJob.id == job_id, ParseJob.material_id == material.id, ParseJob.user_id == current_user.id).first()
     if job is None:
         raise NotFoundException(message="解析任务不存在")
     if job.status in {"queued", "running"}:
@@ -233,7 +230,7 @@ def cancel_parse_job(material_id: int, job_id: int, db: Session = Depends(get_db
     response_model=ChunkListResponse,
 )
 def list_chunks(
-    material_id: int,
+    material_id: str,
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
     include_decorative: bool = Query(False),
@@ -244,7 +241,7 @@ def list_chunks(
     material = _get_owned_material(db, material_id, current_user.id)
 
     query = db.query(MaterialChunk).filter(
-        MaterialChunk.material_id == material_id,
+        MaterialChunk.material_id == material.id,
         MaterialChunk.is_active == 1,
     )
     total = query.count()
@@ -265,7 +262,7 @@ def list_chunks(
     page_fallback_images: dict[int, list] = defaultdict(list)
     if page_nos:
         image_query = db.query(MaterialImage).filter(
-            MaterialImage.material_id == material_id,
+            MaterialImage.material_id == material.id,
             MaterialImage.page_no.in_(page_nos),
         )
         if material.active_version_id:
@@ -316,7 +313,7 @@ def list_chunks(
 
 
 @router.get("/{material_id}/pages")
-def list_material_pages(material_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+def list_material_pages(material_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
     """Reader contract: page catalogue plus raw/clean text and decisions."""
     material = _get_owned_material(db, material_id, current_user.id)
     return build_material_page_catalog(db, material)
@@ -327,7 +324,7 @@ def list_material_pages(material_id: int, db: Session = Depends(get_db), current
     status_code=status.HTTP_204_NO_CONTENT,
 )
 def delete_material(
-    material_id: int,
+    material_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:

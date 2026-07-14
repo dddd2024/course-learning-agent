@@ -64,6 +64,7 @@ vi.mock('../api/knowledge', () => ({
 const mockMaterials: Material[] = [
   {
     id: 1,
+    public_id: '00000000-0000-4000-8000-000000000001',
     filename: '操作系统讲义.pdf',
     file_type: 'pdf',
     status: 'ready',
@@ -177,5 +178,44 @@ describe('LearnView', () => {
     expect(lastCall![1]).toEqual(
       expect.objectContaining({ include_decorative: true }),
     )
+  })
+
+  it('does not claim repair success or run image extraction when page rebuild fails', async () => {
+    const { listMaterials, getChunks, getMaterialPages, getMaterialReadiness, rebuildPageAssets, reextractImages } = await import('../api/material')
+    vi.mocked(listMaterials).mockResolvedValue({ data: { items: mockMaterials, total: 1 } } as any)
+    vi.mocked(getChunks).mockResolvedValue({ data: { items: [makeUsefulChunk(1)], total: 1, page: 1, page_size: 100 } } as any)
+    vi.mocked(getMaterialPages).mockResolvedValue({ data: { items: [] } } as any)
+    vi.mocked(getMaterialReadiness).mockResolvedValue({
+      data: { usable: false, reader_mode: 'page', file_type: 'pdf', missing_page_numbers: [1], blocking_reasons: ['page_assets_missing'] },
+    } as any)
+    vi.mocked(rebuildPageAssets).mockRejectedValue(new Error('render failed'))
+
+    const wrapper = mount(LearnView, { global: { plugins: [createTestingPinia()] } })
+    await flushPromises(); await flushPromises(); await flushPromises()
+    const repair = wrapper.findAll('button').find((button) => button.text().includes('修复文档预览'))
+    expect(repair).toBeDefined()
+    await repair!.trigger('click')
+    await flushPromises()
+    expect(rebuildPageAssets).toHaveBeenCalledWith(1)
+    expect(reextractImages).not.toHaveBeenCalled()
+  })
+
+  it('continues repair only after a complete rebuild result', async () => {
+    const { listMaterials, getChunks, getMaterialPages, getMaterialReadiness, rebuildPageAssets, reextractImages } = await import('../api/material')
+    vi.mocked(listMaterials).mockResolvedValue({ data: { items: mockMaterials, total: 1 } } as any)
+    vi.mocked(getChunks).mockResolvedValue({ data: { items: [makeUsefulChunk(1)], total: 1, page: 1, page_size: 100 } } as any)
+    vi.mocked(getMaterialPages).mockResolvedValue({ data: { items: [] } } as any)
+    vi.mocked(getMaterialReadiness).mockResolvedValue({
+      data: { usable: false, reader_mode: 'page', file_type: 'pdf', missing_page_numbers: [1], blocking_reasons: ['page_assets_missing'] },
+    } as any)
+    vi.mocked(rebuildPageAssets).mockResolvedValue({ data: { status: 'ready', expected_pages: 2, ready_pages: 2, missing_pages: 0 } } as any)
+    vi.mocked(reextractImages).mockResolvedValue({ data: { status: 'ready', extracted: 1 } } as any)
+
+    const wrapper = mount(LearnView, { global: { plugins: [createTestingPinia()] } })
+    await flushPromises(); await flushPromises(); await flushPromises()
+    const repair = wrapper.findAll('button').find((button) => button.text().includes('修复文档预览'))
+    await repair!.trigger('click')
+    await flushPromises(); await flushPromises()
+    expect(reextractImages).toHaveBeenCalledWith(1)
   })
 })

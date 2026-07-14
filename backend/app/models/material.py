@@ -1,4 +1,6 @@
 """Material ORM model."""
+from uuid import uuid4
+
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 
 from app.core.timezone import utc_now
@@ -15,6 +17,9 @@ class Material(Base, TimestampMixin):
     __table_args__ = {"sqlite_autoincrement": True}
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    # Stable public identity for URLs and external references.  SQLite row IDs
+    # cannot reconstruct a high-water mark deleted before an old DB upgrade.
+    public_id = Column(String(36), nullable=False, unique=True, index=True, default=lambda: str(uuid4()))
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, index=True)
     filename = Column(String(255), nullable=False)

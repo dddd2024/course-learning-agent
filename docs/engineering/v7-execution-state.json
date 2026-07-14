@@ -1,28 +1,31 @@
 {
   "version": "v7.5.2",
-  "base_commit": "e6148a2808b70cd1b0ddb3c762d225a13009e4e9",
-  "branch": "codex/v7-5-2-page-catalog-audit-recovery",
-  "started_at": "2026-07-14T00:00:00+08:00",
+  "base_commit": "f75cbca6f556c2eb6045b49e169e68442461bcea",
+  "branch": "codex/v7-5-2-audit-r2-migration-release-gates",
+  "started_at": "2026-07-14T18:00:00+08:00",
   "overall_status": "in_progress",
-  "current_task": "AUDIT-R1-01",
+  "current_task": "AUDIT-R2-01",
   "local_closure": null,
   "closure_evidence": null,
   "release_candidate": null,
   "remote_ci": "required_before_release",
   "latest_gate": {
-    "source": "audit recovery reopened after legacy page-preview failure",
-    "observed_at": "2026-07-14T16:00:00+08:00",
+    "source": "R2 audit recovery reopened after main f75cbca baseline review",
+    "observed_at": "2026-07-14T18:00:00+08:00",
     "overall": "not_run",
+    "commit_sha": null,
     "passed_gates": [],
     "failed_gates": [],
-    "not_run_gates": ["legacy_page_catalog_contract", "remote_ci_verification"]
+    "not_run_gates": ["real_sqlalchemy_legacy_schema_migration", "public_material_identity", "repair_result_truthfulness", "blob_request_race", "r2_playwright_e2e", "acceptance_summary_artifact", "remote_ci_verification"]
   },
   "audit_blockers": [
-    "legacy_page_catalog_mismatch",
-    "real_document_page_preview",
-    "scanned_pdf_classification",
-    "page_canvas_blob_lifecycle",
-    "existing_database_autoincrement_migration",
+    "real_sqlalchemy_legacy_schema_migration",
+    "material_external_identity",
+    "repair_result_truthfulness",
+    "real_repair_button_e2e",
+    "image_decode_evidence",
+    "blob_request_race",
+    "acceptance_summary_artifact",
     "remote_ci_verification"
   ],
   "resolved_blockers": [
@@ -37,139 +40,27 @@
     "advanced_document_layout"
   ],
   "tasks": {
-    "AUDIT-R1-01": {
+    "AUDIT-R2-00": {
+      "status": "done",
+      "changed_files": ["docs/engineering/v7-execution-state.json", "docs/engineering/v7-5-2-scope.md", "backend/app/tests/test_v7_5_2_execution_state.py"],
+      "tests_run": ["python -m pytest backend/app/tests/test_v7_5_2_execution_state.py -q"],
+      "remaining": [],
+      "next_task": "AUDIT-R2-01",
+      "commits": []
+    },
+    "AUDIT-R2-01": {
       "status": "in_progress",
       "changed_files": [],
       "tests_run": [],
-      "remaining": ["catalog, readiness, migration, browser and CI gates"],
-      "next_task": "AUDIT-R1-02",
+      "remaining": ["real legacy migration fixture, public identity and rollback proof"],
+      "next_task": "AUDIT-R2-02",
       "commits": []
     },
-    "V7.5.2-00": {
-      "status": "done",
-      "changed_files": [
-        "docs/engineering/v7-execution-state.json",
-        "docs/engineering/v7-5-2-scope.md",
-        "backend/app/tests/test_v7_5_2_execution_state.py"
-      ],
-      "tests_run": [
-        "python -m pytest backend/app/tests/test_v7_5_2_execution_state.py -q: 5 passed"
-      ],
-      "remaining": [],
-      "next_task": "V7.5.2-04",
-      "commits": [
-        "3363c6a7ebbccd5d0b1de2cdb2720eb8f0389d44",
-        "276af68358fc1def0d5c55bddd2443bd6345a6e9",
-        "639d26818a50572b6a38e9a36acc36e7313a333b",
-        "ce12ed47d2ee3605120790a6df681edc370664e1",
-        "cdb94afc14da7ed3d6b0d60464028752df75f6d4",
-        "2baf49470ed5a116f2d74f7a7df41a51c5f8328a"
-      ]
-    },
-    "V7.5.2-01": {
-      "status": "done",
-      "changed_files": [
-        "backend/app/services/material_image_service.py",
-        "backend/app/services/material_parser.py",
-        "backend/app/tests/test_v7_5_2_versioned_image_parse.py"
-      ],
-      "tests_run": [
-        "backend full pytest in GitHub Actions PR #6 run #96"
-      ],
-      "remaining": [],
-      "next_task": "V7.5.2-02",
-      "commits": []
-    },
-    "V7.5.2-02": {
-      "status": "done",
-      "changed_files": [
-        "backend/app/services/material_page_asset_service.py",
-        "backend/app/tests/test_v7_5_2_page_asset_integrity.py"
-      ],
-      "tests_run": [
-        "backend full pytest in GitHub Actions PR #6 run #96"
-      ],
-      "remaining": [],
-      "next_task": "V7.5.2-03",
-      "commits": []
-    },
-    "V7.5.2-03": {
-      "status": "done",
-      "changed_files": [
-        "backend/app/services/material_page_asset_service.py",
-        "backend/app/tests/test_v7_5_2_page_asset_transaction.py"
-      ],
-      "tests_run": [
-        "backend full pytest in GitHub Actions PR #6 run #96"
-      ],
-      "remaining": [],
-      "next_task": "V7.5.2-04",
-      "commits": []
-    },
-    "V7.5.2-04": {
-      "status": "done",
-      "changed_files": [
-        "frontend/tests/e2e/e2e-runtime.ts",
-        "frontend/tests/e2e/global-setup.ts",
-        "frontend/tests/e2e/global-teardown.ts",
-        "frontend/tests/e2e/helpers.ts",
-        "backend/app/core/config.py",
-        "backend/app/api/v1/endpoints/health.py",
-        "scripts/start_parse_worker_with_health.py",
-        ".github/workflows/ci.yml"
-      ],
-      "tests_run": [
-        "Playwright E2E twice on isolated per-run temporary resources: six V7.5.2 paths passed",
-        "Playwright full suite: 67 passed, 0 failed, 0 skipped"
-      ],
-      "remaining": [],
-      "next_task": "V7.5.2-05",
-      "commits": []
-    },
-    "V7.5.2-05": {
-      "status": "done",
-      "changed_files": [
-        "frontend/tests/e2e/v7-5-2-user-paths.spec.ts"
-      ],
-      "tests_run": [
-        "Playwright V7.5.2 six user paths: 6 passed twice",
-        "Playwright full suite: 67 passed, 0 failed, 0 skipped"
-      ],
-      "remaining": [],
-      "next_task": "V7.5.2-06",
-      "commits": []
-    },
-    "V7.5.2-06": {
-      "status": "done",
-      "changed_files": [
-        "frontend/src/components/document/PageCanvas.vue",
-        "backend/app/tests/test_v7_5_2_page_edge_cases.py"
-      ],
-      "tests_run": [
-        "backend full pytest: 905 passed",
-        "Playwright V7.5.2 P1-T04 and P1-T06 browser paths passed"
-      ],
-      "remaining": [],
-      "next_task": "V7.5.2-07",
-      "commits": []
-    },
-    "V7.5.2-07": {
-      "status": "done",
-      "changed_files": [
-        "docs/engineering/v7-execution-state.json",
-        "artifacts/v7-5-2-local/"
-      ],
-      "tests_run": [
-        "backend pytest: 905 passed",
-        "frontend unit: 24 passed",
-        "frontend type-check and build: passed",
-        "migration dry-run and smoke: passed",
-        "Playwright: 67 passed, 0 failed, 0 skipped",
-        "V7 acceptance verification: 18 checks passed"
-      ],
-      "remaining": [],
-      "next_task": null,
-      "commits": []
-    }
+    "AUDIT-R2-02": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["truthful repair workflow"], "next_task": "AUDIT-R2-03", "commits": []},
+    "AUDIT-R2-03": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["Blob request race"], "next_task": "AUDIT-R2-04", "commits": []},
+    "AUDIT-R2-04": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["real browser repair and image decode evidence"], "next_task": "AUDIT-R2-05", "commits": []},
+    "AUDIT-R2-05": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["generated acceptance summary"], "next_task": "AUDIT-R2-06", "commits": []},
+    "AUDIT-R2-06": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["full local gates"], "next_task": "AUDIT-R2-07", "commits": []},
+    "AUDIT-R2-07": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["PR CI, merge and main CI"], "next_task": null, "commits": []}
   }
 }

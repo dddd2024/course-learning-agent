@@ -5,6 +5,7 @@ export type MaterialStatus = 'uploaded' | 'processing' | 'ready' | 'failed'
 
 export interface Material {
   id: number
+  public_id: string
   filename: string
   file_url?: string | null
   file_type: string

@@ -34,6 +34,8 @@ const props = defineProps<{ pages: ReaderPage[] }>()
 const urls = reactive<Record<string, string>>({})
 const loadErrors = reactive<Set<string>>(new Set())
 const imageErrors = reactive<Set<string>>(new Set())
+const controllers = new Map<string, AbortController>()
+let generation = 0
 
 function releaseUrl(key: string) {
   if (urls[key]) { URL.revokeObjectURL(urls[key]); delete urls[key] }
@@ -41,23 +43,55 @@ function releaseUrl(key: string) {
 function releaseAllUrls() { Object.keys(urls).forEach(releaseUrl) }
 function handleImageError(key: string) { imageErrors.add(key); releaseUrl(key) }
 
-async function loadPage(page: ReaderPage) {
+function signature(page: ReaderPage) {
+  return `${page.catalog_key}|${page.page_asset?.file_url || ''}|${page.page_asset?.status || ''}`
+}
+function stillCurrent(page: ReaderPage, token: number) {
+  return token === generation && props.pages.some((current) => signature(current) === signature(page))
+}
+function abortInFlight() {
+  controllers.forEach((controller) => controller.abort())
+  controllers.clear()
+}
+
+async function loadPage(page: ReaderPage, token = generation) {
   const key = page.catalog_key
   if (!page.page_asset?.file_url || urls[key]) return
   loadErrors.delete(key); imageErrors.delete(key)
   const fileUrl = page.page_asset.file_url.startsWith('/api/v1/') ? page.page_asset.file_url.slice('/api/v1'.length) : page.page_asset.file_url
+  const controller = new AbortController()
+  controllers.get(key)?.abort()
+  controllers.set(key, controller)
   try {
-    const { data } = await request.get(fileUrl, { responseType: 'blob' })
-    if (!data || data.size <= 0 || !String(data.type || '').startsWith('image/')) { loadErrors.add(key); return }
-    urls[key] = URL.createObjectURL(data)
-  } catch { loadErrors.add(key) }
+    const { data } = await request.get(fileUrl, { responseType: 'blob', signal: controller.signal })
+    if (!data || data.size <= 0 || !String(data.type || '').startsWith('image/')) {
+      if (stillCurrent(page, token)) loadErrors.add(key)
+      return
+    }
+    const objectUrl = URL.createObjectURL(data)
+    if (!stillCurrent(page, token)) { URL.revokeObjectURL(objectUrl); return }
+    releaseUrl(key)
+    urls[key] = objectUrl
+  } catch (error) {
+    if (stillCurrent(page, token) && (error as { name?: string })?.name !== 'CanceledError' && (error as { name?: string })?.name !== 'AbortError') loadErrors.add(key)
+  } finally {
+    if (controllers.get(key) === controller) controllers.delete(key)
+  }
 }
-async function loadAssets() { await Promise.allSettled(props.pages.map(loadPage)) }
 async function retryPage(page: ReaderPage) {
   releaseUrl(page.catalog_key); loadErrors.delete(page.catalog_key); imageErrors.delete(page.catalog_key); await loadPage(page)
 }
-watch(() => props.pages, async () => { releaseAllUrls(); loadErrors.clear(); imageErrors.clear(); await loadAssets() }, { immediate: true, deep: true })
-onBeforeUnmount(releaseAllUrls)
+watch(
+  () => props.pages.map(signature).join('\u0001'),
+  async () => {
+    generation += 1
+    const token = generation
+    abortInFlight(); releaseAllUrls(); loadErrors.clear(); imageErrors.clear()
+    await Promise.allSettled(props.pages.map((page) => loadPage(page, token)))
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => { generation += 1; abortInFlight(); releaseAllUrls() })
 </script>
 
 <style scoped>

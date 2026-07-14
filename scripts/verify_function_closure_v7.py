@@ -202,6 +202,11 @@ def check_existing_db_autoincrement_migration():
     return _run_pytest(str(BACKEND_DIR / "app" / "tests" / "test_v7_5_2_legacy_database_migration.py"))
 
 
+@register_check("material_public_identity", "backend")
+def check_material_public_identity():
+    return _run_pytest(str(BACKEND_DIR / "app" / "tests" / "test_v7_5_2_material_public_identity.py"))
+
+
 # ---------------------------------------------------------------------------
 # Frontend checks
 # ---------------------------------------------------------------------------
@@ -235,6 +240,32 @@ V7_E2E_IDS = [f"V7-E2E-{i:02d}" for i in range(1, 12)]
 AUDIT_E2E_IDS = ["P0-L01", "P0-L02", "P1-L03", "P2-L04"]
 
 
+def _playwright_statuses(data: dict) -> tuple[dict[str, list[str]], int, int]:
+    """Return concrete final statuses for each reported Playwright title."""
+    statuses: dict[str, list[str]] = {}
+
+    def visit(node: dict) -> None:
+        title = node.get("title", "")
+        tests = node.get("tests", [])
+        if title and tests:
+            final = []
+            for test in tests:
+                results = test.get("results", [])
+                final.extend(result.get("status", "unknown") for result in results[-1:])
+            statuses.setdefault(title, []).extend(final or ["unknown"])
+        for child in node.get("specs", []):
+            visit(child)
+        for child in node.get("suites", []):
+            visit(child)
+
+    for suite in data.get("suites", []):
+        visit(suite)
+    for spec in data.get("specs", []):
+        visit(spec)
+    stats = data.get("stats", {})
+    return statuses, int(stats.get("unexpected", 0)), int(stats.get("skipped", 0))
+
+
 @register_check("v7_e2e_scenarios", "e2e")
 def check_v7_e2e(external_report: Path | None = None):
     """Verify all 11 V7-E2E scenarios exist and passed in the Playwright report."""
@@ -248,40 +279,23 @@ def check_v7_e2e(external_report: Path | None = None):
 
     data = json.loads(report_path.read_text(encoding="utf-8"))
 
-    # Collect all test titles from the report
-    all_titles: list[str] = []
-
-    def collect_titles(nodes):
-        for node in nodes:
-            title = node.get("title", "")
-            all_titles.append(title)
-            collect_titles(node.get("specs", []))
-            collect_titles(node.get("suites", []))
-
-    for suite in data.get("suites", []):
-        collect_titles([suite])
-
-    # Also check top-level specs
-    collect_titles(data.get("specs", []))
+    statuses, failed, skipped = _playwright_statuses(data)
 
     # Check each V7-E2E scenario
     missing = []
     for eid in V7_E2E_IDS:
-        found = any(eid in title for title in all_titles)
-        if not found:
+        matching = [state for title, state in statuses.items() if eid in title]
+        if not matching or any(status != "passed" for state in matching for status in state):
             missing.append(eid)
     for eid in AUDIT_E2E_IDS:
-        if not any(eid in title for title in all_titles):
+        matching = [state for title, state in statuses.items() if eid in title]
+        if not matching or any(status != "passed" for state in matching for status in state):
             missing.append(eid)
 
     if missing:
         return False, f"Missing V7 E2E scenarios: {', '.join(missing)}"
 
     # Check overall stats
-    stats = data.get("stats", {})
-    failed = int(stats.get("unexpected", 0))
-    skipped = int(stats.get("skipped", 0))
-
     if failed > 0 or skipped > 0:
         return False, f"E2E has failures: failed={failed}, skipped={skipped}"
 
@@ -374,6 +388,28 @@ def main():
     report_path = artifact_dir / "v7-acceptance.json"
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
+
+    playwright_report = args.external_e2e or (FRONTEND_DIR / "playwright-results.json")
+    playwright_failed = playwright_skipped = 0
+    if playwright_report.exists():
+        playwright_data = json.loads(playwright_report.read_text(encoding="utf-8"))
+        _, playwright_failed, playwright_skipped = _playwright_statuses(playwright_data)
+    summary = {
+        "commit_sha": commit_sha,
+        "acceptance": "passed" if all_passed else "failed",
+        "total_checks": len(results),
+        "failed_checks": report["failed_checks"],
+        "playwright_failed": playwright_failed,
+        "playwright_skipped": playwright_skipped,
+        "legacy_migration": "passed" if next((r for r in results if r["name"] == "existing_db_autoincrement_migration" and r["status"] == "pass"), None) else "failed",
+        "remote_ci": "pending",
+        "generated_at": report["timestamp"],
+    }
+    (artifact_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    (artifact_dir / "commit.txt").write_text(f"{commit_sha}\n", encoding="utf-8")
+    (artifact_dir / "playwright-summary.json").write_text(json.dumps({
+        "report": str(playwright_report), "failed": playwright_failed, "skipped": playwright_skipped,
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # Also write to the root for CI backward compat
     root_report = Path(args.artifact_root) / "verification-result.json"

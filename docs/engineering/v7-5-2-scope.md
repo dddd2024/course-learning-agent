@@ -16,6 +16,25 @@ remote CI evidence are all verified on the final commit.
 - Target after all gates pass: `v1.0.0-rc3`
 - Current status: `in_progress`
 
+## R2 audit recovery supersession
+
+R2 starts from `main` at `f75cbca6f556c2eb6045b49e169e68442461bcea` on
+`codex/v7-5-2-audit-r2-migration-release-gates`.  The release remains
+`in_progress` with `release_candidate=null` until the final main SHA has
+matching local evidence and a successful remote CI run.
+
+R2 blockers are: `real_sqlalchemy_legacy_schema_migration`,
+`material_external_identity`, `repair_result_truthfulness`,
+`real_repair_button_e2e`, `image_decode_evidence`, `blob_request_race`,
+`acceptance_summary_artifact`, and `remote_ci_verification`.
+
+`verified_locally` requires the final committed SHA in generated
+`artifacts/verification/v7-audit-recovery/summary.json`, a real old-database
+migration/rollback test, all specialist browser paths with zero failed and
+zero skipped, and remote CI success.  No deleted pre-migration SQLite high
+watermark is claimed to be recoverable; only IDs allocated after the rebuild
+must not be reused.
+
 ## Verified regression facts
 
 GitHub Actions PR #6, run #96, was executed against the recovery branch.
