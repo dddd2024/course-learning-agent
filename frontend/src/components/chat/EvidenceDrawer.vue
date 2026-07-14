@@ -4,11 +4,13 @@
 // The parent owns all state; this component renders and emits follow-up
 // selections and visibility changes.
 import { computed } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import type { Citation } from '../../api/chat'
 import type { ChunkDetail } from '../../api/material'
 import type { ChatMessage } from './types'
 import FollowUpSuggestions from './FollowUpSuggestions.vue'
+import { resolveMaterialPublicId } from './materialRouteResolver'
 
 const props = defineProps<{
   visible: boolean
@@ -35,17 +37,26 @@ function truncate(text: string, max = 120): string {
   return text.length > max ? text.slice(0, max) + '…' : text
 }
 
-function goToLearn(chunkId: number, materialPublicId?: string | null) {
-  if (props.message?.courseId) {
-    router.push({
-      path: `/courses/${props.message.courseId}/learn`,
-      query: {
-        ...(materialPublicId ? { material: materialPublicId } : {}),
-        chunk_id: String(chunkId),
-      },
-    })
-    emit('update:visible', false)
+async function goToLearn(chunkId: number, materialPublicId?: string | null) {
+  if (!props.message?.courseId) return
+
+  let resolvedPublicId: string
+  try {
+    resolvedPublicId = await resolveMaterialPublicId(
+      props.message.courseId,
+      chunkId,
+      materialPublicId,
+    )
+  } catch {
+    ElMessage.error('无法定位该片段所属资料，请刷新后重试。')
+    return
   }
+
+  await router.push({
+    path: `/courses/${props.message.courseId}/learn`,
+    query: { material: resolvedPublicId, chunk_id: String(chunkId) },
+  })
+  emit('update:visible', false)
 }
 
 // Render chunk text with quote_text highlighted. Escapes HTML first,
@@ -121,13 +132,12 @@ function renderHighlightedText(fullText: string, quote: string): string {
         <div class="drawer-section citation-actions">
           <el-button
             type="primary"
-            :disabled="!props.citation.material_public_id"
             @click="goToLearn(props.citation.chunk_id, props.citation.material_public_id)"
           >
             打开引用资料
           </el-button>
           <span v-if="!props.citation.material_public_id" class="citation-route-unavailable">
-            旧引用缺少稳定资料标识，暂不能直接跳转
+            将根据引用片段解析所属资料
           </span>
         </div>
       </template>
