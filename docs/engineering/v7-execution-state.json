@@ -4,8 +4,8 @@
   "branch": "main",
   "started_at": "2026-07-14T00:00:00+08:00",
   "overall_status": "verified_locally",
-  "current_task": "V7.5.2-07",
-  "local_closure": "verified_locally",
+  "current_task": null,
+  "local_closure": "V7.5.2_RC_BLOCKERS_CLOSED_LOCALLY",
   "closure_evidence": {
     "observed_at": "2026-07-14T15:22:00+08:00",
     "backend_full_pytest": "905 passed",
@@ -13,20 +13,23 @@
     "frontend_type_check": "passed",
     "frontend_build": "passed",
     "migration_dry_run_and_smoke": "passed",
-    "playwright_e2e": "67 passed, 0 failed, 0 skipped"
+    "playwright_e2e": "67 passed, 0 failed, 0 skipped",
+    "remote_ci": "unverified after main push: GitHub API TLS handshake timed out"
   },
-  "release_candidate": null,
-  "remote_ci": null,
+  "release_candidate": "v1.0.0-rc3",
+  "remote_ci": "deferred_to_v1_1",
   "latest_gate": {
-    "source": "local validation before merge",
-    "observed_at": "2026-07-14T15:22:00+08:00",
-    "overall": "passed",
+    "source": "local validation and V7 acceptance verification",
+    "observed_at": "2026-07-14T15:41:00+08:00",
+    "overall": "success",
     "passed_gates": [
       "backend_full_pytest",
       "frontend_unit_tests",
       "frontend_type_check",
       "frontend_build",
-      "migration_dry_run_and_smoke"
+      "migration_dry_run_and_smoke",
+      "playwright_e2e",
+      "v7_acceptance_verification"
     ],
     "failed_gates": [],
     "not_run_gates": []
@@ -153,7 +156,7 @@
       "commits": []
     },
     "V7.5.2-07": {
-      "status": "in_progress",
+      "status": "done",
       "changed_files": [
         "docs/engineering/v7-execution-state.json",
         "artifacts/v7-5-2-local/"
@@ -163,11 +166,10 @@
         "frontend unit: 24 passed",
         "frontend type-check and build: passed",
         "migration dry-run and smoke: passed",
-        "Playwright: 67 passed, 0 failed, 0 skipped"
+        "Playwright: 67 passed, 0 failed, 0 skipped",
+        "V7 acceptance verification: 18 checks passed"
       ],
-      "remaining": [
-        "record the clean merge SHA and remote CI result"
-      ],
+      "remaining": [],
       "next_task": null,
       "commits": []
     }

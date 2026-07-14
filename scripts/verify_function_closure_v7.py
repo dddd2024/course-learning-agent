@@ -50,6 +50,8 @@ def run_command(cmd: list[str], cwd: Path | None = None, env: dict | None = None
         cwd=str(cwd or REPO_ROOT),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=merged_env,
         timeout=300,
     )
@@ -97,7 +99,7 @@ def check_backend_schema():
 
 @register_check("migration_dry_run", "backend")
 def check_migration():
-    cmd = [sys.executable, str(SCRIPTS_DIR / "migrate.py"), "--dry-run", "--json"]
+    cmd = [sys.executable, str(SCRIPTS_DIR / "migrate.py"), "--dry-run"]
     code, output = run_command(cmd)
     return code == 0, output
 
@@ -193,21 +195,21 @@ def check_v7_multi_plan_lifecycle():
 
 @register_check("frontend_type_check", "frontend")
 def check_frontend_type():
-    cmd = ["npm", "run", "type-check"]
+    cmd = ["npm.cmd" if os.name == "nt" else "npm", "run", "type-check"]
     code, output = run_command(cmd, cwd=FRONTEND_DIR)
     return code == 0, output
 
 
 @register_check("frontend_unit", "frontend")
 def check_frontend_unit():
-    cmd = ["npm", "run", "test", "--", "--run"]
+    cmd = ["npm.cmd" if os.name == "nt" else "npm", "run", "test", "--", "--run"]
     code, output = run_command(cmd, cwd=FRONTEND_DIR)
     return code == 0, output
 
 
 @register_check("frontend_build", "frontend")
 def check_frontend_build():
-    cmd = ["npm", "run", "build"]
+    cmd = ["npm.cmd" if os.name == "nt" else "npm", "run", "build"]
     code, output = run_command(cmd, cwd=FRONTEND_DIR)
     return code == 0, output
 
@@ -235,12 +237,12 @@ def check_v7_e2e(external_report: Path | None = None):
     # Collect all test titles from the report
     all_titles: list[str] = []
 
-    def collect_titles(specs):
-        for spec in specs:
-            title = spec.get("title", "")
+    def collect_titles(nodes):
+        for node in nodes:
+            title = node.get("title", "")
             all_titles.append(title)
-            for inner in spec.get("specs", []):
-                collect_titles([inner])
+            collect_titles(node.get("specs", []))
+            collect_titles(node.get("suites", []))
 
     for suite in data.get("suites", []):
         collect_titles([suite])
