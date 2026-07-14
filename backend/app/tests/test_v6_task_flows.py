@@ -178,6 +178,22 @@ def _event_types(db, task_id: int) -> set[str]:
     return {row.event_type for row in rows}
 
 
+def test_new_learning_task_routes_with_material_public_id(db_session, sample_user, sample_course):
+    material = Material(
+        user_id=sample_user.id, course_id=sample_course.id,
+        filename="public-route.txt", file_type="txt", file_path="public-route.txt", status="ready",
+    )
+    db_session.add(material); db_session.flush()
+    goal = _make_goal(db_session, sample_user, title="Public route goal")
+    task = _make_task(
+        db_session, goal, sample_course, "learn", "material", material.id,
+        spec={"material_id": material.id, "material_public_id": material.public_id},
+    )
+    result = start_task(db_session, task.id, sample_user.id)
+    assert result["route_params"]["material"] == material.public_id
+    assert "material_id" not in result["route_params"]
+
+
 # ---------------------------------------------------------------------------
 # V6-21: Learn Task Flow
 # ---------------------------------------------------------------------------

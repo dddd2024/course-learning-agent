@@ -37,7 +37,7 @@ def test_v7_4_4_state_starts_honestly_in_progress() -> None:
 
     if state["version"] == "v7.5.2":
         assert state["overall_status"] in {"in_progress", "verified_locally"}
-        assert "V7.5.2-00" in state["tasks"]
+        assert "V7.5.2-00" in state["tasks"] or "AUDIT-R3-00" in state["tasks"]
         if state["overall_status"] == "in_progress":
             assert state["current_task"] in state["tasks"]
             assert state["local_closure"] is None

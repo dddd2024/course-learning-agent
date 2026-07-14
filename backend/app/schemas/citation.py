@@ -11,6 +11,7 @@ class CitationResponse(BaseModel):
 
     chunk_id: int
     material_id: Optional[int] = None
+    material_public_id: Optional[str] = None
     material_name: str = ""
     page_no: Optional[int] = None
     quote_text: str = ""

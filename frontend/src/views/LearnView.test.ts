@@ -208,7 +208,13 @@ describe('LearnView', () => {
     vi.mocked(getMaterialReadiness).mockResolvedValue({
       data: { usable: false, reader_mode: 'page', file_type: 'pdf', missing_page_numbers: [1], blocking_reasons: ['page_assets_missing'] },
     } as any)
-    vi.mocked(rebuildPageAssets).mockResolvedValue({ data: { status: 'ready', expected_pages: 2, ready_pages: 2, missing_pages: 0 } } as any)
+    vi.mocked(rebuildPageAssets).mockResolvedValue({
+      data: {
+        status: 'ready', reader_state: 'fully_repaired', expected_pages: 2, ready_pages: 2, missing_pages: 0,
+        page_asset_rebuild: { status: 'success' },
+        page_catalog_backfill: { status: 'success', created: 2, remaining_synthetic_page_numbers: [] },
+      },
+    } as any)
     vi.mocked(reextractImages).mockResolvedValue({ data: { status: 'ready', extracted: 1 } } as any)
 
     const wrapper = mount(LearnView, { global: { plugins: [createTestingPinia()] } })

@@ -148,7 +148,7 @@ class Settings(BaseSettings):
         sqlite_prefix = "sqlite:///"
         if not self.DATABASE_URL.startswith(sqlite_prefix):
             raise ValueError("E2E_MODE currently requires a dedicated SQLite database")
-        database_path = Path(self.DATABASE_URL[len(sqlite_prefix):]).resolve()
+        database_path = _sqlite_database_path(self.DATABASE_URL)
 
         def belongs_to_run(path: Path) -> bool:
             parts = {part.lower() for part in path.resolve().parts}
@@ -171,6 +171,24 @@ class Settings(BaseSettings):
                 "E2E paths must live under .e2e-runs or a system isolated run root containing E2E_RUN_ID: "
                 + ", ".join(outside)
             )
+
+
+def _sqlite_database_path(database_url: str) -> Path:
+    """Resolve a SQLite URL to its filesystem path without depending on CWD.
+
+    Hashing ``Path(database_url)`` is incorrect because the ``sqlite:///``
+    scheme is treated as a relative filename.  The API and worker start from
+    different directories, which previously produced different E2E runtime
+    fingerprints for the same database.
+    """
+    prefix = "sqlite:///"
+    if not database_url.startswith(prefix):
+        raise ValueError("database URL must use sqlite:///")
+    return Path(database_url[len(prefix):]).resolve()
+
+
+def _runtime_path_fingerprint(path: Path | str) -> str:
+    return hashlib.sha256(str(Path(path).resolve()).encode("utf-8")).hexdigest()
 
 
 settings = Settings()
@@ -203,11 +221,11 @@ def e2e_runtime_info() -> dict | None:
     """Return non-sensitive identity data for E2E API/worker handshake."""
     if not settings.E2E_MODE:
         return None
-    def fingerprint(value: str) -> str:
-        return hashlib.sha256(str(Path(value).resolve()).encode("utf-8")).hexdigest()
     return {
         "run_id": settings.E2E_RUN_ID,
-        "database_fingerprint": fingerprint(settings.DATABASE_URL),
-        "upload_dir_fingerprint": fingerprint(settings.UPLOAD_DIR),
-        "parsed_dir_fingerprint": fingerprint(settings.PARSED_DIR),
+        "database_fingerprint": _runtime_path_fingerprint(
+            _sqlite_database_path(settings.DATABASE_URL)
+        ),
+        "upload_dir_fingerprint": _runtime_path_fingerprint(settings.UPLOAD_DIR),
+        "parsed_dir_fingerprint": _runtime_path_fingerprint(settings.PARSED_DIR),
     }

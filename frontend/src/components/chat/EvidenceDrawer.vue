@@ -35,11 +35,14 @@ function truncate(text: string, max = 120): string {
   return text.length > max ? text.slice(0, max) + '…' : text
 }
 
-function goToLearn(chunkId: number) {
+function goToLearn(chunkId: number, materialPublicId?: string | null) {
   if (props.message?.courseId) {
     router.push({
       path: `/courses/${props.message.courseId}/learn`,
-      query: { chunk_id: String(chunkId) },
+      query: {
+        ...(materialPublicId ? { material: materialPublicId } : {}),
+        chunk_id: String(chunkId),
+      },
     })
     emit('update:visible', false)
   }
@@ -64,7 +67,7 @@ function renderHighlightedText(fullText: string, quote: string): string {
     return (
       escaped.slice(0, idx) +
       '<mark class="citation-highlight">' +
-      escaped.slice(idx, idx + escapedQuote.length) +
+      escapedQuote +
       '</mark>' +
       escaped.slice(idx + escapedQuote.length)
     )
@@ -76,7 +79,7 @@ function renderHighlightedText(fullText: string, quote: string): string {
       return (
         escaped.slice(0, shortIdx) +
         '<mark class="citation-highlight">' +
-        escaped.slice(shortIdx, shortIdx + shortQuote.length) +
+        shortQuote +
         '</mark>' +
         escaped.slice(shortIdx + shortQuote.length)
       )
@@ -114,6 +117,18 @@ function renderHighlightedText(fullText: string, quote: string): string {
             v-html="renderHighlightedText(props.chunk.text, props.citation.quote_text)"
           />
           <div v-else class="drawer-quote">{{ props.citation.quote_text }}</div>
+        </div>
+        <div class="drawer-section citation-actions">
+          <el-button
+            type="primary"
+            :disabled="!props.citation.material_public_id"
+            @click="goToLearn(props.citation.chunk_id, props.citation.material_public_id)"
+          >
+            打开引用资料
+          </el-button>
+          <span v-if="!props.citation.material_public_id" class="citation-route-unavailable">
+            旧引用缺少稳定资料标识，暂不能直接跳转
+          </span>
         </div>
       </template>
 
@@ -261,6 +276,17 @@ function renderHighlightedText(fullText: string, quote: string): string {
   font-weight: 600;
 }
 
+.citation-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.citation-route-unavailable {
+  color: #909399;
+  font-size: 12px;
+}
+
 .retrieval-explain {
   font-size: 12px;
   color: #909399;
@@ -278,23 +304,22 @@ function renderHighlightedText(fullText: string, quote: string): string {
 
 .retrieval-explain-uncited {
   color: #909399;
-  font-weight: 600;
 }
 
 .retrieval-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .retrieval-item {
-  border: 1px solid #ebeef5;
+  border: 1px solid #e4e7ed;
   border-radius: 6px;
-  padding: 10px 12px;
+  padding: 10px;
   background: #fafafa;
 }
 
-.retrieval-cited {
+.retrieval-item.retrieval-cited {
   border-color: #b3e19d;
   background: #f0f9eb;
 }
@@ -309,32 +334,28 @@ function renderHighlightedText(fullText: string, quote: string): string {
 
 .retrieval-title {
   font-size: 13px;
-  font-weight: 600;
   color: #303133;
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
 }
 
 .retrieval-meta {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 6px;
   margin-bottom: 6px;
 }
 
 .retrieval-snippet {
   font-size: 12px;
+  line-height: 1.5;
   color: #606266;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
+  margin-bottom: 6px;
 }
 
 .retrieval-actions {
-  margin-top: 6px;
-  text-align: right;
+  display: flex;
+  justify-content: flex-end;
 }
 </style>

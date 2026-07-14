@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.knowledge_point import KnowledgePoint
 from app.models.material import Material
+from app.models.material_chunk import MaterialChunk
 
 
 def _tokens(value: str) -> set[str]:
@@ -59,6 +60,7 @@ def resolve_target(
             return "material", None, {"material_id": None, "resolution_status": "unresolved", "completion_mode": "loaded_and_confirmed", "remediation": "请先上传并解析课程资料或选择目标"}
         return "material", material.id, {
             "material_id": material.id,
+            "material_public_id": material.public_id,
             "material_version_id": material.active_version_id,
             "chunk_range": [],
             "resolution_status": "resolved",
@@ -76,9 +78,16 @@ def resolve_target(
             source_ids = json.loads(point.source_chunk_ids or "[]")
         except (json.JSONDecodeError, TypeError):
             source_ids = []
+        source_material_public_ids = [
+            public_id for (public_id,) in db.query(Material.public_id)
+            .join(MaterialChunk, MaterialChunk.material_id == Material.id)
+            .filter(MaterialChunk.id.in_(source_ids)).order_by(Material.id).distinct().all()
+        ] if source_ids else []
         return "knowledge_point", point.id, {
             "knowledge_point_id": point.id,
             "source_chunk_ids": source_ids,
+            "source_material_public_ids": source_material_public_ids,
+            "material_public_id": source_material_public_ids[0] if source_material_public_ids else None,
             "resolution_status": "resolved",
             "review_mode": "loaded_and_confirmed",
         }

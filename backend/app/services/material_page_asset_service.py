@@ -27,6 +27,7 @@ from app.models.material_page import MaterialPage
 from app.models.material_page_asset import MaterialPageAsset
 from app.retrieval.page_renderer import render_pdf_pages
 from app.services.material_page_catalog_service import resolve_expected_page_numbers
+from app.services.material_page_catalog_service import build_material_page_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -287,7 +288,7 @@ def ensure_active_page_assets(db: Session, material: Material) -> dict:
     return rebuild_page_assets(db, material)
 
 
-def rebuild_page_assets(db: Session, material: Material) -> dict:
+def rebuild_page_assets(db: Session, material: Material, *, inject_backfill_failure: bool = False) -> dict:
     """Render the full PDF and atomically replace page assets with compensation.
 
     V7.5.2-03: Uses a lock, journal, and compensation transaction to
@@ -323,15 +324,52 @@ def rebuild_page_assets(db: Session, material: Material) -> dict:
         return _do_rebuild(
             db, material, source, page_root, version_id,
             staging_dir, version_dir, backup_dir, journal_path,
+            inject_backfill_failure=inject_backfill_failure,
         )
     finally:
         _release_lock(material)
 
 
+def _repair_result(
+    db: Session, material: Material, *, asset_status: str, backfill_status: str,
+    created: int = 0, error_code: str | None = None,
+) -> dict:
+    """Return a stable repair contract; coverage alone is never success."""
+    coverage = evaluate_page_asset_coverage(db, material)
+    catalog = build_material_page_catalog(db, material)
+    synthetic = catalog["synthetic_page_numbers"]
+    fully_repaired = (
+        coverage["status"] == "ready"
+        and backfill_status == "success"
+        and not synthetic
+    )
+    if fully_repaired:
+        status, reader_state = "ready", "fully_repaired"
+    elif coverage["ready_pages"] > 0:
+        status, reader_state = "readable_but_not_repaired", "synthetic_fallback"
+    else:
+        status, reader_state = "failed", "unavailable"
+    return {
+        "material_id": material.id,
+        "status": status,
+        "reader_state": reader_state,
+        "expected_pages": coverage["expected_pages"],
+        "ready_pages": coverage["ready_pages"],
+        "missing_pages": coverage["missing_pages"],
+        "page_asset_rebuild": {"status": asset_status},
+        "page_catalog_backfill": {
+            "status": backfill_status,
+            "created": created,
+            "remaining_synthetic_page_numbers": synthetic,
+        },
+        "error_code": error_code,
+    }
+
+
 def _do_rebuild(
     db: Session, material: Material, source: Path, page_root: Path,
     version_id: int, staging_dir: Path, version_dir: Path,
-    backup_dir: Path, journal_path: Path,
+    backup_dir: Path, journal_path: Path, *, inject_backfill_failure: bool = False,
 ) -> dict:
     """Inner rebuild logic with compensation at every failure point."""
 
@@ -353,6 +391,7 @@ def _do_rebuild(
     })
 
     # 3. Render all pages to staging
+    phase = "asset_persistence"
     try:
         rendered = render_pdf_pages(source, staging_dir)
     except Exception as exc:
@@ -442,7 +481,10 @@ def _do_rebuild(
                 sha256=r.sha256,
                 render_status="ready",
             ))
-        backfill_missing_material_pages(
+        phase = "page_catalog_backfill"
+        if inject_backfill_failure:
+            raise RuntimeError("E2E injected page catalog backfill failure")
+        backfill = backfill_missing_material_pages(
             db, material, page_numbers=[rendered_page.page_no for rendered_page in rendered],
         )
         db.flush()
@@ -476,7 +518,19 @@ def _do_rebuild(
         if trash_dir is not None and trash_dir.exists():
             shutil.rmtree(trash_dir, ignore_errors=True)
         journal_path.unlink(missing_ok=True)
-        return evaluate_page_asset_coverage(db, material)
+        if phase == "page_catalog_backfill":
+            return _repair_result(
+                db, material,
+                asset_status="restored_previous_assets",
+                backfill_status="failed",
+                error_code="PAGE_CATALOG_BACKFILL_FAILED",
+            )
+        return _repair_result(
+            db, material,
+            asset_status="restored_previous_assets",
+            backfill_status="skipped",
+            error_code="PAGE_ASSET_PERSIST_FAILED",
+        )
 
     # 10. Success — clean up backup and journal
     if backup_dir.exists():
@@ -489,4 +543,9 @@ def _do_rebuild(
             if child.name.startswith(".v7-staging-rebuild-"):
                 shutil.rmtree(child, ignore_errors=True)
 
-    return evaluate_page_asset_coverage(db, material)
+    return _repair_result(
+        db, material,
+        asset_status="success",
+        backfill_status="success",
+        created=backfill["created"],
+    )

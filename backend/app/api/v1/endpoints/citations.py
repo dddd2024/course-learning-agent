@@ -75,6 +75,7 @@ def list_citations(
             CitationResponse(
                 chunk_id=cite.chunk_id,
                 material_id=chunk.material_id,
+                material_public_id=material.public_id,
                 material_name=material.filename,
                 page_no=page,
                 quote_text=cite.quote_text or "",

@@ -16,7 +16,7 @@ another user is invisible (returned as 404).
 """
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Response, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -181,7 +181,12 @@ def retry_image_extraction(material_id: str, db: Session = Depends(get_db), curr
 
 
 @router.post("/{material_id}/page-assets/rebuild")
-def rebuild_page_assets_endpoint(material_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+def rebuild_page_assets_endpoint(
+    material_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    x_e2e_inject_page_backfill_failure: str | None = Header(default=None),
+) -> dict:
     """Rebuild page-level visual assets for an existing PDF material.
 
     V7.5.1-01: Allows the frontend to repair materials that were parsed
@@ -190,7 +195,8 @@ def rebuild_page_assets_endpoint(material_id: str, db: Session = Depends(get_db)
     """
     from app.services.material_page_asset_service import rebuild_page_assets
     material = _get_owned_material(db, material_id, current_user.id)
-    return rebuild_page_assets(db, material)
+    inject_failure = settings.E2E_MODE and x_e2e_inject_page_backfill_failure == "true"
+    return rebuild_page_assets(db, material, inject_backfill_failure=inject_failure)
 
 
 @router.get("/{material_id}/parse-jobs")

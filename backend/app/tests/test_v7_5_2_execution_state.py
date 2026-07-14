@@ -31,7 +31,7 @@ def test_v7_5_2_records_honest_current_state() -> None:
     state = _load_state()
 
     assert state["version"] == "v7.5.2"
-    assert state["base_commit"] == "f75cbca6f556c2eb6045b49e169e68442461bcea"
+    assert state["base_commit"] == "0ae352e3f49984cd919c461359d4b2c7593dfb2c"
     assert state["overall_status"] in {"in_progress", "verified_locally"}
 
     if state["overall_status"] == "in_progress":
@@ -57,6 +57,13 @@ def test_failed_or_incomplete_gate_forces_in_progress() -> None:
     if gate.get("overall") != "success" or has_failed_count or not_run_gates:
         assert state["overall_status"] == "in_progress"
         assert state["local_closure"] is None
+        assert state["release_candidate"] is None
+
+
+def test_remote_ci_unavailable_is_not_success_or_release_ready() -> None:
+    state = _load_state()
+    if state["remote_ci"] == "unavailable":
+        assert state["overall_status"] == "in_progress"
         assert state["release_candidate"] is None
 
 

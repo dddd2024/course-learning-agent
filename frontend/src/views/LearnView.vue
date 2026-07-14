@@ -32,7 +32,7 @@
         v-model="selectedMaterialId"
         placeholder="选择学习资料"
         class="material-select"
-        @change="loadChunks"
+        @change="handleMaterialChange"
       >
         <el-option
           v-for="m in materials"
@@ -689,14 +689,16 @@ onMounted(async () => {
         }
       }
 
-      const queryMaterialId = route.query.material_id
-        ? Number(route.query.material_id)
-        : null
-      const match = queryMaterialId
-        ? materials.value.find((m) => m.id === queryMaterialId)
-        : null
+      const publicMaterial = typeof route.query.material === 'string' ? route.query.material : null
+      const queryMaterialId = route.query.material_id ? Number(route.query.material_id) : null
+      const match = publicMaterial
+        ? materials.value.find((m) => m.public_id === publicMaterial)
+        : queryMaterialId ? materials.value.find((m) => m.id === queryMaterialId) : null
       selectedMaterialId.value = match ? match.id : materials.value[0].id
       await loadChunks()
+      // Preserve legacy numeric parameters until task-load evidence has been
+      // recorded; normalize the address only after the reader is ready.
+      syncPublicMaterialRoute()
       // Load knowledge-point terms for highlighting (course-level, non-blocking).
       loadKeyTerms()
 
@@ -753,6 +755,19 @@ async function getAllMaterialChunks(
     page += 1
   }
   return items
+}
+
+function syncPublicMaterialRoute() {
+  const material = selectedMaterial.value
+  if (!material || route.query.material === material.public_id) return
+  const query: Record<string, string | undefined> = { ...route.query, material: material.public_id }
+  delete query.material_id
+  router.replace({ query })
+}
+
+async function handleMaterialChange() {
+  syncPublicMaterialRoute()
+  await loadChunks()
 }
 
 async function loadChunks() {
@@ -821,7 +836,11 @@ async function loadChunks() {
     loadImageIntegrity()
     // V7: task start only creates the in-progress state.  Evidence is sent
     // after the target material and its rendered reader data have loaded.
-    const expectedMaterialId = Number(route.query.material_id)
+    // Route URLs use the immutable public identity, while task-event
+    // evidence intentionally retains the resolved numeric primary key.
+    const expectedMaterialId = typeof route.query.material === 'string'
+      ? (selectedMaterial.value?.id ?? 0)
+      : Number(route.query.material_id)
     if (
       fromTaskId.value &&
       !targetLoadRecorded.value &&
@@ -900,43 +919,54 @@ async function handleRepairDocument() {
   if (!selectedMaterialId.value || reextractingImages.value) return
   reextractingImages.value = true
   try {
-    // A failed/partial page rebuild is not a successful document repair.
-    // Do not continue to a success toast merely because image extraction can
-    // run independently.
     const { data: rebuilt } = await rebuildPageAssets(selectedMaterialId.value)
-    if (
-      rebuilt.status !== 'ready'
-      || rebuilt.expected_pages <= 0
-      || rebuilt.ready_pages !== rebuilt.expected_pages
-      || rebuilt.missing_pages !== 0
-    ) {
-      throw new Error(`页面资源重建未完成：${rebuilt.ready_pages}/${rebuilt.expected_pages} 页可读`)
+    if (rebuilt.status === 'readable_but_not_repaired') {
+      ElMessage.warning('当前原页仍可阅读，但页面目录持久化失败。下次启动可能需要再次修复。')
+      return
+    }
+    if (rebuilt.status !== 'ready' || rebuilt.reader_state !== 'fully_repaired' || rebuilt.page_catalog_backfill.status !== 'success' || rebuilt.page_catalog_backfill.remaining_synthetic_page_numbers.length > 0) {
+      ElMessage.error('文档预览修复失败，已保留修复前可读版本。')
+      return
     }
 
     // Step 2: Re-extract standalone images
     let imgExtracted = 0
+    let imageReextractState: 'success' | 'skipped' | 'failed' = 'success'
     try {
       const { data: result } = await reextractImages(selectedMaterialId.value)
       if (result.status === 'forbidden') {
-        // Non-PDF — skip image extraction
+        imageReextractState = 'skipped'
       } else if (result.status === 'missing') {
-        // Source file missing — skip
+        imageReextractState = 'skipped'
       } else {
         imgExtracted = result.extracted ?? 0
       }
-    } catch {
-      // Image extraction failure is non-fatal
+    } catch (err) {
+      imageReextractState = 'failed'
+      console.warn('Standalone image re-extraction failed after page repair', err)
     }
 
     // Refresh all three server-owned facts before reporting success.
     brokenImageIds.value.clear()
-    await loadChunks()
-    await loadImageIntegrity()
+    try {
+      await loadChunks()
+      await loadImageIntegrity()
+    } catch (err) {
+      console.warn('Unable to confirm repair state after refresh', err)
+      ElMessage.warning('原页已修复，但无法确认最终状态，请刷新后重试。')
+      return
+    }
     const current = readiness.value
     const effective = current?.effective_page_count ?? 0
     const expected = current?.expected_page_count ?? 0
-    if (current?.usable && effective === expected && expected > 0) {
-      ElMessage.success(`文档预览已修复：${effective}/${expected} 页可读，提取 ${imgExtracted} 张独立图片`)
+    if (current?.usable && effective === expected && expected > 0 && current.page_catalog_synthetic_numbers.length === 0) {
+      if (imageReextractState === 'failed') {
+        ElMessage.warning('原页已修复，但独立图片提取失败。')
+      } else if (imageReextractState === 'skipped') {
+        ElMessage.success(`原页预览和页面目录已修复：${effective}/${expected} 页可读（独立图片无需提取）。`)
+      } else {
+        ElMessage.success(`原页预览和页面目录已修复：${effective}/${expected} 页可读，提取 ${imgExtracted} 张独立图片`)
+      }
     } else {
       ElMessage.warning(`文档预览尚未完整：${effective}/${expected} 页有效，请根据提示继续处理。`)
     }

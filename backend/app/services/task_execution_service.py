@@ -110,7 +110,7 @@ def _create_quiz_for_task(
     return quiz.id
 
 
-def _build_route_info(task: StudyTask, quiz_id: int | None) -> dict[str, Any]:
+def _build_route_info(task: StudyTask, quiz_id: int | None, target_spec: dict[str, Any] | None = None) -> dict[str, Any]:
     """Build routing info for the frontend based on task type."""
     route = ""
     params: dict[str, Any] = {}
@@ -120,7 +120,8 @@ def _build_route_info(task: StudyTask, quiz_id: int | None) -> dict[str, Any]:
         params = {"quiz_id": quiz_id}
     elif task.task_type == "learn":
         route = "/courses/:courseId/learn"
-        params = {"course_id": task.course_id, "material_id": task.target_id}
+        public_id = (target_spec or {}).get("material_public_id")
+        params = {"course_id": task.course_id, "material": public_id} if public_id else {"course_id": task.course_id, "material_id": task.target_id}
     elif task.task_type == "review":
         route = "/courses/:courseId/outline"
         params = {"course_id": task.course_id, "knowledge_point_id": task.target_id, "task_id": task.id, "plan_id": task.goal_id}
@@ -219,7 +220,7 @@ def start_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
     db.commit()
     db.refresh(task)
 
-    route_info = _build_route_info(task, quiz_id)
+    route_info = _build_route_info(task, quiz_id, spec)
     action_type = {"learn": "open_material", "review": "open_knowledge_point", "quiz": "open_quiz"}[task.task_type]
     route_name = {"learn": "course-learn", "review": "course-outline", "quiz": "quizzes"}[task.task_type]
     result = {

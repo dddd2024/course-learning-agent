@@ -2,6 +2,7 @@ import request from './index'
 import type { AxiosPromise, AxiosProgressEvent } from 'axios'
 
 export type MaterialStatus = 'uploaded' | 'processing' | 'ready' | 'failed'
+export type MaterialIdentifier = number | string
 
 export interface Material {
   id: number
@@ -70,7 +71,7 @@ export interface MaterialReadiness {
   blocking_reasons: string[]
 }
 
-export function getMaterialReadiness(materialId: number): AxiosPromise<MaterialReadiness> {
+export function getMaterialReadiness(materialId: MaterialIdentifier): AxiosPromise<MaterialReadiness> {
   return request.get(`/materials/${materialId}/readiness`)
 }
 
@@ -124,7 +125,7 @@ export interface MaterialPageCatalog {
   items: MaterialPage[]
 }
 
-export function getMaterialPages(materialId: number): AxiosPromise<MaterialPageCatalog> {
+export function getMaterialPages(materialId: MaterialIdentifier): AxiosPromise<MaterialPageCatalog> {
   return request.get(`/materials/${materialId}/pages`)
 }
 
@@ -143,7 +144,7 @@ export interface ImageIntegrityResult {
   status: string
 }
 
-export function getImageIntegrity(materialId: number): AxiosPromise<ImageIntegrityResult> {
+export function getImageIntegrity(materialId: MaterialIdentifier): AxiosPromise<ImageIntegrityResult> {
   return request.get(`/materials/${materialId}/image-integrity`)
 }
 
@@ -155,18 +156,24 @@ export interface ReextractResult {
   extracted: number
 }
 
-export function reextractImages(materialId: number): AxiosPromise<ReextractResult> {
+export function reextractImages(materialId: MaterialIdentifier): AxiosPromise<ReextractResult> {
   return request.post(`/materials/${materialId}/images/reextract`)
 }
+
+export type RepairStepStatus = 'success' | 'failed' | 'skipped' | 'restored_previous_assets'
 
 export interface PageAssetRebuildResult {
   expected_pages: number
   ready_pages: number
   missing_pages: number
-  status: string
+  status: 'ready' | 'readable_but_not_repaired' | 'failed'
+  reader_state: 'fully_repaired' | 'synthetic_fallback' | 'unavailable'
+  page_asset_rebuild: { status: RepairStepStatus; replaced?: number }
+  page_catalog_backfill: { status: RepairStepStatus; created: number; remaining_synthetic_page_numbers: number[] }
+  error_code?: string | null
 }
 
-export function rebuildPageAssets(materialId: number): AxiosPromise<PageAssetRebuildResult> {
+export function rebuildPageAssets(materialId: MaterialIdentifier): AxiosPromise<PageAssetRebuildResult> {
   return request.post(`/materials/${materialId}/page-assets/rebuild`)
 }
 
@@ -271,18 +278,18 @@ export function uploadMaterial(
   })
 }
 
-export function parseMaterial(materialId: number): AxiosPromise<ParseResult> {
+export function parseMaterial(materialId: MaterialIdentifier): AxiosPromise<ParseResult> {
   return request.post(`/materials/${materialId}/parse`)
 }
 
 export function deleteMaterial(
-  materialId: number,
+  materialId: MaterialIdentifier,
 ): AxiosPromise<void> {
   return request.delete(`/materials/${materialId}`)
 }
 
 export function getChunks(
-  materialId: number,
+  materialId: MaterialIdentifier,
   params?: ChunkListParams,
 ): AxiosPromise<ChunkListResult> {
   return request.get(`/materials/${materialId}/chunks`, { params })
@@ -301,7 +308,7 @@ export interface MaterialOverview {
 }
 
 export function getMaterialOverview(
-  materialId: number,
+  materialId: MaterialIdentifier,
 ): AxiosPromise<MaterialOverview> {
   return request.get(`/materials/${materialId}/overview`)
 }
@@ -319,7 +326,7 @@ export interface MaterialStudyGuide {
 }
 
 export function generateMaterialStudyGuide(
-  materialId: number,
+  materialId: MaterialIdentifier,
 ): AxiosPromise<MaterialStudyGuide> {
   return request.post(`/materials/${materialId}/study-guide`)
 }
