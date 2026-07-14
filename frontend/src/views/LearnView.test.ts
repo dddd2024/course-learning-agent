@@ -31,6 +31,12 @@ vi.mock('../api/course', () => ({
 vi.mock('../api/material', () => ({
   listMaterials: vi.fn(),
   getChunks: vi.fn(),
+  getMaterialPages: vi.fn(),
+  getImageIntegrity: vi.fn().mockResolvedValue({
+    data: { status: 'ready', total: 0, ready: 0, missing: 0, expected_pages: 0, ready_pages: 0, missing_pages: 0 },
+  }),
+  reextractImages: vi.fn(),
+  rebuildPageAssets: vi.fn(),
   generateMaterialStudyGuide: vi.fn(),
 }))
 
@@ -91,7 +97,8 @@ describe('LearnView', () => {
   })
 
   it('keeps backend-provided short and cited chunks instead of UI filtering them', async () => {
-    const { listMaterials, getChunks } = await import('../api/material')
+    const { listMaterials, getChunks, getMaterialPages } = await import('../api/material')
+    vi.mocked(getMaterialPages).mockResolvedValue({ data: { items: [] } } as any)
     vi.mocked(listMaterials).mockResolvedValue({ data: { items: mockMaterials, total: 1 } } as any)
 
     // Return 3 chunks: 2 useful + 1 noise -> filteredCount = 1
@@ -121,7 +128,8 @@ describe('LearnView', () => {
   })
 
   it('decorative image toggle works and reloads chunks', async () => {
-    const { listMaterials, getChunks } = await import('../api/material')
+    const { listMaterials, getChunks, getMaterialPages } = await import('../api/material')
+    vi.mocked(getMaterialPages).mockResolvedValue({ data: { items: [] } } as any)
     vi.mocked(listMaterials).mockResolvedValue({ data: { items: mockMaterials, total: 1 } } as any)
     vi.mocked(getChunks).mockResolvedValue({
       data: {
