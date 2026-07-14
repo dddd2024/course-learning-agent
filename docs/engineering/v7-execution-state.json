@@ -3,8 +3,9 @@
   "base_commit": "b7facf8b891468010d88cf171497934763a12b77",
   "branch": "codex/v7-5-3-rc3-audit-closure",
   "started_at": "2026-07-14T11:30:00+08:00",
+  "code_completed_at": "2026-07-14T14:30:00+08:00",
   "overall_status": "in_progress",
-  "current_task": "V7.5.3-00",
+  "current_task": "V7.5.3-08",
   "local_closure": null,
   "closure_evidence": null,
   "release_candidate": null,
@@ -17,6 +18,18 @@
     "page_asset_lock_ownership",
     "missing_executed_e2e_evidence"
   ],
+  "implemented_pending_verification": [
+    "e2e_real_service_reuse",
+    "e2e_non_unique_environment",
+    "page_asset_recovery_outside_lock",
+    "page_asset_recovery_db_fs_ambiguity",
+    "page_asset_lock_ownership",
+    "legacy_null_image_isolation",
+    "six_non_skippable_user_paths",
+    "real_embedded_image_reparse",
+    "page_canvas_retry_and_url_cleanup",
+    "sha_bound_release_gate"
+  ],
   "resolved_blockers": [],
   "deferred_to_v1_1": [
     "remote_ci",
@@ -27,78 +40,167 @@
   ],
   "tasks": {
     "V7.5.3-00": {
-      "status": "done",
+      "status": "code_complete_pending_execution",
       "changed_files": [
         "docs/engineering/v7-execution-state.json",
         "docs/engineering/v7-5-3-scope.md",
         "backend/app/tests/test_v7_5_3_execution_state.py"
       ],
       "tests_run": [],
-      "remaining": ["run state-contract tests"],
+      "remaining": ["run state-contract tests on the committed branch"],
       "next_task": "V7.5.3-01",
-      "commits": ["9b082f9680b831405ec128cdc9c85ac79bc39b7c"]
+      "commits": [
+        "9b082f9680b831405ec128cdc9c85ac79bc39b7c",
+        "f1ae7e7d1aaa3042e21da3ba203ebf1f380b7ae2"
+      ]
     },
     "V7.5.3-01": {
-      "status": "pending",
-      "changed_files": [],
+      "status": "code_complete_pending_execution",
+      "changed_files": [
+        "frontend/playwright.config.ts",
+        "frontend/tests/e2e/e2e-runtime.ts",
+        "frontend/tests/e2e/global-setup.ts",
+        "frontend/tests/e2e/global-teardown.ts",
+        "frontend/tests/e2e/helpers.ts",
+        "backend/app/core/e2e_guard.py",
+        "backend/app/core/config.py",
+        "backend/app/core/database.py",
+        "backend/app/tests/test_v7_5_3_e2e_guard.py",
+        "backend/app/tests/test_v7_5_3_e2e_config_contract.py"
+      ],
       "tests_run": [],
-      "remaining": ["implement isolated non-reusable E2E runtime"],
+      "remaining": [
+        "run backend guard/config tests",
+        "verify unique ports and paths on Windows",
+        "verify teardown removes the run directory and leaves normal uploads unchanged"
+      ],
       "next_task": "V7.5.3-02",
-      "commits": []
+      "commits": [
+        "5ec5d0a528513c6e1b3f271e77ce7f5a49cac1e6",
+        "75fdc05c0c9fcc41d8dec1e0415889ba4fac54f3",
+        "fe625d9af4fcd5134af6da46d81f3381ea860ec8",
+        "b6acd216a660907d27ded5b944fd791c9a866527",
+        "c90448aeb936f281b20a3f884be6d5a7dc81fc09",
+        "9c282885e1a8ba635f4049a2ecbc0adf23ebf049"
+      ]
     },
     "V7.5.3-02": {
-      "status": "pending",
-      "changed_files": [],
+      "status": "code_complete_pending_execution",
+      "changed_files": [
+        "backend/app/services/material_page_asset_service.py",
+        "backend/app/tests/test_v7_5_3_page_asset_recovery.py",
+        "backend/app/tests/test_v7_5_3_page_asset_prepromotion.py"
+      ],
       "tests_run": [],
-      "remaining": ["move recovery under owned lock and use manifests"],
+      "remaining": [
+        "run failure-injection and concurrency tests",
+        "verify Windows rename/lock behavior",
+        "review any recovery_required evidence without deleting it"
+      ],
       "next_task": "V7.5.3-03",
-      "commits": []
+      "commits": [
+        "c955403990a613768a7f72790c1a233d8348e8c9",
+        "1d81c4a57ee266961aea4af4c7e5bdeadd0128ec",
+        "4bbf47d06b49fe546278790bb7108434c1d5a75e"
+      ]
     },
     "V7.5.3-03": {
-      "status": "pending",
-      "changed_files": [],
+      "status": "code_complete_pending_execution",
+      "changed_files": [
+        "scripts/run_v7_5_3_release_gate.py",
+        "docs/engineering/v7-5-3-release-gate-schema.json",
+        "backend/app/tests/test_v7_5_3_execution_state.py"
+      ],
       "tests_run": [],
-      "remaining": ["add SHA-bound executable release gate"],
+      "remaining": [
+        "execute the gate on one clean committed SHA",
+        "review release-gate-result.json and its SHA-256"
+      ],
       "next_task": "V7.5.3-04",
-      "commits": []
+      "commits": [
+        "cd607c9fefb404c81f29dfefcf70cbcb4105c040",
+        "bb9f09ae37c6e365efa1d288d1857e567dcedad9"
+      ]
     },
     "V7.5.3-04": {
-      "status": "pending",
-      "changed_files": [],
+      "status": "code_complete_pending_execution",
+      "changed_files": [
+        "backend/app/services/material_image_migration_service.py",
+        "backend/app/api/v1/endpoints/parse.py",
+        "scripts/migrate_v7_5_3_images.py",
+        "backend/app/tests/test_v7_5_3_legacy_image_migration.py"
+      ],
       "tests_run": [],
-      "remaining": ["migrate or quarantine NULL-version images"],
+      "remaining": [
+        "run migration tests",
+        "run migration against a database copy before applying it to user data",
+        "confirm remaining_null_ready equals zero"
+      ],
       "next_task": "V7.5.3-05",
-      "commits": []
+      "commits": [
+        "6d4cb7dd8f291ad72cf2095807986dbe97d9926c",
+        "1869f13cb7aa325df1faf916236766b40aa5e033",
+        "63aed5a4785490ab2bf5018ea52ecf97401f82b9",
+        "5ee9a14c0024da0841bec540f41b359f360040f6"
+      ]
     },
     "V7.5.3-05": {
-      "status": "pending",
-      "changed_files": [],
+      "status": "code_complete_pending_execution",
+      "changed_files": [
+        "frontend/tests/e2e/v7-5-3-user-paths.spec.ts",
+        "frontend/tests/e2e/helpers.ts",
+        "scripts/e2e_v7_5_3_fixture.py"
+      ],
       "tests_run": [],
-      "remaining": ["replace six skippable E2E paths"],
+      "remaining": [
+        "run all six Playwright paths",
+        "repair selectors or application defects without weakening assertions",
+        "retain traces, screenshots, and videos for failures"
+      ],
       "next_task": "V7.5.3-06",
-      "commits": []
+      "commits": [
+        "95558516ce145192b6d826f3d124fcfce1bb5176",
+        "60d92ec023599490f5d05d711a188c314f1081f5",
+        "4d641c952dc481beb268ae5d1448e335a1c9d76b"
+      ]
     },
     "V7.5.3-06": {
-      "status": "pending",
-      "changed_files": [],
+      "status": "code_complete_pending_execution",
+      "changed_files": [
+        "backend/app/tests/test_v7_5_3_versioned_image_parse.py"
+      ],
       "tests_run": [],
-      "remaining": ["add real embedded-image full reparse tests"],
+      "remaining": ["run full reparse and post-promotion rollback tests"],
       "next_task": "V7.5.3-07",
-      "commits": []
+      "commits": ["7979e7a80de482f7e06fb93a5bce358a7c0f6e71"]
     },
     "V7.5.3-07": {
-      "status": "pending",
-      "changed_files": [],
+      "status": "code_complete_pending_execution",
+      "changed_files": [
+        "frontend/src/components/document/PageCanvas.vue",
+        "frontend/tests/unit/PageCanvas.spec.ts"
+      ],
       "tests_run": [],
-      "remaining": ["add page retry and Object URL cleanup"],
+      "remaining": [
+        "run PageCanvas unit tests and frontend type-check",
+        "verify browser retry and Object URL cleanup"
+      ],
       "next_task": "V7.5.3-08",
-      "commits": []
+      "commits": [
+        "b6a97f30e3bf8095b6a26abd9bd31b36abe09b9e",
+        "4e99bc0afab839104f43f7c7b6e199154782c90d"
+      ]
     },
     "V7.5.3-08": {
-      "status": "pending",
+      "status": "pending_agent_execution",
       "changed_files": [],
       "tests_run": [],
-      "remaining": ["run clean-SHA release gate and review evidence"],
+      "remaining": [
+        "run the clean-SHA release gate",
+        "review and commit evidence with git add -f",
+        "rerun the gate on the final closure commit",
+        "only then clear audit_blockers and set v1.0.0-rc4"
+      ],
       "next_task": null,
       "commits": []
     }
