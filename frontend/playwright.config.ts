@@ -1,46 +1,45 @@
 import { defineConfig, devices } from '@playwright/test'
-import { existsSync, rmSync } from 'fs'
-import { resolve, dirname } from 'path'
+import { existsSync } from 'fs'
+import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 
+import { createE2ERuntime } from './tests/e2e/e2e-runtime'
+
 /**
- * Playwright E2E configuration.
+ * V7.5.2-04 Playwright configuration.
  *
- * Starts the backend (port 8000), parse worker (port 8001), and
- * frontend (port 5173) dev servers, then runs the E2E test suite
- * against the Vite dev server.
- *
- * V7.5.2-04: Forces complete environment isolation — dedicated E2E
- * database, dedicated upload directory, and CLEAN_E2E_DB to drop and
- * recreate tables before each run.
+ * Every invocation receives a unique database, upload directory, parsed
+ * directory and three checked local ports.  The API and parse worker receive
+ * the same explicit E2E mirrors, so backend startup fails before touching disk
+ * if one process drifts to a normal development path.
  */
-
 const __dirname = dirname(fileURLToPath(import.meta.url))
+const repoRoot = resolve(__dirname, '..')
+const runtime = await createE2ERuntime(repoRoot)
 
-const venvPython = resolve(__dirname, '..', 'backend', '.venv', 'Scripts', 'python.exe')
+const venvPython = resolve(repoRoot, 'backend', '.venv', 'Scripts', 'python.exe')
 const pythonExe = existsSync(venvPython) ? venvPython : 'python'
 
-// V7.5.2-04: Dedicated E2E database, separate from dev/prod.
-const e2eDbPath = resolve(__dirname, '..', 'e2e-test.db')
-const defaultDbUrl = `sqlite:///${e2eDbPath.replace(/\\/g, '/')}`
-const dbUrl = process.env.DATABASE_URL || defaultDbUrl
-const backendPort = Number(process.env.E2E_BACKEND_PORT || '8000')
-const workerPort = Number(process.env.E2E_WORKER_PORT || '8001')
-const frontendPort = Number(process.env.E2E_FRONTEND_PORT || '5173')
-
-// V7.5.2-04: Isolated upload directory.
-const uploadDir = resolve(__dirname, '..', 'storage', 'e2e-uploads').replace(/\\/g, '/')
-
-// V7.5.2-04: Delete stale E2E database before starting.
-try { rmSync(e2eDbPath, { force: true }) } catch { /* ignore */ }
-try { rmSync(uploadDir, { recursive: true, force: true }) } catch { /* ignore */ }
+const sharedBackendEnv = {
+  LLM_PROVIDER: 'mock',
+  DATABASE_URL: runtime.databaseUrl,
+  UPLOAD_DIR: runtime.uploadDir,
+  PARSED_DIR: runtime.parsedDir,
+  E2E_MODE: 'true',
+  E2E_RUN_ID: runtime.runId,
+  E2E_DATABASE_URL: runtime.databaseUrl,
+  E2E_UPLOAD_DIR: runtime.uploadDir,
+  E2E_PARSED_DIR: runtime.parsedDir,
+}
 
 export default defineConfig({
   testDir: './tests/e2e',
+  globalSetup: './tests/e2e/global-setup.ts',
+  globalTeardown: './tests/e2e/global-teardown.ts',
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  workers: process.env.CI ? 1 : 1,
+  workers: 1,
   reporter: [
     ['html', { outputFolder: 'playwright-report' }],
     ['json', { outputFile: process.env.PLAYWRIGHT_JSON_OUTPUT ?? 'playwright-results.json' }],
@@ -51,7 +50,7 @@ export default defineConfig({
     timeout: 10_000,
   },
   use: {
-    baseURL: `http://127.0.0.1:${frontendPort}`,
+    baseURL: `http://127.0.0.1:${runtime.frontendPort}`,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -67,36 +66,34 @@ export default defineConfig({
   outputDir: process.env.PLAYWRIGHT_OUTPUT_DIR || 'test-results',
   webServer: [
     {
-      command: `cd ../backend && ${pythonExe} -c "from app.models import Base; from app.core.database import engine; Base.metadata.create_all(engine); print('DB initialized')" && ${pythonExe} ../scripts/migrate.py && ${pythonExe} -m uvicorn app.main:app --host 127.0.0.1 --port ${backendPort}`,
+      command: `cd ../backend && ${pythonExe} -c "from app.models import Base; from app.core.database import engine; Base.metadata.create_all(engine); print('DB initialized')" && ${pythonExe} ../scripts/migrate.py && ${pythonExe} -m uvicorn app.main:app --host 127.0.0.1 --port ${runtime.backendPort}`,
       env: {
-        LLM_PROVIDER: 'mock',
-        DATABASE_URL: dbUrl,
-        UPLOAD_DIR: uploadDir,
-        E2E_MODE: 'true',
-        CLEAN_E2E_DB: 'true',
+        ...sharedBackendEnv,
+        CORS_ORIGINS: `http://127.0.0.1:${runtime.frontendPort}`,
       },
-      url: `http://127.0.0.1:${backendPort}/docs`,
-      reuseExistingServer: !process.env.CI,
-      timeout: 60_000,
+      url: `http://127.0.0.1:${runtime.backendPort}/api/v1/health`,
+      reuseExistingServer: false,
+      timeout: 90_000,
     },
     {
       command: `cd .. && ${pythonExe} scripts/start_parse_worker_with_health.py`,
       env: {
-        LLM_PROVIDER: 'mock',
-        DATABASE_URL: dbUrl,
-        UPLOAD_DIR: uploadDir,
-        PARSE_WORKER_HEALTH_PORT: String(workerPort),
-        E2E_MODE: 'true',
+        ...sharedBackendEnv,
+        PARSE_WORKER_HEALTH_PORT: String(runtime.workerPort),
       },
-      url: `http://127.0.0.1:${workerPort}/`,
-      reuseExistingServer: !process.env.CI,
-      timeout: 60_000,
+      url: `http://127.0.0.1:${runtime.workerPort}/`,
+      reuseExistingServer: false,
+      timeout: 90_000,
     },
     {
-      command: `npm run dev -- --port ${frontendPort}`,
-      url: `http://127.0.0.1:${frontendPort}`,
-      reuseExistingServer: !process.env.CI,
-      timeout: 60_000,
+      command: `npm run dev -- --host 127.0.0.1 --port ${runtime.frontendPort} --strictPort`,
+      env: {
+        E2E_BACKEND_PORT: String(runtime.backendPort),
+        E2E_FRONTEND_PORT: String(runtime.frontendPort),
+      },
+      url: `http://127.0.0.1:${runtime.frontendPort}`,
+      reuseExistingServer: false,
+      timeout: 90_000,
     },
   ],
 })
