@@ -1,0 +1,11 @@
+{
+  "scenario_ids": [
+    "REAL-01-model-config",
+    "REAL-02-knowledge-points",
+    "REAL-03-chat-and-citations",
+    "REAL-04-quiz-and-weak-point",
+    "REAL-05-learning-plan",
+    "REAL-06-material-overview"
+  ],
+  "failure": null
+}

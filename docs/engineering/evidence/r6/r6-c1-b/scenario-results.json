@@ -1,0 +1,62 @@
+[
+  {
+    "id": "REAL-01-model-config",
+    "status": "passed",
+    "latency_ms": 0,
+    "detail": {
+      "provider": "自定义",
+      "model": "deepseek-v4-flash",
+      "config_id": 1
+    }
+  },
+  {
+    "id": "REAL-02-knowledge-points",
+    "status": "passed",
+    "latency_ms": 0,
+    "detail": {
+      "knowledge_point_count": 4,
+      "initial_valid_count": 4,
+      "repair_attempted": false,
+      "final_valid_count": 4,
+      "source_bound_count": 4
+    }
+  },
+  {
+    "id": "REAL-03-chat-and-citations",
+    "status": "passed",
+    "latency_ms": 0,
+    "detail": {
+      "citation_count": 1,
+      "out_of_scope_not_found": true,
+      "out_of_scope_answer_length": 31
+    }
+  },
+  {
+    "id": "REAL-04-quiz-and-weak-point",
+    "status": "passed",
+    "latency_ms": 0,
+    "detail": {
+      "quiz_id": 1,
+      "score": 0,
+      "weak_points": 1
+    }
+  },
+  {
+    "id": "REAL-05-learning-plan",
+    "status": "passed",
+    "latency_ms": 0,
+    "detail": {
+      "task_count": 4,
+      "bound_material_task_count": 1,
+      "deadline": "2026-07-17"
+    }
+  },
+  {
+    "id": "REAL-06-material-overview",
+    "status": "passed",
+    "latency_ms": 0,
+    "detail": {
+      "evidence_count": 1
+    }
+  }
+]

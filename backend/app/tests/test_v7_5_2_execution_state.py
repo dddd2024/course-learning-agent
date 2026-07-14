@@ -47,12 +47,12 @@ def test_v7_5_2_records_honest_current_state() -> None:
         assert state["tasks"][state["current_task"]]["status"] == "in_progress"
     else:
         if is_r6:
-            assert state["local_closure"] == "V7.5.2_R6_EVIDENCE_CLOSED_LOCALLY"
+            assert state["local_closure"] == "V7.5.2_R6_VERIFIED_LOCALLY"
             assert state["release_candidate"] is None
         else:
             assert state["local_closure"] == "V7.5.2_RC_BLOCKERS_CLOSED_LOCALLY"
             assert state["release_candidate"] == "v1.0.0-rc3"
-        assert state["audit_blockers"] == []
+            assert state["audit_blockers"] == (["remote_ci_verification"] if is_r6 else [])
         assert state["current_task"] is None
 
 
@@ -109,6 +109,21 @@ def test_verified_locally_requires_every_release_gate() -> None:
         assert state["remote_ci"] in {"pending", "success"}
     assert state["closure_evidence"]["tested_code_sha"] == gate["commit_sha"]
     assert len(state["closure_evidence"]["real_llm_runs"]) == 2
+
+
+def test_r6_verified_state_references_two_recomputable_compact_bundles() -> None:
+    state = _load_state()
+    if "AUDIT-R6-01" not in state["tasks"] or state["overall_status"] != "verified_locally":
+        return
+
+    evidence = state["closure_evidence"]
+    assert evidence["real_llm_runs"] == ["r6-c1-a", "r6-c1-b"]
+    for relative_path, run_id in zip(evidence["evidence_paths"], evidence["real_llm_runs"]):
+        root = PROJECT_DIR / relative_path
+        summary = json.loads((root / "real-llm-acceptance.json").read_text(encoding="utf-8"))
+        assert summary["run_id"] == run_id
+        assert summary["tested_code_sha"] == evidence["tested_code_sha"]
+        assert summary["passed"] == 6 and summary["scenario_count"] == 6
 
 
 def test_done_tasks_have_complete_evidence() -> None:

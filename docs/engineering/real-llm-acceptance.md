@@ -84,3 +84,12 @@ did not retain independently verifiable run manifests in the repository.
 Those run names are therefore historical claims only and are not current RC3
 release evidence. A fresh same-SHA two-run gate is required after R6 regression
 verification.
+
+## R6 local evidence
+
+The R6 code-freeze SHA is `7b7401b74833fb5fe0e187b396135fdf1c82399d`.
+Runs `r6-c1-a` and `r6-c1-b` each passed all six scenarios with zero fallback,
+mock, degraded, and missing-metadata counts. Their compact, redacted evidence
+bundles are committed under `docs/engineering/evidence/r6/` and are checked by
+`scripts/verify_real_llm_evidence.py --compact`. This is local verification
+only; remote CI remains required before release approval.

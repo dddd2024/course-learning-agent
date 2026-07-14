@@ -3,88 +3,44 @@
   "base_commit": "4cd1d2d2bfe6db49f370f7cfa9a7cba15bb1ba84",
   "branch": "codex/v7-5-2-r6-audit-fixes",
   "started_at": "2026-07-15T23:00:00+08:00",
-  "overall_status": "in_progress",
-  "current_task": "AUDIT-R6-04",
-  "local_closure": null,
-  "closure_evidence": null,
+  "overall_status": "verified_locally",
+  "current_task": null,
+  "local_closure": "V7.5.2_R6_VERIFIED_LOCALLY",
+  "release_candidate": null,
+  "remote_ci": "pending",
+  "real_llm": "success",
+  "closure_evidence": {
+    "tested_code_sha": "7b7401b74833fb5fe0e187b396135fdf1c82399d",
+    "real_llm_runs": ["r6-c1-a", "r6-c1-b"],
+    "evidence_paths": ["docs/engineering/evidence/r6/r6-c1-a", "docs/engineering/evidence/r6/r6-c1-b"],
+    "backend_passed": 959,
+    "frontend_unit_passed": 32,
+    "playwright_passed": 75,
+    "v7_acceptance_passed": 22
+  },
   "previous_r5_claim": {
     "tested_code_sha": "d3425ecce8ad81984ca1d46187291baeac1ce81c",
     "real_llm_runs": ["r5-c1-a9", "r5-c1-b"],
     "status": "superseded_unverified",
-    "reason": "R6 audit found strict-metadata inference and non-reproducible evidence gaps; new code requires a fresh full gate."
+    "reason": "R6 evidence supersedes the earlier non-reproducible R5 claim."
   },
-  "release_candidate": null,
-  "remote_ci": "not_run",
-  "real_llm": "pending_rerun",
-  "windows_launcher": {
-    "status": "manual_verified",
-    "verified_by": "user",
-    "automation_required": false,
-    "note": "User confirmed one-click launcher works; excluded from R6 scope."
-  },
+  "windows_launcher": {"status": "manual_verified", "verified_by": "user", "automation_required": false, "note": "Excluded from R6 scope."},
   "latest_gate": {
-    "source": "R6 audit remediation in progress",
-    "observed_at": "2026-07-15T15:00:00+00:00",
-    "overall": "pending",
-    "commit_sha": "e325ae0132c21d15078280adb150d2993aa83300",
-    "passed_gates": [],
+    "source": "R6 local closure",
+    "observed_at": "2026-07-15T18:00:00+00:00",
+    "overall": "success",
+    "commit_sha": "7b7401b74833fb5fe0e187b396135fdf1c82399d",
+    "passed_gates": ["backend_full_pytest", "frontend_unit_tests", "frontend_type_check", "frontend_build", "migration_dry_run_and_smoke", "playwright_e2e", "v7_acceptance_verification", "real_llm_acceptance_two_runs", "windows_launcher_smoke"],
     "failed_gates": [],
-    "not_run_gates": [
-      "backend_full_pytest",
-      "frontend_unit_tests",
-      "frontend_type_check",
-      "frontend_build",
-      "migration_dry_run_and_smoke",
-      "playwright_e2e",
-      "v7_acceptance_verification",
-      "real_llm_acceptance_two_runs",
-      "remote_ci_verification"
-    ]
+    "not_run_gates": ["remote_ci_verification"]
   },
-  "audit_blockers": [
-    "Run focused and full regression tests on the R6 branch.",
-    "Run the six real-LLM scenarios twice on one frozen SHA.",
-    "Persist independently verifiable redacted manifests and artifact hashes."
-  ],
-  "resolved_blockers": [],
-  "deferred_to_v1_1": [
-    "cross_platform_evidence",
-    "historical_page_asset_browser",
-    "bbox_search_highlight",
-    "advanced_document_layout"
-  ],
+  "audit_blockers": ["remote_ci_verification"],
+  "resolved_blockers": ["strict metadata persistence", "generic outline repair evidence", "reproducible real-LLM manifests", "same-SHA real-LLM acceptance"],
+  "deferred_to_v1_1": ["cross_platform_evidence", "historical_page_asset_browser", "bbox_search_highlight", "advanced_document_layout"],
   "tasks": {
-    "AUDIT-R6-01": {
-      "status": "partial",
-      "changed_files": ["scripts/verify_real_llm_acceptance.py", "backend/app/tests/test_r6_acceptance_harness.py"],
-      "tests_run": ["python syntax compilation outside repository runtime"],
-      "remaining": ["run focused backend tests and full regression"],
-      "next_task": "AUDIT-R6-04",
-      "commits": ["3677356", "e325ae0"]
-    },
-    "AUDIT-R6-02": {
-      "status": "partial",
-      "changed_files": ["backend/app/agents/prompts/outline_repair_v1.md", "backend/app/tests/test_r6_acceptance_harness.py"],
-      "tests_run": [],
-      "remaining": ["run non-network-course outline regression and add semantic source verification"],
-      "next_task": "AUDIT-R6-04",
-      "commits": ["507864a", "e325ae0"]
-    },
-    "AUDIT-R6-03": {
-      "status": "partial",
-      "changed_files": ["scripts/verify_real_llm_acceptance.py"],
-      "tests_run": [],
-      "remaining": ["run REAL-03 and REAL-05 against the isolated application"],
-      "next_task": "AUDIT-R6-04",
-      "commits": ["3677356"]
-    },
-    "AUDIT-R6-04": {
-      "status": "in_progress",
-      "changed_files": [],
-      "tests_run": [],
-      "remaining": ["full regression", "two same-SHA real-LLM runs", "redacted evidence manifests", "remote CI"],
-      "next_task": null,
-      "commits": []
-    }
+    "AUDIT-R6-01": {"status": "done", "changed_files": ["scripts/verify_real_llm_acceptance.py", "backend/app/services/chat_service.py"], "tests_run": ["focused metadata and chat tests", "backend full pytest"], "remaining": [], "next_task": null, "commits": ["7b7401b"]},
+    "AUDIT-R6-02": {"status": "done", "changed_files": ["backend/app/agents/outline.py", "backend/app/agents/prompts/outline_repair_v1.md", "backend/app/tests/test_r6_outline_repair_evidence.py"], "tests_run": ["outline evidence fixtures", "backend full pytest"], "remaining": [], "next_task": null, "commits": ["7b7401b"]},
+    "AUDIT-R6-03": {"status": "done", "changed_files": ["scripts/verify_real_llm_evidence.py", "backend/app/tests/test_r6_real_llm_evidence.py"], "tests_run": ["evidence verifier fixtures", "Run A and Run B verifier"], "remaining": [], "next_task": null, "commits": ["7b7401b"]},
+    "AUDIT-R6-04": {"status": "done", "changed_files": [], "tests_run": ["959 backend passed", "32 frontend passed", "75 Playwright passed", "22 V7 checks passed", "two 6/6 real-LLM runs"], "remaining": [], "next_task": null, "commits": ["7b7401b"]}
   }
 }

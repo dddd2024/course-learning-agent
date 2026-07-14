@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "tested_code_sha": "7b7401b74833fb5fe0e187b396135fdf1c82399d",
+  "run_id": "r6-c1-a",
+  "provider": "自定义",
+  "base_url_host": "https://token.sensenova.cn",
+  "model": "deepseek-v4-flash",
+  "all_passed": true,
+  "fallback_count": 0,
+  "mock_count": 0,
+  "degraded_count": 0,
+  "meta_missing_count": 0,
+  "repair_attempt_count": 1,
+  "repair_success_count": 1,
+  "llm_call_count": 6,
+  "all_meta_observed": true,
+  "scenario_count": 6,
+  "passed": 6,
+  "failed": 0,
+  "secret_scan": {
+    "status": "passed",
+    "files_scanned": 7,
+    "patterns_checked": 11,
+    "matches": 0
+  },
+  "started_at": "2026-07-14T18:16:14.109837+00:00",
+  "finished_at": "2026-07-14T18:17:30.300667+00:00"
+}

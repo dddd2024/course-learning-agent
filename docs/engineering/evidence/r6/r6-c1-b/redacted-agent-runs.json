@@ -1,0 +1,79 @@
+[
+  {
+    "run_type": "outline",
+    "status": "success",
+    "actual_provider": "user",
+    "actual_model": "deepseek-v4-flash",
+    "fallback_used": false,
+    "duration_ms": 11269,
+    "meta_observed": true,
+    "repair_attempted": false,
+    "repair_success": false,
+    "llm_call_count": 1,
+    "initial_contract": {
+      "valid_count": 4,
+      "missing_source_count": 0,
+      "duplicate_title_count": 0,
+      "distinct_source_count": 1,
+      "unsupported_evidence_count": 0,
+      "passed": true
+    },
+    "repair_contract": null
+  },
+  {
+    "run_type": "course_qa",
+    "status": "success",
+    "actual_provider": "user",
+    "actual_model": "deepseek-v4-flash",
+    "fallback_used": false,
+    "duration_ms": 6170,
+    "meta_observed": true,
+    "repair_attempted": false,
+    "repair_success": false,
+    "llm_call_count": 1,
+    "initial_contract": null,
+    "repair_contract": null
+  },
+  {
+    "run_type": "quiz",
+    "status": "success",
+    "actual_provider": "user",
+    "actual_model": "deepseek-v4-flash",
+    "fallback_used": false,
+    "duration_ms": 7036,
+    "meta_observed": true,
+    "repair_attempted": false,
+    "repair_success": false,
+    "llm_call_count": 1,
+    "initial_contract": null,
+    "repair_contract": null
+  },
+  {
+    "run_type": "planner",
+    "status": "success",
+    "actual_provider": "user",
+    "actual_model": "deepseek-v4-flash",
+    "fallback_used": false,
+    "duration_ms": 9271,
+    "meta_observed": true,
+    "repair_attempted": false,
+    "repair_success": false,
+    "llm_call_count": 1,
+    "initial_contract": null,
+    "repair_contract": null
+  },
+  {
+    "run_type": "material_overview",
+    "status": "success",
+    "actual_provider": "user",
+    "actual_model": "deepseek-v4-flash",
+    "fallback_used": false,
+    "duration_ms": null,
+    "meta_observed": true,
+    "repair_attempted": false,
+    "repair_success": false,
+    "llm_call_count": 1,
+    "initial_contract": null,
+    "repair_contract": null
+  }
+]

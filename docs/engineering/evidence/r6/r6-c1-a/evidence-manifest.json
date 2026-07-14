@@ -1,0 +1,39 @@
+{
+  "base_url_host": "https://token.sensenova.cn",
+  "mock_count": 0,
+  "run_id": "r6-c1-a",
+  "generated_at": "2026-07-14T18:20:04.4531262Z",
+  "provider": "自定义",
+  "tested_code_sha": "7b7401b74833fb5fe0e187b396135fdf1c82399d",
+  "meta_missing_count": 0,
+  "audited_agent_run_count": 5,
+  "schema_version": 1,
+  "passed": 6,
+  "model": "deepseek-v4-flash",
+  "scenario_count": 6,
+  "secret_scan_status": "passed",
+  "files": {
+    "real-llm-acceptance.json": {
+      "sha256": "1798de51e7fa5cdb064629923ff8126768b6942c60dc7a72e3bb4fac103898dc",
+      "size_bytes": 749
+    },
+    "scenario-results.json": {
+      "sha256": "328819e27d3901df49c475065ffdc6cdb1ee2e5e2e8333270de7c356cbdcc418",
+      "size_bytes": 1277
+    },
+    "redacted-agent-runs.json": {
+      "sha256": "fa1b1dbc02209f823412613c5379dcd04306ba814c2e272163aa68a81a4c3770",
+      "size_bytes": 2256
+    },
+    "request-summary.json": {
+      "sha256": "32299c5084b338207b5219c92b4c4bed3f54adc2101482f0002e89e11a596053",
+      "size_bytes": 248
+    },
+    "environment-fingerprint.json": {
+      "sha256": "347a12ff96814dddf0ee3f4692d244218f2ae061b1aefd07d2eff1faadca8a00",
+      "size_bytes": 103
+    }
+  },
+  "fallback_count": 0,
+  "degraded_count": 0
+}
