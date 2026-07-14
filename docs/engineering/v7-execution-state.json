@@ -39,6 +39,7 @@
     "advanced_document_layout"
   ],
   "tasks": {
+    "V7.5.2-00": {"status": "done", "changed_files": ["docs/engineering/v7-execution-state.json"], "tests_run": ["compatibility state contract"], "remaining": [], "next_task": "AUDIT-R3-01", "commits": []},
     "AUDIT-R3-00": {"status": "done", "changed_files": ["docs/engineering/v7-execution-state.json"], "tests_run": ["state contract pending R3 update"], "remaining": [], "next_task": "AUDIT-R3-01", "commits": []},
     "AUDIT-R3-01": {"status": "in_progress", "changed_files": [], "tests_run": [], "remaining": ["backfill failure contract"], "next_task": "AUDIT-R3-02", "commits": []},
     "AUDIT-R3-02": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["reader UI partial status"], "next_task": "AUDIT-R3-03", "commits": []},

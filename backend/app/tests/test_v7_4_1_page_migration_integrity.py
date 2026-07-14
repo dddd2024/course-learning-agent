@@ -95,8 +95,8 @@ def _setup_materials(engine, count=2, versions_per_material=2):
         ))
         for m in range(1, count + 1):
             conn.execute(text(
-                "INSERT INTO materials (id, user_id, course_id, filename, file_path, file_type, status, parse_attempts) "
-                f"VALUES ({m}, 1, 1, 'mat{m}.pdf', 'mat{m}.pdf', 'pdf', 'ready', 0)"
+                "INSERT INTO materials (id, public_id, user_id, course_id, filename, file_path, file_type, status, parse_attempts) "
+                f"VALUES ({m}, '00000000-0000-4000-8000-{m:012d}', 1, 1, 'mat{m}.pdf', 'mat{m}.pdf', 'pdf', 'ready', 0)"
             ))
             for v in range(1, versions_per_material + 1):
                 vid = (m - 1) * versions_per_material + v
