@@ -72,6 +72,14 @@ class Settings(BaseSettings):
     E2E_UPLOAD_DIR: str = ""
     E2E_PARSED_DIR: str = ""
 
+    # R4 real-provider acceptance is opt-in and deliberately separate from
+    # the normal fallback-friendly runtime.  The values are identifiers and
+    # paths only; an API key continues to come from the process environment
+    # and is never part of Settings diagnostics.
+    REAL_LLM_ACCEPTANCE_MODE: bool = False
+    REAL_LLM_ACCEPTANCE_RUN_ID: str = ""
+    REAL_LLM_ACCEPTANCE_OUTPUT_DIR: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

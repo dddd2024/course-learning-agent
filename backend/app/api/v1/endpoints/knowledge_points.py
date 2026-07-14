@@ -159,9 +159,22 @@ def generate_knowledge_points(
 
     generate_started = time.monotonic()
     try:
-        points = outline_generate(
-            db, course_id, course.name, user_config=user_config
+        generated_outline = outline_generate(
+            db, course_id, course.name, user_config=user_config, return_meta=True
         )
+        # ``return_meta`` is an additive R4 contract. Keep the endpoint
+        # compatible with test seams and integrations that replace the agent
+        # with the historic list-only return value.
+        if isinstance(generated_outline, tuple):
+            points, llm_meta = generated_outline
+        else:
+            points = generated_outline
+            llm_meta = {
+                "actual_provider": provider,
+                "actual_model": model_name,
+                "fallback_used": False,
+                "degraded": False,
+            }
     except Exception as exc:
         _safe_finish_run(
             db,
@@ -172,6 +185,9 @@ def generate_knowledge_points(
         )
         raise
     generate_duration = int((time.monotonic() - generate_started) * 1000)
+    AgentAudit.update_run_meta(
+        db, run_id, llm_meta.get("actual_model"), llm_meta.get("actual_provider"), llm_meta
+    )
     _safe_add_step(
         db,
         run_id=run_id,

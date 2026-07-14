@@ -1,0 +1,54 @@
+# Real LLM acceptance gate
+
+`scripts/verify_real_llm_acceptance.py` is a manual, secret-safe release gate.
+It is deliberately independent from the repeatable mock CI.  It creates a
+temporary SQLite database, uploads and parsed directories, starts only its own
+API and parse-worker processes, then removes that runtime state at completion.
+
+## Run it locally
+
+Set the provider credentials in the process environment; never pass the key on
+the command line or add it to a `.env` file committed to Git.
+
+```powershell
+$env:REAL_LLM_API_KEY = "set-this-in-your-shell-only"
+$env:REAL_LLM_BASE_URL = "https://provider.example/v1"
+$env:REAL_LLM_MODEL = "your-model"
+
+& .\backend\.venv\Scripts\python.exe scripts\verify_real_llm_acceptance.py `
+  --provider openai-compatible `
+  --artifact-root artifacts/verification/real-llm `
+  --run-id "real-llm-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
+
+Remove-Item Env:REAL_LLM_API_KEY
+```
+
+The script registers an isolated user with the test credentials `test` / 
+`test1234` semantics, but adds a unique suffix so concurrent runs cannot
+collide. It never accesses a regular user database or stored configuration.
+
+## Strict success criteria
+
+Every audited agent execution must report a non-mock provider, a non-empty
+model identity, `fallback_used=false`, and `degraded=false`. A connection
+failure, timeout, non-JSON provider response, schema-invalid answer, or any
+fallback causes a non-zero exit code. The six covered paths are config
+connection, knowledge points, grounded chat, quiz plus weak point, learning
+plan, and material overview; the chat path also checks an out-of-scope question
+does not create a citation.
+
+Each run writes the following under
+`artifacts/verification/real-llm/<run-id>/`:
+
+- `real-llm-acceptance.json` — machine-readable status and counts.
+- `scenario-results.json` and `redacted-agent-runs.json` — compact evidence.
+- `environment-fingerprint.json` and `request-summary.json` — reproducibility
+  data without credentials.
+- redacted backend and worker logs.
+
+Only the provider, scheme/host, model, statuses and timings are retained. API
+keys, authorization headers, response bodies and fallback text are redacted.
+
+Run the command twice against the same code SHA before claiming the real-model
+gate is complete. Do not create an RC tag until both runs, standard CI, and the
+Windows smoke evidence have passed.

@@ -1,0 +1,75 @@
+name: Real LLM Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: OpenAI-compatible provider label
+        required: true
+        default: openai-compatible
+      timeout:
+        description: Per-run timeout in minutes
+        required: true
+        default: "15"
+      run_twice:
+        description: Run the isolated acceptance suite twice
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  real-llm:
+    runs-on: ubuntu-latest
+    environment: real-llm-acceptance
+    timeout-minutes: ${{ fromJSON(inputs.timeout) }}
+    env:
+      REAL_LLM_API_KEY: ${{ secrets.REAL_LLM_API_KEY }}
+      REAL_LLM_BASE_URL: ${{ secrets.REAL_LLM_BASE_URL }}
+      REAL_LLM_MODEL: ${{ secrets.REAL_LLM_MODEL }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+      - name: Disable command echo while validating secrets are present
+        shell: bash
+        run: |
+          set +x
+          test -n "$REAL_LLM_API_KEY"
+          test -n "$REAL_LLM_BASE_URL"
+          test -n "$REAL_LLM_MODEL"
+      - name: Run isolated real-provider acceptance A
+        shell: bash
+        run: |
+          set +x
+          python scripts/verify_real_llm_acceptance.py --provider "${{ inputs.provider }}" --run-id "github-${{ github.run_id }}-a"
+      - name: Run isolated real-provider acceptance B
+        if: inputs.run_twice
+        shell: bash
+        run: |
+          set +x
+          python scripts/verify_real_llm_acceptance.py --provider "${{ inputs.provider }}" --run-id "github-${{ github.run_id }}-b"
+      - name: Scan generated artifacts for secret-shaped values
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RInE 'Authorization: *Bearer|\b(sk|rk|pk)-[A-Za-z0-9_-]{8,}|REAL_LLM_API_KEY' artifacts/verification/real-llm; then
+            echo "::error::secret-shaped data found in artifact"
+            exit 1
+          fi
+      - name: Upload redacted acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-llm-acceptance-${{ github.run_id }}
+          path: artifacts/verification/real-llm/
+          retention-days: 30

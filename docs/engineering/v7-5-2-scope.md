@@ -1,109 +1,34 @@
-# V7.5.2 Scope: V1.0 RC Blocker Recovery
+# V7.5.2 R4 scope: real LLM acceptance and RC3 closure
 
-> Only fix code-level release blockers and acceptance failures found by the independent audit and the complete regression gate.
-> No final report and no unrelated feature expansion.
+R4 starts from merged `main` at `9552c2ecd5f0b70c9be6a61eb02958ea4becfe2a`
+on `codex/v7-5-2-r4-real-llm-rc3-closure`. PR #10 closed the R3 and P2
+code-contract findings. The former R2 records are historical and marked
+`superseded`; they must not remain false active pending work.
 
-## Audit recovery supersession
+The release remains `in_progress` and `release_candidate=null` until all of
+the following are recorded against one tested code SHA:
 
-The previous local closure is invalidated by the legacy condition where page
-assets are complete but active-version `MaterialPage` rows are absent.  The
-recovery branch must keep the state `in_progress` until page catalogue,
-existing-database migration, scanned-PDF classification, Blob lifecycle and
-remote CI evidence are all verified on the final commit.
+- Backend full pytest, frontend unit/type/build, migration, Playwright, and
+  standard V7 acceptance pass without failures or skips.
+- The isolated real-provider harness passes all six paths twice with zero
+  mock, fallback, and degraded counts.
+- The manual real-LLM workflow has retained redacted evidence and no secret
+  scan finding.
+- The Windows launcher smoke succeeds on the actual Windows environment.
+- The final C2 state-only closure commit has successful remote CI.
 
-- Audit baseline: `fd5198b63e25b869b3a31fb0e7178b9c02f3c294`
-- Current integration branch: `main`
-- Target after all gates pass: `v1.0.0-rc3`
-- Current status: `in_progress`
+Only after those gates and explicit user approval may the repository create
+the `v1.0.0-rc3` tag.
 
-## R2 audit recovery supersession
+The R4 release blockers are `real_llm_acceptance_harness`,
+`real_llm_core_user_paths`, `real_llm_no_mock_fallback_proof`,
+`windows_launcher_smoke`, and `rc3_evidence_transaction`.
 
-R2 starts from `main` at `f75cbca6f556c2eb6045b49e169e68442461bcea` on
-`codex/v7-5-2-audit-r2-migration-release-gates`.  The release remains
-`in_progress` with `release_candidate=null` until the final main SHA has
-matching local evidence and a successful remote CI run.
+The production fallback policy remains unchanged: a normal user may fall back
+from personal configuration to system configuration or mock. The R4 harness is
+the separate strict gate that rejects those outcomes. It reads keys only from
+its process environment, writes only redacted evidence, and never reads a
+developer database.
 
-R2 blockers are: `real_sqlalchemy_legacy_schema_migration`,
-`material_external_identity`, `repair_result_truthfulness`,
-`real_repair_button_e2e`, `image_decode_evidence`, `blob_request_race`,
-`acceptance_summary_artifact`, and `remote_ci_verification`.
-
-`verified_locally` requires the final committed SHA in generated
-`artifacts/verification/v7-audit-recovery/summary.json`, a real old-database
-migration/rollback test, all specialist browser paths with zero failed and
-zero skipped, and remote CI success.  No deleted pre-migration SQLite high
-watermark is claimed to be recoverable; only IDs allocated after the rebuild
-must not be reused.
-
-## R3 repair and public-identity gates
-
-R3 starts from merged `main` at `0ae352e3f49984cd919c461359d4b2c7593dfb2c`.
-It keeps the release `in_progress` while it closes truthful page-catalogue
-backfill results, independent-image partial-failure messaging, public identity
-schema consistency and public-id learning links. Remote CI is three-state:
-`success`, `failure`, or `unavailable`; an unavailable API result is not a
-failure, but it also cannot authorize RC3.
-
-## Verified regression facts
-
-GitHub Actions PR #6, run #96, was executed against the recovery branch.
-
-Passed gates:
-
-- Backend full pytest.
-- Frontend unit tests.
-- Frontend type-check.
-- Frontend production build.
-- Migration dry-run and smoke test.
-
-Failed or incomplete gates:
-
-- Playwright E2E: **47 passed, 27 failed, 2 did not run**.
-- V7 acceptance verification: **not run**, because it depends on Playwright success.
-
-Therefore `verified_locally`, `V7.5.2_RC_BLOCKERS_CLOSED_LOCALLY`, and `v1.0.0-rc3` are not valid current-state claims.
-
-## Implemented code blockers
-
-The following production-code blockers have implementations and backend regression coverage, but remain subject to final browser acceptance:
-
-1. **new_version_image_binding** — New extracted images bind to the target material version and do not rewrite historical versions.
-2. **page_asset_expected_page_coverage** — Page completeness is calculated against the expected page-number set.
-3. **page_asset_db_fs_compensation** — Page-asset rebuild uses recoverable database/filesystem compensation.
-
-## Active release blockers
-
-1. **e2e_environment_isolation** — The release gate still needs per-run database/upload paths, no existing-server reuse, setup/teardown cleanup, and normal-upload snapshot protection.
-2. **e2e_user_path_acceptance** — Multiple real user paths still fail their final visible-state assertions, including knowledge-point navigation, deletion cleanup, document repair, non-PDF structured text, and scanned-PDF page preview.
-3. **v7_acceptance_verification** — Acceptance has not run successfully on a clean committed SHA.
-
-## Current execution order
-
-```text
-V7.5.2-04 E2E environment isolation
-  -> V7.5.2-05 real user-path acceptance
-  -> V7.5.2-06 damaged/legacy/single-page edge cases
-  -> V7.5.2-07 tested RC3 closure
-```
-
-## Closure requirements
-
-The state may return to `verified_locally` only when all of the following are true on one clean committed SHA:
-
-- Backend full pytest passes.
-- Frontend unit tests pass.
-- Frontend type-check passes.
-- Frontend production build passes.
-- Migration dry-run and smoke test pass.
-- Playwright E2E reports zero failed and zero skipped/not-run tests.
-- V7 acceptance verification passes.
-- `audit_blockers` is empty.
-- Every completed task contains non-empty test evidence.
-
-## Deferred to V1.1
-
-- Cross-Windows/Linux unified evidence scripts.
-- Historical version page-asset browser UI.
-- bbox search highlight and region-selection questioning.
-- Ultra-large PDF virtual scrolling and advanced thumbnails.
-- Dependency upgrade and deprecation-warning cleanup.
+Deferred to V1.1: cross-Windows/Linux unified evidence, historical page asset
+browser, bbox search highlight, and advanced document layout.

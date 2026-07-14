@@ -21,7 +21,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.agents.llm import call_llm
+from app.agents.llm import call_llm_with_meta
 from app.agents.prompt_loader import load_prompt
 from app.models.course import Course
 from app.models.material import Material
@@ -427,7 +427,8 @@ def generate(
     course_name: str | None = None,
     chunks: list[dict] | None = None,
     user_config: dict | None = None,
-) -> list[dict]:
+    return_meta: bool = False,
+) -> list[dict] | tuple[list[dict], dict]:
     """Extract structured knowledge points for a course.
 
     Args:
@@ -458,7 +459,7 @@ def generate(
         retrieved_chunks=_format_chunks(chunks),
     )
 
-    output = call_llm(
+    output, meta = call_llm_with_meta(
         prompt, agent_type="outline", user_config=user_config
     )
     raw_points = output.get("knowledge_points", [])
@@ -530,6 +531,8 @@ def generate(
     # all merge into the shortest representative: "RDT2.0"
     results = _cluster_merge_titles(results)
 
+    if return_meta:
+        return results, meta
     return results
 
 

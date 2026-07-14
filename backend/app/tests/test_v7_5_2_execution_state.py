@@ -17,8 +17,8 @@ REQUIRED_RELEASE_GATES = {
     "migration_dry_run_and_smoke",
     "playwright_e2e",
     "v7_acceptance_verification",
-    "real_sqlalchemy_legacy_schema_migration",
-    "r2_playwright_e2e",
+    "real_llm_acceptance_two_runs",
+    "windows_launcher_smoke",
     "remote_ci_verification",
 }
 
@@ -31,7 +31,8 @@ def test_v7_5_2_records_honest_current_state() -> None:
     state = _load_state()
 
     assert state["version"] == "v7.5.2"
-    assert state["base_commit"] == "0ae352e3f49984cd919c461359d4b2c7593dfb2c"
+    assert state["base_commit"] == "9552c2ecd5f0b70c9be6a61eb02958ea4becfe2a"
+    assert state["branch"] == "codex/v7-5-2-r4-real-llm-rc3-closure"
     assert state["overall_status"] in {"in_progress", "verified_locally"}
 
     if state["overall_status"] == "in_progress":
@@ -77,7 +78,7 @@ def test_verified_locally_requires_every_release_gate() -> None:
     assert gate.get("failed_gates") == []
     assert gate.get("not_run_gates") == []
     assert REQUIRED_RELEASE_GATES.issubset(set(gate.get("passed_gates") or []))
-    assert all(task["status"] == "done" for task in state["tasks"].values())
+    assert all(task["status"] in {"done", "superseded"} for task in state["tasks"].values())
     assert state["remote_ci"] == "success"
     artifact = PROJECT_DIR / "artifacts" / "verification" / "v7-audit-recovery" / "summary.json"
     assert artifact.exists(), "verified state requires final audit evidence"
@@ -98,16 +99,16 @@ def test_done_tasks_have_test_evidence() -> None:
             )
 
 
-def test_v7_5_2_scope_matches_r2_reopened_release_state() -> None:
+def test_v7_5_2_scope_matches_r4_real_llm_release_state() -> None:
     scope = SCOPE_PATH.read_text(encoding="utf-8")
     lower_scope = scope.lower()
 
-    assert "R2 audit recovery supersession" in scope
-    assert "f75cbca6f556c2eb6045b49e169e68442461bcea" in scope
-    assert "real_sqlalchemy_legacy_schema_migration" in scope
-    assert "material_external_identity" in scope
-    assert "blob_request_race" in scope
-    assert "remote_ci_verification" in scope
+    assert "R4 scope" in scope
+    assert "9552c2ecd5f0b70c9be6a61eb02958ea4becfe2a" in scope
+    assert "real_llm_acceptance_harness" in scope
+    assert "real_llm_no_mock_fallback_proof" in scope
+    assert "windows_launcher_smoke" in scope
+    assert "rc3_evidence_transaction" in scope
     assert "in_progress" in scope
     assert "v1.0.0-rc3" in scope
     assert "cross-windows/linux" in lower_scope

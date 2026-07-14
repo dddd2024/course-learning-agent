@@ -1,0 +1,73 @@
+"""Strict, secret-safe checks used by the isolated real-LLM acceptance run.
+
+Production callers intentionally retain their graceful fallback to mock.  A
+release acceptance run must instead reject every degraded path, even if its
+answer happens to look valid.  This module contains no network or persistence
+code so it can be reused by the CLI harness and tested independently.
+"""
+from __future__ import annotations
+
+import re
+from typing import Any
+from urllib.parse import urlsplit
+
+
+class RealLLMAcceptanceError(RuntimeError):
+    """Raised when a result cannot be accepted as a genuine provider call."""
+
+
+_SECRET_PATTERNS = (
+    # Authorization values and common API-key assignments.
+    (re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)([^\s,;]+)"), r"\1[REDACTED]"),
+    (re.compile(r"(?i)((?:api[_-]?key|token|secret)\s*[:=]\s*)([^\s,;]+)"), r"\1[REDACTED]"),
+    # OpenAI-style keys can appear inside third-party HTTP errors.
+    (re.compile(r"\b(?:sk|rk|pk)-[A-Za-z0-9_-]{8,}\b"), "[REDACTED]"),
+)
+
+
+def redact_secrets(value: Any) -> str:
+    """Return a bounded, display-safe error string without credentials."""
+    text = str(value or "")
+    for pattern, replacement in _SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text[:500]
+
+
+def base_url_host(value: str) -> str:
+    """Return only scheme and host (plus non-default port) for artifacts."""
+    parsed = urlsplit(value or "")
+    if not parsed.scheme or not parsed.hostname:
+        return ""
+    default_port = {"https": 443, "http": 80}.get(parsed.scheme)
+    port = f":{parsed.port}" if parsed.port and parsed.port != default_port else ""
+    return f"{parsed.scheme}://{parsed.hostname}{port}"
+
+
+def assert_real_llm_meta(meta: dict[str, Any]) -> None:
+    """Reject mock, fallback, degraded, and anonymous model outcomes."""
+    if meta.get("actual_provider") == "mock" or meta.get("provider") == "mock":
+        raise RealLLMAcceptanceError("REAL_LLM_FELL_BACK_TO_MOCK")
+    if meta.get("fallback_used"):
+        raise RealLLMAcceptanceError("REAL_LLM_FALLBACK_USED")
+    if meta.get("degraded"):
+        raise RealLLMAcceptanceError("REAL_LLM_DEGRADED")
+    if not str(meta.get("actual_model") or meta.get("model_name") or "").strip():
+        raise RealLLMAcceptanceError("REAL_LLM_MODEL_IDENTITY_MISSING")
+
+
+def safe_failure_record(error: BaseException | str) -> dict[str, str]:
+    """Create the only error representation permitted in a run artifact."""
+    if isinstance(error, RealLLMAcceptanceError):
+        code = str(error)
+    else:
+        code = "REAL_LLM_REQUEST_FAILED"
+    return {"error_code": code, "error": redact_secrets(error)}
+
+
+__all__ = [
+    "RealLLMAcceptanceError",
+    "assert_real_llm_meta",
+    "base_url_host",
+    "redact_secrets",
+    "safe_failure_record",
+]
