@@ -9,17 +9,20 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parents[3]
 STATE_PATH = PROJECT_DIR / "docs" / "engineering" / "v7-execution-state.json"
 SCOPE_PATH = PROJECT_DIR / "docs" / "engineering" / "v7-5-3-scope.md"
-REVIEW_ONLY_MARKERS = {"review", "manual review", "config review", "inspection"}
 
 
 def _state() -> dict:
     return json.loads(STATE_PATH.read_text(encoding="utf-8"))
 
 
-def _head() -> str:
+def _git(*args: str) -> str:
     return subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=PROJECT_DIR, text=True, encoding="utf-8"
+        ["git", *args], cwd=PROJECT_DIR, text=True, encoding="utf-8"
     ).strip()
+
+
+def _head() -> str:
+    return _git("rev-parse", "HEAD")
 
 
 def test_v7_5_3_is_honestly_reopened_until_executable_evidence_exists() -> None:
@@ -50,16 +53,21 @@ def test_v7_5_3_is_honestly_reopened_until_executable_evidence_exists() -> None:
         assert state["release_candidate"] == "v1.0.0-rc4"
 
 
-def test_done_tasks_cannot_use_review_text_as_test_evidence() -> None:
+def test_verified_tasks_require_executable_structured_evidence() -> None:
     state = _state()
+    if state["overall_status"] != "verified_locally":
+        return
+
     for task_id, task in state["tasks"].items():
-        if task["status"] != "done" or not task["tests_run"]:
-            continue
+        assert task["status"] == "done", f"{task_id} is not done"
+        assert task["tests_run"], f"{task_id} has no executable evidence"
         for entry in task["tests_run"]:
-            text = entry if isinstance(entry, str) else json.dumps(entry, ensure_ascii=False)
-            assert text.strip().lower() not in REVIEW_ONLY_MARKERS, (
-                f"{task_id} uses review-only text as executable evidence"
-            )
+            assert isinstance(entry, dict), f"{task_id} evidence must be structured"
+            assert entry.get("command"), f"{task_id} evidence has no command"
+            assert entry.get("exit_code") == 0, f"{task_id} command did not pass"
+            description = json.dumps(entry, ensure_ascii=False).lower()
+            assert "manual review" not in description
+            assert "config review" not in description
 
 
 def test_verified_state_requires_sha_bound_release_gate() -> None:
@@ -69,24 +77,48 @@ def test_verified_state_requires_sha_bound_release_gate() -> None:
 
     evidence = state["closure_evidence"]
     assert isinstance(evidence, dict)
-    relative_path = evidence["result_path"]
-    result_path = PROJECT_DIR / relative_path
+    result_path = PROJECT_DIR / evidence["result_path"]
     assert result_path.is_file()
 
     raw = result_path.read_bytes()
     assert hashlib.sha256(raw).hexdigest() == evidence["sha256"]
     result = json.loads(raw)
     assert result["passed"] is True
-    assert result["tested_sha"] == _head()
-    assert result["final_sha"] == _head()
+    assert result["tested_sha"] == result["final_sha"]
     assert result["head_unchanged"] is True
     assert result["dirty_before"] is False
     assert result["dirty_after"] is False
-    assert result["e2e"]["passed"] == 6
-    assert result["e2e"]["failed"] == 0
+    assert result["e2e"] == {
+        "passed": 6,
+        "failed": 0,
+        "flaky": 0,
+        "skipped": 0,
+    }
     assert result["teardown"]["passed"] is True
+    assert result["teardown"]["cleanup_passed"] is True
     assert result["normal_uploads_unchanged"] is True
     assert all(step["exit_code"] == 0 for step in result["steps"])
+
+    head = _head()
+    tested_sha = result["tested_sha"]
+    if tested_sha == head:
+        assert evidence.get("closure_mode", "same_commit") == "same_commit"
+        return
+
+    # A machine-generated gate result cannot contain the SHA of a future commit
+    # that adds that result. Permit exactly one post-test evidence-only commit:
+    # its parent is the tested code SHA and its diff contains no production/test
+    # code changes, only the execution state and the referenced evidence tree.
+    assert evidence.get("closure_mode") == "evidence_only_commit"
+    parent = _git("rev-parse", "HEAD^")
+    assert parent == tested_sha
+    changed = set(_git("diff", "--name-only", parent, head).splitlines())
+    evidence_root = str(Path(evidence["result_path"]).parent).replace("\\", "/") + "/"
+    allowed_exact = {"docs/engineering/v7-execution-state.json"}
+    assert changed
+    assert all(path in allowed_exact or path.startswith(evidence_root) for path in changed), (
+        f"post-test closure commit changed non-evidence files: {sorted(changed)}"
+    )
 
 
 def test_scope_records_all_audit_findings_and_deferrals() -> None:
