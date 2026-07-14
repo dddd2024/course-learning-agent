@@ -14,24 +14,24 @@
   "secret_scan_status": "passed",
   "files": {
     "real-llm-acceptance.json": {
-      "sha256": "90d053c81e03c1a824f6cac9ae627565e96a4e54d9557b34924bddd187b924ba",
-      "size_bytes": 749
+      "sha256": "599b69e1b5ad45ab9500f4b1ac4645803dbe46f9fb7c1dd41e634575cbda68fd",
+      "size_bytes": 721
     },
     "scenario-results.json": {
-      "sha256": "85926afcdb470d5cbe8cb920770c850b04e6d7564273817fbbd6cbad40daf48a",
-      "size_bytes": 1278
+      "sha256": "a7d3a9acbf3095a2d3dbd5651b5945c36c8f94ed9c06047b632ab53d26974cc7",
+      "size_bytes": 1216
     },
     "redacted-agent-runs.json": {
-      "sha256": "ad365ccbfb2e24ea390ec4d19885b592a43ef42e8a80df9986bdd09fd4dd08f2",
-      "size_bytes": 2060
+      "sha256": "49855664173169197d1f8c12e93e343604befd511aaf0e37696f0ef596aef875",
+      "size_bytes": 1981
     },
     "request-summary.json": {
-      "sha256": "32299c5084b338207b5219c92b4c4bed3f54adc2101482f0002e89e11a596053",
-      "size_bytes": 248
+      "sha256": "7d78474b90eb2d007de1910ef2ab8cab410a8d7fdc723ff027b2c1087c0c57da",
+      "size_bytes": 237
     },
     "environment-fingerprint.json": {
-      "sha256": "347a12ff96814dddf0ee3f4692d244218f2ae061b1aefd07d2eff1faadca8a00",
-      "size_bytes": 103
+      "sha256": "29b0cbebe502c08133c341c8d1b71f440029f32ecb099ecf856d637105676c37",
+      "size_bytes": 98
     }
   },
   "fallback_count": 0,
