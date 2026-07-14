@@ -1,6 +1,7 @@
 {
   "target": "v1.0.0-rc3",
-  "base_commit": "6b3d948564dd1eee6ce7d2cef78af195618f86b7",
+  "base_commit": "3a484f09a3953baa0b20415c89039715d31c502c",
+  "trigger": "pull_request",
   "requested_gates": [
     "backend_full_pytest",
     "frontend_unit_tests",
@@ -10,5 +11,5 @@
     "playwright_e2e",
     "v7_acceptance_verification"
   ],
-  "purpose": "Trigger a pull-request CI run against the latest release-candidate code and retain an auditable request marker."
+  "purpose": "Run the complete regression suite against the latest release-candidate code and retain an auditable request marker."
 }
