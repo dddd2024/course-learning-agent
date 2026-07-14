@@ -43,6 +43,7 @@ from app.services.material_image_service import image_integrity, image_state, re
 from app.services.material_readiness_service import material_readiness
 from app.services.material_page_catalog_service import build_material_page_catalog
 from app.services.material_identity_service import resolve_owned_material
+from app.services.page_asset_rebuild_contract import normalize_page_asset_rebuild_result
 
 router = APIRouter()
 
@@ -196,7 +197,8 @@ def rebuild_page_assets_endpoint(
     from app.services.material_page_asset_service import rebuild_page_assets
     material = _get_owned_material(db, material_id, current_user.id)
     inject_failure = settings.E2E_MODE and x_e2e_inject_page_backfill_failure == "true"
-    return rebuild_page_assets(db, material, inject_backfill_failure=inject_failure)
+    result = rebuild_page_assets(db, material, inject_backfill_failure=inject_failure)
+    return normalize_page_asset_rebuild_result(material.id, result)
 
 
 @router.get("/{material_id}/parse-jobs")
