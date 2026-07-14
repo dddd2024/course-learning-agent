@@ -9,12 +9,13 @@ def _settings(tmp_path, *, upload=None, database=None, run_id="run-123"):
     run_root = tmp_path / "storage" / "e2e-runs" / run_id
     upload_dir = upload or (run_root / "uploads")
     database_path = database or (run_root / "e2e.db")
+    database_url_path = str(database_path).replace("\\", "/")
     return SimpleNamespace(
         ENVIRONMENT="e2e",
         E2E_RUN_ID=run_id,
         E2E_RUN_ROOT=str(run_root),
         UPLOAD_DIR=str(upload_dir),
-        DATABASE_URL=f"sqlite:///{str(database_path).replace('\\', '/')}",
+        DATABASE_URL=f"sqlite:///{database_url_path}",
     )
 
 
