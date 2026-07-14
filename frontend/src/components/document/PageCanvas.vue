@@ -3,23 +3,20 @@
     <div v-if="!pages.length" class="page-empty">暂无可用页图</div>
     <article v-for="page in pages" :id="`page-${page.page_no}`" :key="page.id" class="page-sheet">
       <div class="page-meta">第 {{ page.page_no }} 页</div>
-      <!-- V7.5.2-06: corrupted image — el-image onError fired -->
-      <div v-if="imageErrors.has(page.id)" class="page-error">
+
+      <div v-if="states[page.id] === 'failed'" class="page-error">
         <el-icon><PictureRounded /></el-icon>
-        <span>第 {{ page.page_no }} 页图像损坏</span>
-        <span class="page-error-hint">请使用结构化文本查看此页内容</span>
+        <span>第 {{ page.page_no }} 页{{ errors[page.id] === 'decode' ? '图像损坏' : '加载失败' }}</span>
+        <span class="page-error-hint">可重试本页，或暂时使用结构化文本查看。</span>
+        <el-button size="small" type="primary" plain @click="retryPage(page)">重试本页</el-button>
       </div>
-      <!-- V7.5.2-06: blob fetch failure — network or 404 -->
-      <div v-else-if="loadErrors.has(page.id)" class="page-error">
-        <el-icon><PictureRounded /></el-icon>
-        <span>第 {{ page.page_no }} 页加载失败</span>
-        <span class="page-error-hint">请使用结构化文本查看此页内容</span>
+
+      <div v-else-if="!page.page_asset" class="page-unavailable">
+        此页无关联资产，请尝试修复预览。
       </div>
-      <!-- V7.5.2-06: page_asset is null — no version binding -->
-      <div v-else-if="!page.page_asset" class="page-unavailable">此页无关联资产，请尝试修复预览。</div>
-      <!-- Normal ready state with loaded blob URL -->
+
       <el-image
-        v-else-if="page.page_asset?.file_url && page.page_asset?.status === 'ready' && urls[page.id]"
+        v-else-if="states[page.id] === 'ready' && urls[page.id]"
         :src="urls[page.id]"
         :preview-src-list="[urls[page.id]]"
         fit="contain"
@@ -28,69 +25,143 @@
         class="page-image"
         @error="handleImageError(page.id)"
       />
-      <!-- Asset explicitly marked as failed by backend -->
+
       <div v-else-if="page.page_asset?.status === 'failed'" class="page-error">
         <el-icon><PictureRounded /></el-icon>
         <span>第 {{ page.page_no }} 页渲染失败</span>
-        <span class="page-error-hint">请使用结构化文本查看此页内容</span>
+        <span class="page-error-hint">请修复文档预览或使用结构化文本。</span>
       </div>
-      <!-- Still loading or not yet generated -->
-      <div v-else class="page-unavailable">页图加载中或尚未生成。</div>
+
+      <div v-else class="page-unavailable">
+        {{ states[page.id] === 'loading' ? '页图加载中。' : '页图尚未生成。' }}
+      </div>
     </article>
   </section>
 </template>
 
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { onBeforeUnmount, reactive, watch } from 'vue'
 import { PictureRounded } from '@element-plus/icons-vue'
 import request from '../../api'
-interface PageAsset { file_url?: string; status?: string }
-interface ReaderPage { id: number; page_no: number; page_asset?: PageAsset | null }
+
+interface PageAsset {
+  file_url?: string
+  status?: string
+  sha256?: string | null
+}
+
+interface ReaderPage {
+  id: number
+  page_no: number
+  page_asset?: PageAsset | null
+}
+
+type PageLoadState = 'idle' | 'loading' | 'ready' | 'failed'
+type PageLoadError = 'network' | 'empty' | 'decode'
+
 const props = defineProps<{ pages: ReaderPage[] }>()
-
 const urls = reactive<Record<number, string>>({})
-// V7.5.2-06: track per-page load failures so one broken page
-// doesn't leave the entire canvas stuck in "loading" forever.
-const loadErrors = reactive<Set<number>>(new Set())
-const imageErrors = reactive<Set<number>>(new Set())
+const states = reactive<Record<number, PageLoadState>>({})
+const errors = reactive<Record<number, PageLoadError | undefined>>({})
+const sourceKeys = reactive<Record<number, string>>({})
+let retryNonce = 0
 
-/** Mark a page as failed when el-image fires onError (corrupted blob). */
-function handleImageError(pageId: number) {
-  imageErrors.add(pageId)
-  // Revoke the broken object URL so it doesn't leak
-  if (urls[pageId]) {
-    URL.revokeObjectURL(urls[pageId])
+function sourceKey(page: ReaderPage): string {
+  const asset = page.page_asset
+  return `${asset?.file_url || ''}|${asset?.sha256 || ''}|${asset?.status || ''}`
+}
+
+function revokePageUrl(pageId: number) {
+  const current = urls[pageId]
+  if (current) {
+    URL.revokeObjectURL(current)
     delete urls[pageId]
   }
 }
 
-async function loadAssets() {
-  await Promise.allSettled(props.pages.map(async (page) => {
-    if (!page.page_asset?.file_url || urls[page.id]) return
-    // V7.5.2-06: clear any previous error state for this page
-    loadErrors.delete(page.id)
-    imageErrors.delete(page.id)
-    // The API catalogue exposes an app-root URL.  Axios already has
-    // ``/api/v1`` as its base URL, so remove that one prefix before issuing
-    // the authenticated request instead of producing ``/api/v1/api/v1/...``.
-    const fileUrl = page.page_asset.file_url.startsWith('/api/v1/')
-      ? page.page_asset.file_url.slice('/api/v1'.length)
-      : page.page_asset.file_url
-    try {
-      const { data } = await request.get(fileUrl, { responseType: 'blob' })
-      // V7.5.2-06: validate blob is non-empty and looks like an image
-      if (!data || data.size === 0) {
-        loadErrors.add(page.id)
-        return
-      }
-      urls[page.id] = URL.createObjectURL(data)
-    } catch {
-      // V7.5.2-06: record per-page failure instead of silently swallowing
-      loadErrors.add(page.id)
-    }
-  }))
+function clearPage(pageId: number) {
+  revokePageUrl(pageId)
+  delete states[pageId]
+  delete errors[pageId]
+  delete sourceKeys[pageId]
 }
-watch(() => props.pages, loadAssets, { immediate: true, deep: true })
+
+function normalizedApiUrl(raw: string): string {
+  return raw.startsWith('/api/v1/') ? raw.slice('/api/v1'.length) : raw
+}
+
+async function loadPage(page: ReaderPage, force = false) {
+  const asset = page.page_asset
+  const key = sourceKey(page)
+
+  if (!asset?.file_url || asset.status !== 'ready') {
+    revokePageUrl(page.id)
+    sourceKeys[page.id] = key
+    states[page.id] = 'idle'
+    errors[page.id] = undefined
+    return
+  }
+
+  if (!force && sourceKeys[page.id] === key && states[page.id] === 'ready' && urls[page.id]) {
+    return
+  }
+
+  revokePageUrl(page.id)
+  sourceKeys[page.id] = key
+  states[page.id] = 'loading'
+  errors[page.id] = undefined
+
+  const fileUrl = normalizedApiUrl(asset.file_url)
+  const separator = fileUrl.includes('?') ? '&' : '?'
+  const requestUrl = force ? `${fileUrl}${separator}_retry=${Date.now()}-${retryNonce++}` : fileUrl
+
+  try {
+    const { data } = await request.get(requestUrl, { responseType: 'blob' })
+    if (!(data instanceof Blob) || data.size === 0) {
+      states[page.id] = 'failed'
+      errors[page.id] = 'empty'
+      return
+    }
+    urls[page.id] = URL.createObjectURL(data)
+    states[page.id] = 'ready'
+  } catch {
+    states[page.id] = 'failed'
+    errors[page.id] = 'network'
+  }
+}
+
+async function retryPage(page: ReaderPage) {
+  await loadPage(page, true)
+}
+
+function handleImageError(pageId: number) {
+  revokePageUrl(pageId)
+  states[pageId] = 'failed'
+  errors[pageId] = 'decode'
+}
+
+async function syncPages() {
+  const activeIds = new Set(props.pages.map((page) => page.id))
+  for (const storedId of Object.keys(states).map(Number)) {
+    if (!activeIds.has(storedId)) clearPage(storedId)
+  }
+
+  await Promise.allSettled(
+    props.pages.map(async (page) => {
+      const key = sourceKey(page)
+      if (sourceKeys[page.id] && sourceKeys[page.id] !== key) {
+        clearPage(page.id)
+      }
+      await loadPage(page)
+    }),
+  )
+}
+
+watch(() => props.pages, () => { void syncPages() }, { immediate: true, deep: true })
+
+onBeforeUnmount(() => {
+  for (const pageId of Object.keys(urls).map(Number)) revokePageUrl(pageId)
+})
 </script>
 
 <style scoped>
