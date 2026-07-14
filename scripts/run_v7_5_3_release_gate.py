@@ -1,6 +1,6 @@
 """Execute the V7.5.3 local release gate on one clean committed SHA.
 
-The script never changes execution state.  It writes machine-readable evidence
+The script never changes execution state. It writes machine-readable evidence
 under the ignored ``artifacts/v7-5-3-local`` directory for independent review.
 """
 from __future__ import annotations
@@ -17,6 +17,7 @@ from pathlib import Path
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parent.parent
+BACKEND = ROOT / "backend"
 FRONTEND = ROOT / "frontend"
 ARTIFACT_ROOT = ROOT / "artifacts" / "v7-5-3-local"
 
@@ -38,7 +39,9 @@ def run_text(command: list[str], cwd: Path = ROOT, env: dict | None = None) -> s
         check=False,
     )
     if completed.returncode != 0:
-        raise RuntimeError(f"Command failed ({completed.returncode}): {' '.join(command)}\n{completed.stdout}")
+        raise RuntimeError(
+            f"Command failed ({completed.returncode}): {' '.join(command)}\n{completed.stdout}"
+        )
     return completed.stdout.strip()
 
 
@@ -66,7 +69,13 @@ def parse_playwright_counts(path: Path) -> dict:
     }
 
 
-def execute_step(name: str, command: list[str], cwd: Path, run_dir: Path, env: dict | None = None) -> dict:
+def execute_step(
+    name: str,
+    command: list[str],
+    cwd: Path,
+    run_dir: Path,
+    env: dict | None = None,
+) -> dict:
     started = now()
     completed = subprocess.run(
         command,
@@ -84,6 +93,7 @@ def execute_step(name: str, command: list[str], cwd: Path, run_dir: Path, env: d
     stderr_path = run_dir / f"{name}.stderr.txt"
     stdout_path.write_text(completed.stdout, encoding="utf-8")
     stderr_path.write_text(completed.stderr, encoding="utf-8")
+    combined = completed.stdout + "\n" + completed.stderr
     return {
         "name": name,
         "command": command,
@@ -93,7 +103,7 @@ def execute_step(name: str, command: list[str], cwd: Path, run_dir: Path, env: d
         "exit_code": completed.returncode,
         "stdout": str(stdout_path.relative_to(ROOT)).replace("\\", "/"),
         "stderr": str(stderr_path.relative_to(ROOT)).replace("\\", "/"),
-        "pytest": parse_pytest_counts(completed.stdout + "\n" + completed.stderr) if "pytest" in command else None,
+        "pytest": parse_pytest_counts(combined) if any("pytest" in part for part in command) else None,
     }
 
 
@@ -105,6 +115,7 @@ def main() -> int:
         return 2
 
     run_id = f"{datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid4().hex[:8]}"
+    e2e_run_id = f"gate-{run_id}"
     run_dir = ARTIFACT_ROOT / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
     playwright_json = run_dir / "playwright-results.json"
@@ -113,6 +124,14 @@ def main() -> int:
     npx = shutil.which("npx") or "npx"
     env = os.environ.copy()
     env["PLAYWRIGHT_JSON_OUTPUT"] = str(playwright_json)
+    env["E2E_RUN_ID"] = e2e_run_id
+
+    v753_tests = [
+        str(path.relative_to(BACKEND)).replace("\\", "/")
+        for path in sorted((BACKEND / "app" / "tests").glob("test_v7_5_3_*.py"))
+    ]
+    if not v753_tests:
+        raise RuntimeError("No V7.5.3 backend tests were discovered")
 
     metadata = {
         "python": sys.version,
@@ -122,11 +141,11 @@ def main() -> int:
     }
 
     steps = [
-        execute_step("backend-full", [sys.executable, "-m", "pytest"], ROOT / "backend", run_dir),
+        execute_step("backend-full", [sys.executable, "-m", "pytest"], BACKEND, run_dir),
         execute_step(
             "backend-v753",
-            [sys.executable, "-m", "pytest", "app/tests/test_v7_5_3_*.py", "-q"],
-            ROOT / "backend",
+            [sys.executable, "-m", "pytest", *v753_tests, "-q"],
+            BACKEND,
             run_dir,
         ),
         execute_step("frontend-unit", [npm, "run", "test"], FRONTEND, run_dir),
@@ -143,31 +162,40 @@ def main() -> int:
 
     final_sha = git("rev-parse", "HEAD")
     dirty_after = bool(git("status", "--porcelain"))
-    e2e_counts = parse_playwright_counts(playwright_json) if playwright_json.exists() else {
-        "passed": 0, "failed": 1, "flaky": 0, "skipped": 0,
-    }
+    e2e_counts = (
+        parse_playwright_counts(playwright_json)
+        if playwright_json.exists()
+        else {"passed": 0, "failed": 1, "flaky": 0, "skipped": 0}
+    )
 
-    teardown_files = sorted((FRONTEND / "test-results" / "e2e-runtime").glob("*/teardown-result.json"))
-    teardown = json.loads(teardown_files[-1].read_text(encoding="utf-8")) if teardown_files else {
-        "passed": False,
-        "normal_uploads_unchanged": False,
-        "cleanup_passed": False,
-    }
+    teardown_path = FRONTEND / "test-results" / "e2e-runtime" / e2e_run_id / "teardown-result.json"
+    teardown = (
+        json.loads(teardown_path.read_text(encoding="utf-8"))
+        if teardown_path.exists()
+        else {
+            "run_id": e2e_run_id,
+            "passed": False,
+            "normal_uploads_unchanged": False,
+            "cleanup_passed": False,
+        }
+    )
 
     passed = (
         all(step["exit_code"] == 0 for step in steps)
         and tested_sha == final_sha
         and not dirty_before
         and not dirty_after
-        and e2e_counts["passed"] == 6
-        and e2e_counts["failed"] == 0
+        and e2e_counts == {"passed": 6, "failed": 0, "flaky": 0, "skipped": 0}
+        and teardown.get("run_id") == e2e_run_id
         and bool(teardown.get("passed"))
         and bool(teardown.get("normal_uploads_unchanged"))
+        and bool(teardown.get("cleanup_passed"))
     )
 
     result = {
         "schema_version": 1,
         "run_id": run_id,
+        "e2e_run_id": e2e_run_id,
         "tested_sha": tested_sha,
         "final_sha": final_sha,
         "head_unchanged": tested_sha == final_sha,
@@ -185,9 +213,11 @@ def main() -> int:
     result_path = run_dir / "release-gate-result.json"
     encoded = json.dumps(result, ensure_ascii=False, indent=2).encode("utf-8")
     result_path.write_bytes(encoded)
-    (run_dir / "release-gate-result.sha256").write_text(hashlib.sha256(encoded).hexdigest() + "\n", encoding="ascii")
+    digest = hashlib.sha256(encoded).hexdigest()
+    (run_dir / "release-gate-result.sha256").write_text(digest + "\n", encoding="ascii")
 
     print(result_path)
+    print(f"sha256={digest}")
     return 0 if passed else 1
 
 
