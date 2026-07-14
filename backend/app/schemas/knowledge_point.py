@@ -18,6 +18,10 @@ class KnowledgePointResponse(BaseModel):
     summary: Optional[str] = None
     importance: int
     source_chunk_ids: List[int] = []
+    # Public identities are returned with source evidence so generated
+    # learning links never depend on a reusable SQLite row id.
+    source_material_public_ids: List[str] = []
+    material_public_id: Optional[str] = None
     exam_style: Optional[str] = None
     review_action: Optional[str] = None
     parent_id: Optional[int] = None

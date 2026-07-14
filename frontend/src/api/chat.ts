@@ -29,6 +29,7 @@ export interface Citation {
   support_status?: 'verified' | 'weak' | 'rejected'
   verification_reason?: string
   material_id?: number
+  material_public_id?: string
   // Phase 2 Task A: backend-assembled label for capsule display,
   // e.g. "操作系统讲义.pdf · 第 12 页".
   display_label?: string
@@ -79,6 +80,7 @@ export interface CitationBrief {
   quote_text?: string | null
   page_no?: number | null
   material_name?: string | null
+  material_public_id?: string | null
   display_label?: string | null
   claim_text?: string | null
   support_status?: 'verified' | 'weak' | 'rejected'

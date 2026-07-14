@@ -303,6 +303,7 @@ function goToLearnWithKp(kp: KnowledgePoint) {
   router.push({
     path: `/courses/${courseId.value}/learn`,
     query: {
+      ...(kp.material_public_id ? { material: kp.material_public_id } : {}),
       kp_title: kp.title,
       kp_summary: kp.summary || '',
       kp_source_chunk_ids: sourceChunkIds.length > 0 ? JSON.stringify(sourceChunkIds) : '',

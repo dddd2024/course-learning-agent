@@ -112,3 +112,35 @@ def test_rebuild_failure_rolls_back_schema_rows_indexes_and_foreign_keys(tmp_pat
         assert conn.execute(text("SELECT COUNT(*) FROM materials WHERE id=7")).scalar_one() == 1
         assert conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='materials__v752_new'")).scalar() is None
         assert conn.execute(text("PRAGMA foreign_key_check")).fetchall() == []
+
+
+def test_public_id_constraint_repair_regenerates_empty_and_duplicate_values_idempotently(tmp_path):
+    """A deployed table can already autoincrement while its public IDs are unsafe."""
+    engine = _legacy_engine(tmp_path)
+    migration = _migration()
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE materials ADD COLUMN public_id VARCHAR(36)"))
+        conn.execute(text("INSERT INTO materials(id, user_id, course_id, filename, file_type, file_path, parse_attempts, public_id) VALUES (9, 1, 1, 'dup.pdf', 'pdf', 'uploads/dup.pdf', 0, 'same-public-id'), (10, 1, 1, 'dup-2.pdf', 'pdf', 'uploads/dup-2.pdf', 0, 'same-public-id')"))
+        conn.execute(text("UPDATE materials SET public_id='' WHERE id=7"))
+
+    before = migration.dry_run(None, engine)
+    assert before["public_id_column_missing"] is False
+    assert before["public_id_not_null_missing"] is True
+    assert before["public_id_unique_missing"] is True
+    assert before["public_id_null_rows"] == 1
+    assert before["public_id_duplicate_rows"] == 1
+    assert before["would_change"] > 0
+
+    migration.up(None, engine)
+    with engine.connect() as conn:
+        snapshot = migration.inspect_materials_schema(conn)
+        values = [row[0] for row in conn.execute(text("SELECT public_id FROM materials ORDER BY id")).fetchall()]
+        assert snapshot.public_id_exists and snapshot.public_id_not_null and snapshot.public_id_unique
+        assert snapshot.public_id_null_rows == snapshot.public_id_duplicate_rows == 0
+        assert len(values) == len(set(values)) == 3
+        assert conn.execute(text("PRAGMA foreign_key_check")).fetchall() == []
+
+    migration.up(None, engine)
+    after = migration.dry_run(None, engine)
+    assert after["would_change"] == 0
+    assert after["public_id_null_rows"] == after["public_id_duplicate_rows"] == 0

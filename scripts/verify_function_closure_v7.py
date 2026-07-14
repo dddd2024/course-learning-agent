@@ -207,6 +207,11 @@ def check_material_public_identity():
     return _run_pytest(str(BACKEND_DIR / "app" / "tests" / "test_v7_5_2_material_public_identity.py"))
 
 
+@register_check("page_backfill_failure_contract", "backend")
+def check_page_backfill_failure_contract():
+    return _run_pytest(str(BACKEND_DIR / "app" / "tests" / "test_v7_5_2_page_backfill_failure.py"))
+
+
 # ---------------------------------------------------------------------------
 # Frontend checks
 # ---------------------------------------------------------------------------
@@ -237,7 +242,7 @@ def check_frontend_build():
 # ---------------------------------------------------------------------------
 
 V7_E2E_IDS = [f"V7-E2E-{i:02d}" for i in range(1, 12)]
-AUDIT_E2E_IDS = ["P0-L01", "P0-L02", "P1-L03", "P2-L04"]
+AUDIT_E2E_IDS = ["P0-L01", "P0-L02B", "P0-L02C", "P1-L03", "P2-L04", "P1-ID01", "P1-ID02", "P1-ID03"]
 
 
 def _playwright_statuses(data: dict) -> tuple[dict[str, list[str]], int, int]:
@@ -317,6 +322,25 @@ def check_e2e(external_report: Path | None = None):
     return code == 0, output
 
 
+def _remote_ci_state(artifact_dir: Path, commit_sha: str) -> dict:
+    """Remote evidence is optional for local acceptance, never for release."""
+    path = artifact_dir / "remote-ci.json"
+    unavailable = {
+        "commit_sha": commit_sha,
+        "status": "unavailable",
+        "reason": "remote_ci_evidence_not_collected",
+    }
+    if not path.exists():
+        return unavailable
+    try:
+        evidence = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {**unavailable, "reason": "remote_ci_evidence_invalid"}
+    if evidence.get("commit_sha") != commit_sha:
+        return {**unavailable, "reason": "remote_ci_commit_mismatch"}
+    return evidence
+
+
 def main():
     parser = argparse.ArgumentParser(description="V7 Function Closure Verification")
     parser.add_argument("--artifact-root", default="artifacts", help="Artifact output root")
@@ -394,6 +418,11 @@ def main():
     if playwright_report.exists():
         playwright_data = json.loads(playwright_report.read_text(encoding="utf-8"))
         _, playwright_failed, playwright_skipped = _playwright_statuses(playwright_data)
+    remote_ci = _remote_ci_state(artifact_dir, commit_sha)
+    by_name = {entry["name"]: entry["status"] for entry in results}
+    playwright_statuses = _playwright_statuses(playwright_data)[0] if playwright_report.exists() else {}
+    def e2e_passed(eid: str) -> bool:
+        return any(eid in title and all(value == "passed" for value in values) for title, values in playwright_statuses.items())
     summary = {
         "commit_sha": commit_sha,
         "acceptance": "passed" if all_passed else "failed",
@@ -401,8 +430,13 @@ def main():
         "failed_checks": report["failed_checks"],
         "playwright_failed": playwright_failed,
         "playwright_skipped": playwright_skipped,
-        "legacy_migration": "passed" if next((r for r in results if r["name"] == "existing_db_autoincrement_migration" and r["status"] == "pass"), None) else "failed",
-        "remote_ci": "pending",
+        "legacy_migration": "passed" if by_name.get("existing_db_autoincrement_migration") == "pass" else "failed",
+        "page_backfill_failure_contract": "pass" if by_name.get("page_backfill_failure_contract") == "pass" else "fail",
+        "image_reextract_partial_success": "pass" if e2e_passed("P0-L02C") else "fail",
+        "public_id_schema_constraints": "pass" if by_name.get("existing_db_autoincrement_migration") == "pass" else "fail",
+        "public_id_learning_links": "pass" if all(e2e_passed(eid) for eid in ["P1-ID01", "P1-ID02", "P1-ID03"]) else "fail",
+        "remote_ci": remote_ci.get("status", "unavailable"),
+        "release_ready": all_passed and remote_ci.get("status") == "success",
         "generated_at": report["timestamp"],
     }
     (artifact_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

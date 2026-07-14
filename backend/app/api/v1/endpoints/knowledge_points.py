@@ -56,6 +56,31 @@ router = APIRouter()
 _PROMPT_VERSION = "outline_v1"
 
 
+def _with_public_material_ids(db: Session, points: list[KnowledgePointResponse]) -> list[KnowledgePointResponse]:
+    """Attach stable material identities for each knowledge-point source."""
+    chunk_ids = {chunk_id for point in points for chunk_id in point.source_chunk_ids}
+    if not chunk_ids:
+        return points
+    rows = (
+        db.query(MaterialChunk.id, Material.public_id)
+        .join(Material, Material.id == MaterialChunk.material_id)
+        .filter(MaterialChunk.id.in_(chunk_ids))
+        .all()
+    )
+    public_by_chunk = {chunk_id: public_id for chunk_id, public_id in rows}
+    enriched = []
+    for point in points:
+        public_ids = list(dict.fromkeys(
+            public_by_chunk[chunk_id] for chunk_id in point.source_chunk_ids
+            if chunk_id in public_by_chunk
+        ))
+        enriched.append(point.model_copy(update={
+            "source_material_public_ids": public_ids,
+            "material_public_id": public_ids[0] if public_ids else None,
+        }))
+    return enriched
+
+
 def _get_owned_course(db: Session, course_id: int, user_id: int) -> Course:
     """Return the course if it belongs to ``user_id``, else 404."""
     course = (
@@ -285,7 +310,7 @@ def generate_knowledge_points(
     )
 
     return GenerateKnowledgePointsResponse(
-        knowledge_points=persisted,
+        knowledge_points=_with_public_material_ids(db, persisted),
         count=len(persisted),
         requested=len(points),
         generated=len(persisted),
@@ -316,7 +341,7 @@ def list_knowledge_points(
     if not include_archived:
         query = query.filter(KnowledgePoint.status == "active")
     rows = query.order_by(KnowledgePoint.id.asc()).all()
-    items = [KnowledgePointResponse.model_validate(r) for r in rows]
+    items = _with_public_material_ids(db, [KnowledgePointResponse.model_validate(r) for r in rows])
     return KnowledgePointListResponse(items=items, total=len(items))
 
 
@@ -390,7 +415,7 @@ def list_kps_by_generation(
         .order_by(KnowledgePoint.id.asc())
         .all()
     )
-    items = [KnowledgePointResponse.model_validate(r) for r in rows]
+    items = _with_public_material_ids(db, [KnowledgePointResponse.model_validate(r) for r in rows])
     is_active_generation = any(row.status == "active" for row in rows)
     return KnowledgePointListResponse(
         items=items,

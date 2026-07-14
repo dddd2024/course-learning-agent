@@ -27,6 +27,8 @@ from app.models.citation import Citation
 from app.models.conversation import Conversation, Message
 from app.models.course import Course
 from app.models.error_log import AgentErrorLog
+from app.models.material import Material
+from app.models.material_chunk import MaterialChunk
 from app.models.user import User
 from app.retrieval.search import keyword_search, rerank
 from app.schemas.chat import ChatResponse, CitationItem, RetrievedChunkItem
@@ -624,6 +626,15 @@ def run_chat_pipeline(
     db.refresh(assistant_msg)
 
     chunk_map = {c["chunk_id"]: c for c in ranked}
+    material_public_ids = {
+        chunk_id: public_id
+        for chunk_id, public_id in (
+            db.query(MaterialChunk.id, Material.public_id)
+            .join(Material, Material.id == MaterialChunk.material_id)
+            .filter(MaterialChunk.id.in_(chunk_map))
+            .all()
+        )
+    }
     citations: list[CitationItem] = []
     # Phase 2 bugfix P1-1: deduplicate citations by chunk_id so the
     # frontend never receives duplicate keys and the citations table
@@ -666,6 +677,7 @@ def run_chat_pipeline(
             CitationItem(
                 chunk_id=cite["chunk_id"],
                 material_name=material_name,
+                material_public_id=material_public_ids.get(cite["chunk_id"]),
                 page_no=page_no,
                 quote_text=quote_text,
                 confidence=confidence,

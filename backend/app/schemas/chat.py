@@ -19,6 +19,7 @@ class CitationItem(BaseModel):
 
     chunk_id: int
     material_name: str
+    material_public_id: Optional[str] = None
     page_no: Optional[int] = None
     quote_text: str = ""
     claim_text: str = ""

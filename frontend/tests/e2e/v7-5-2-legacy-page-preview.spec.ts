@@ -55,7 +55,7 @@ test('P0-L01: assets without MaterialPage still render every original page', asy
   expect(await page.locator('.page-empty').count()).toBe(0)
 })
 
-test('P0-L02: visible repair button persists legacy page backfill and reports a failed repair', async ({ page, request }, info) => {
+test('P0-L02B: actual backend backfill failure keeps the synthetic reader readable', async ({ page, request }, info) => {
   await loginWithFreshUser(page); const courseId = await course(page); const file = info.outputPath('repair.pdf'); makePdf(file, 2)
   const { auth, materialId } = await uploadReady(page, request, courseId, file)
   sql('DELETE FROM material_pages WHERE material_id=?', String(materialId))
@@ -63,16 +63,18 @@ test('P0-L02: visible repair button persists legacy page backfill and reports a 
   const repairButton = page.getByTestId('legacy-page-catalog-repair').getByRole('button', { name: '修复文档预览' })
   await expect(repairButton).toBeVisible({ timeout: 30_000 })
   const rebuildUrl = `**/api/v1/materials/${materialId}/page-assets/rebuild`
-  await page.route(rebuildUrl, (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"injected failure"}' }))
-  let imageReextractRequested = false
-  page.on('request', (request) => {
-    if (request.url().includes(`/materials/${materialId}/images/reextract`)) imageReextractRequested = true
-  })
-  const failedRebuild = page.waitForResponse((response) => response.url().includes(`/materials/${materialId}/page-assets/rebuild`) && response.status() === 500)
+  await page.route(rebuildUrl, async (route) => route.continue({
+    headers: { ...route.request().headers(), 'x-e2e-inject-page-backfill-failure': 'true' },
+  }))
+  const failedRebuild = page.waitForResponse((response) => response.url().includes(`/materials/${materialId}/page-assets/rebuild`) && response.request().method() === 'POST')
   await repairButton.click()
-  await failedRebuild
+  const partial = await (await failedRebuild).json()
+  expect(partial.status).toBe('readable_but_not_repaired')
+  expect(partial.error_code).toBe('PAGE_CATALOG_BACKFILL_FAILED')
+  expect(partial.page_catalog_backfill.remaining_synthetic_page_numbers).toEqual([1, 2])
+  await expect(page.getByText('当前原页仍可阅读，但页面目录持久化失败。下次启动可能需要再次修复。')).toBeVisible()
+  await expect(page.locator('img[alt*="原页图像"]')).toHaveCount(2)
   await expect(repairButton).toBeEnabled()
-  expect(imageReextractRequested).toBeFalsy()
   await page.unroute(rebuildUrl)
   const repaired = page.waitForResponse((response) => response.url().includes(`/materials/${materialId}/page-assets/rebuild`) && response.request().method() === 'POST')
   await repairButton.click(); expect((await repaired).ok()).toBeTruthy()
@@ -80,6 +82,22 @@ test('P0-L02: visible repair button persists legacy page backfill and reports a 
   const catalog = await request.get(`${API_BASE}/materials/${materialId}/pages`, { headers: auth })
   expect((await catalog.json()).synthetic_page_numbers).toEqual([])
   await expect(page.locator('img[alt*="原页图像"]')).toHaveCount(2, { timeout: 30_000 })
+})
+
+test('P0-L02C: page repair success reports independent image reextract failure', async ({ page, request }, info) => {
+  await loginWithFreshUser(page); const courseId = await course(page); const file = info.outputPath('reextract.pdf'); makePdf(file, 2)
+  const { auth, materialId } = await uploadReady(page, request, courseId, file)
+  sql('DELETE FROM material_pages WHERE material_id=?', String(materialId))
+  await page.goto(`/courses/${courseId}/learn?material_id=${materialId}`)
+  const repairButton = page.getByTestId('legacy-page-catalog-repair').getByRole('button', { name: '修复文档预览' })
+  await expect(repairButton).toBeVisible({ timeout: 30_000 })
+  const imageUrl = `**/api/v1/materials/${materialId}/images/reextract`
+  await page.route(imageUrl, route => route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"injected image failure"}' }))
+  await repairButton.click()
+  await expect(page.getByText('原页已修复，但独立图片提取失败。')).toBeVisible()
+  const catalog = await request.get(`${API_BASE}/materials/${materialId}/pages`, { headers: auth })
+  expect((await catalog.json()).synthetic_page_numbers).toEqual([])
+  await expect(page.locator('img[alt*="原页图像"]')).toHaveCount(2)
 })
 
 test('P1-L03: text PDF with removed chunks is not classified as scanned', async ({ page, request }, info) => {

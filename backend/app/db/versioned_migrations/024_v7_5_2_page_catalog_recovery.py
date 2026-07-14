@@ -38,6 +38,11 @@ class MaterialsSchemaSnapshot:
     public_id_null_rows: int
     public_id_duplicate_rows: int
 
+    @property
+    def public_id_exists(self) -> bool:
+        """Name used by the audit report; keep the older field compatible."""
+        return self.has_public_id
+
 
 def inspect_materials_schema(conn: Connection) -> MaterialsSchemaSnapshot:
     table_sql = conn.execute(text("SELECT sql FROM sqlite_master WHERE type='table' AND name='materials'")).scalar()
@@ -260,6 +265,7 @@ def dry_run(db, engine: Engine) -> dict:
     stats.update({
         "material_autoincrement_missing": not snapshot.has_autoincrement,
         "public_id_column_missing": not snapshot.has_public_id,
+        "public_id_exists": snapshot.public_id_exists,
         "public_id_missing": not snapshot.has_public_id,
         "public_id_not_null_missing": not snapshot.public_id_not_null,
         "public_id_unique_missing": not snapshot.public_id_unique,

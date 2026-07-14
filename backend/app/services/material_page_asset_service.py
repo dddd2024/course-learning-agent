@@ -288,7 +288,7 @@ def ensure_active_page_assets(db: Session, material: Material) -> dict:
     return rebuild_page_assets(db, material)
 
 
-def rebuild_page_assets(db: Session, material: Material) -> dict:
+def rebuild_page_assets(db: Session, material: Material, *, inject_backfill_failure: bool = False) -> dict:
     """Render the full PDF and atomically replace page assets with compensation.
 
     V7.5.2-03: Uses a lock, journal, and compensation transaction to
@@ -324,6 +324,7 @@ def rebuild_page_assets(db: Session, material: Material) -> dict:
         return _do_rebuild(
             db, material, source, page_root, version_id,
             staging_dir, version_dir, backup_dir, journal_path,
+            inject_backfill_failure=inject_backfill_failure,
         )
     finally:
         _release_lock(material)
@@ -368,7 +369,7 @@ def _repair_result(
 def _do_rebuild(
     db: Session, material: Material, source: Path, page_root: Path,
     version_id: int, staging_dir: Path, version_dir: Path,
-    backup_dir: Path, journal_path: Path,
+    backup_dir: Path, journal_path: Path, *, inject_backfill_failure: bool = False,
 ) -> dict:
     """Inner rebuild logic with compensation at every failure point."""
 
@@ -481,6 +482,8 @@ def _do_rebuild(
                 render_status="ready",
             ))
         phase = "page_catalog_backfill"
+        if inject_backfill_failure:
+            raise RuntimeError("E2E injected page catalog backfill failure")
         backfill = backfill_missing_material_pages(
             db, material, page_numbers=[rendered_page.page_no for rendered_page in rendered],
         )

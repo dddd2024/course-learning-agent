@@ -7,6 +7,8 @@ export interface KnowledgePoint {
   summary: string
   importance: number
   source_chunk_ids: number[]
+  source_material_public_ids?: string[]
+  material_public_id?: string | null
   exam_style: string
   review_action: string
   status?: string

@@ -139,13 +139,13 @@ def list_messages(
     citations_by_msg: dict[int, list[CitationBrief]] = {}
     if msg_ids:
         rows = (
-            db.query(Citation, Material.filename)
+            db.query(Citation, Material.filename, Material.public_id)
             .join(MaterialChunk, Citation.chunk_id == MaterialChunk.id)
             .join(Material, MaterialChunk.material_id == Material.id)
             .filter(Citation.message_id.in_(msg_ids))
             .all()
         )
-        for cite, filename in rows:
+        for cite, filename, public_id in rows:
             label = (
                 f"{filename} · 第 {cite.page_no} 页"
                 if cite.page_no
@@ -157,6 +157,7 @@ def list_messages(
                     quote_text=cite.quote_text,
                     page_no=cite.page_no,
                     material_name=filename,
+                    material_public_id=public_id,
                     display_label=label,
                     claim_text=cite.claim_text,
                     support_status=cite.support_status or "weak",
