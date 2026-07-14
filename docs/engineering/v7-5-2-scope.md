@@ -3,6 +3,14 @@
 > Only fix code-level release blockers and acceptance failures found by the independent audit and the complete regression gate.
 > No final report and no unrelated feature expansion.
 
+## Audit recovery supersession
+
+The previous local closure is invalidated by the legacy condition where page
+assets are complete but active-version `MaterialPage` rows are absent.  The
+recovery branch must keep the state `in_progress` until page catalogue,
+existing-database migration, scanned-PDF classification, Blob lifecycle and
+remote CI evidence are all verified on the final commit.
+
 - Audit baseline: `fd5198b63e25b869b3a31fb0e7178b9c02f3c294`
 - Current integration branch: `main`
 - Target after all gates pass: `v1.0.0-rc3`

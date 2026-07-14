@@ -95,7 +95,7 @@
         <div class="toc-list">
           <div
             v-for="(page, idx) in materialPages"
-            :key="page.id"
+            :key="page.catalog_key"
             class="toc-item"
             :class="{ active: activeChunkIndex === idx }"
             role="button"
@@ -891,10 +891,8 @@ async function handleRepairDocument() {
   reextractingImages.value = true
   try {
     // Step 1: Rebuild page assets (page images)
-    let pageResult: { expected_pages: number; ready_pages: number; missing_pages: number; status: string } | null = null
     try {
-      const { data } = await rebuildPageAssets(selectedMaterialId.value)
-      pageResult = data
+      await rebuildPageAssets(selectedMaterialId.value)
     } catch {
       // Page rebuild failure is non-fatal; continue with image re-extraction
     }
@@ -914,26 +912,18 @@ async function handleRepairDocument() {
       // Image extraction failure is non-fatal
     }
 
-    // Reload integrity to get current state
-    await loadImageIntegrity()
-
-    const readyPages = imageIntegrityData.value?.ready_pages ?? 0
-    const expectedPages = imageIntegrityData.value?.expected_pages ?? 0
-    const stillMissing = imageIntegrityData.value?.missing ?? 0
-
-    if (pageResult && pageResult.status === 'ready' && stillMissing === 0) {
-      ElMessage.success(`文档预览已修复：${readyPages}/${expectedPages} 页可读，提取 ${imgExtracted} 张独立图片`)
-    } else if (readyPages > 0) {
-      ElMessage.warning(
-        `部分修复：${readyPages}/${expectedPages} 页可读，仍有 ${expectedPages - readyPages} 页缺失，${stillMissing} 张独立图片缺失`,
-      )
-    } else {
-      ElMessage.error('文档预览修复失败，旧版本仍可使用')
-    }
-
-    // Reload chunks to show the new images
+    // Refresh all three server-owned facts before reporting success.
     brokenImageIds.value.clear()
     await loadChunks()
+    await loadImageIntegrity()
+    const current = readiness.value
+    const effective = current?.effective_page_count ?? 0
+    const expected = current?.expected_page_count ?? 0
+    if (current?.usable && effective === expected && expected > 0) {
+      ElMessage.success(`文档预览已修复：${effective}/${expected} 页可读，提取 ${imgExtracted} 张独立图片`)
+    } else {
+      ElMessage.warning(`文档预览尚未完整：${effective}/${expected} 页有效，请根据提示继续处理。`)
+    }
   } catch (err) {
     ElMessage.error(parseApiError(err, '修复文档预览失败，旧版本仍可使用'))
   } finally {

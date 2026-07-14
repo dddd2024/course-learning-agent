@@ -53,6 +53,18 @@ export interface MaterialReadiness {
   missing_page_numbers: number[]
   fts_indexed_chunk_count: number
   reader_mode: 'page' | 'structured_text'
+  document_mode: 'text_pdf' | 'scanned_pdf' | 'non_pdf_text' | 'unexpected_empty_text_pdf' | 'unknown_pdf'
+  expected_page_count: number
+  persisted_page_count: number
+  asset_page_count: number
+  effective_page_count: number
+  page_catalog_missing_numbers: number[]
+  page_catalog_synthetic_numbers: number[]
+  page_asset_missing_numbers: number[]
+  page_asset_invalid_numbers: number[]
+  page_catalog_consistent: boolean
+  page_assets_complete: boolean
+  warnings: string[]
   usable: boolean
   blocking_reasons: string[]
 }
@@ -77,14 +89,16 @@ export interface ChunkImage {
 }
 
 export interface MaterialPage {
-  id: number
+  catalog_key: string
+  id: number | null
   page_no: number
   page_type: string
-  parser_version: string
+  parser_version: string | null
   raw_text: string
   clean_text: string
   removed_lines: string
   blocks: string
+  is_synthetic: boolean
   page_asset?: {
     id: number
     file_url: string
@@ -97,7 +111,19 @@ export interface MaterialPage {
   } | null
 }
 
-export function getMaterialPages(materialId: number): AxiosPromise<{ items: MaterialPage[] }> {
+export interface MaterialPageCatalog {
+  material_id: number
+  material_version_id: number | null
+  expected_pages: number
+  persisted_pages: number
+  asset_pages: number
+  effective_pages: number
+  missing_catalog_page_numbers: number[]
+  synthetic_page_numbers: number[]
+  items: MaterialPage[]
+}
+
+export function getMaterialPages(materialId: number): AxiosPromise<MaterialPageCatalog> {
   return request.get(`/materials/${materialId}/pages`)
 }
 

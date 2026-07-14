@@ -28,7 +28,7 @@ def test_v7_5_2_records_honest_current_state() -> None:
     state = _load_state()
 
     assert state["version"] == "v7.5.2"
-    assert state["base_commit"] == "fd5198b63e25b869b3a31fb0e7178b9c02f3c294"
+    assert state["base_commit"] == "e6148a2808b70cd1b0ddb3c762d225a13009e4e9"
     assert state["overall_status"] in {"in_progress", "verified_locally"}
 
     if state["overall_status"] == "in_progress":
@@ -68,6 +68,12 @@ def test_verified_locally_requires_every_release_gate() -> None:
     assert gate.get("not_run_gates") == []
     assert REQUIRED_RELEASE_GATES.issubset(set(gate.get("passed_gates") or []))
     assert all(task["status"] == "done" for task in state["tasks"].values())
+    assert state["remote_ci"] == "success"
+    artifact = PROJECT_DIR / "artifacts" / "verification" / "v7-audit-recovery" / "summary.json"
+    assert artifact.exists(), "verified state requires final audit evidence"
+    summary = json.loads(artifact.read_text(encoding="utf-8"))
+    assert summary["commit_sha"] == gate["commit_sha"]
+    assert summary["playwright_failed"] == summary["playwright_skipped"] == 0
 
 
 def test_done_tasks_have_test_evidence() -> None:

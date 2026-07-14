@@ -307,7 +307,7 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           python scripts/verify_function_closure_v7.py --artifact-root artifacts --external-e2e artifacts/e2e/frontend/playwright-results.json
-          cp artifacts/verification/v7/v7-acceptance.json artifacts/verification-result.json
+          cp artifacts/verification/v7-audit-recovery/v7-acceptance.json artifacts/verification-result.json
 
       - name: Check for skipped tests
         shell: bash

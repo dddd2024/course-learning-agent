@@ -41,6 +41,7 @@ from app.models.material_page_asset import MaterialPageAsset
 from app.services.material_delete_service import delete_material as delete_material_service
 from app.services.material_image_service import image_integrity, image_state, reextract_images
 from app.services.material_readiness_service import material_readiness
+from app.services.material_page_catalog_service import build_material_page_catalog
 
 router = APIRouter()
 
@@ -318,31 +319,7 @@ def list_chunks(
 def list_material_pages(material_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
     """Reader contract: page catalogue plus raw/clean text and decisions."""
     material = _get_owned_material(db, material_id, current_user.id)
-    query = db.query(MaterialPage).filter(MaterialPage.material_id == material.id)
-    # The reader always opens the active material version.  Historical pages
-    # stay intact for evidence and old quiz citations but must never be mixed
-    # into the current page catalogue after a successful re-parse.
-    if material.active_version_id is not None:
-        query = query.filter(MaterialPage.material_version_id == material.active_version_id)
-    rows = query.order_by(MaterialPage.page_no).all()
-    assets = {
-        asset.page_no: asset
-        for asset in db.query(MaterialPageAsset).filter(
-            MaterialPageAsset.material_id == material.id,
-            MaterialPageAsset.material_version_id == material.active_version_id,
-        ).all()
-    }
-    return {"items": [{
-        "id": row.id, "page_no": row.page_no, "page_type": row.page_type,
-        "parser_version": row.parser_version, "raw_text": row.raw_text or "",
-        "clean_text": row.clean_text or "", "removed_lines": row.decisions_json or "[]",
-        "blocks": row.blocks_json or "[]",
-        "page_asset": ({
-            "id": asset.id, "file_url": f"/api/v1/materials/page-assets/{asset.id}/file",
-            "width": asset.width, "height": asset.height, "dpi": asset.dpi,
-            "sha256": asset.sha256, "status": asset.render_status, "error_code": asset.error_code,
-        } if (asset := assets.get(row.page_no)) else None),
-    } for row in rows]}
+    return build_material_page_catalog(db, material)
 
 
 @router.delete(

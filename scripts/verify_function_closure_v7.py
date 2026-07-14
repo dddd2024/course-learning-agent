@@ -53,7 +53,10 @@ def run_command(cmd: list[str], cwd: Path | None = None, env: dict | None = None
         encoding="utf-8",
         errors="replace",
         env=merged_env,
-        timeout=300,
+        # The backend suite includes isolated parse-worker and document
+        # fixtures; allow it to finish instead of converting a healthy
+        # full-suite result into a false acceptance failure.
+        timeout=600,
     )
     output = result.stdout + result.stderr
     return result.returncode, output
@@ -189,6 +192,16 @@ def check_v7_multi_plan_lifecycle():
     return _run_pytest(str(BACKEND_DIR / "app" / "tests" / "test_v7_3_multi_plan_lifecycle.py"))
 
 
+@register_check("legacy_page_catalog_contract", "backend")
+def check_legacy_page_catalog_contract():
+    return _run_pytest(str(BACKEND_DIR / "app" / "tests" / "test_v7_5_2_legacy_page_catalog.py"))
+
+
+@register_check("existing_db_autoincrement_migration", "backend")
+def check_existing_db_autoincrement_migration():
+    return _run_pytest(str(BACKEND_DIR / "app" / "tests" / "test_v7_5_2_legacy_database_migration.py"))
+
+
 # ---------------------------------------------------------------------------
 # Frontend checks
 # ---------------------------------------------------------------------------
@@ -219,6 +232,7 @@ def check_frontend_build():
 # ---------------------------------------------------------------------------
 
 V7_E2E_IDS = [f"V7-E2E-{i:02d}" for i in range(1, 12)]
+AUDIT_E2E_IDS = ["P0-L01", "P0-L02", "P1-L03", "P2-L04"]
 
 
 @register_check("v7_e2e_scenarios", "e2e")
@@ -256,6 +270,9 @@ def check_v7_e2e(external_report: Path | None = None):
         found = any(eid in title for title in all_titles)
         if not found:
             missing.append(eid)
+    for eid in AUDIT_E2E_IDS:
+        if not any(eid in title for title in all_titles):
+            missing.append(eid)
 
     if missing:
         return False, f"Missing V7 E2E scenarios: {', '.join(missing)}"
@@ -292,7 +309,7 @@ def main():
     parser.add_argument("--external-e2e", type=Path, default=None, help="Pre-produced E2E report")
     args = parser.parse_args()
 
-    artifact_dir = Path(args.artifact_root) / "verification" / "v7"
+    artifact_dir = Path(args.artifact_root) / "verification" / "v7-audit-recovery"
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
     commit_sha = subprocess.run(
@@ -350,7 +367,7 @@ def main():
         "passed_checks": sum(1 for r in results if r["status"] == "pass"),
         "failed_checks": sum(1 for r in results if r["status"] != "pass"),
         "all_passed": all_passed,
-        "v7_e2e_scenarios": V7_E2E_IDS,
+        "v7_e2e_scenarios": V7_E2E_IDS + AUDIT_E2E_IDS,
         "checks": results,
     }
 

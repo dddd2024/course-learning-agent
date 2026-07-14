@@ -79,7 +79,7 @@ class TestExecutionStateValid:
         assert data["overall_status"] in ("in_progress", "verified_locally")
         assert "tasks" in data
         assert "local_closure" in data
-        assert data.get("remote_ci") in ("deferred_to_v7_6", "deferred_to_v1_1", None)
+        assert data.get("remote_ci") in ("deferred_to_v7_6", "deferred_to_v1_1", "required_before_release", "success", None)
 
     def test_corrupted_backup_exists(self):
         """The old corrupted file must be backed up."""

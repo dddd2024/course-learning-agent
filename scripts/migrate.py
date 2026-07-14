@@ -154,7 +154,9 @@ def main() -> int:
         output = json.dumps(stats, indent=2, default=str)
         print(output)
         if args.json:
-            Path(args.json).write_text(output, encoding="utf-8")
+            report_path = Path(args.json)
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(output, encoding="utf-8")
         return 0
 
     # ------------------------------------------------------------------
@@ -237,7 +239,9 @@ def main() -> int:
             "legacy_changed": legacy_changed,
             "errors": errors,
         }
-        Path(args.json).write_text(
+        report_path = Path(args.json)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
             json.dumps(result, indent=2, default=str),
             encoding="utf-8",
         )

@@ -26,6 +26,7 @@ from app.models.material import Material
 from app.models.material_page import MaterialPage
 from app.models.material_page_asset import MaterialPageAsset
 from app.retrieval.page_renderer import render_pdf_pages
+from app.services.material_page_catalog_service import resolve_expected_page_numbers
 
 logger = logging.getLogger(__name__)
 
@@ -80,42 +81,16 @@ def evaluate_page_asset_coverage(db: Session, material: Material) -> dict:
     version_id = material.active_version_id
     upload_dir = Path(settings.UPLOAD_DIR)
 
-    # 1. Determine expected page numbers
-    page_rows = (
-        db.query(MaterialPage.page_no)
-        .filter(MaterialPage.material_version_id == version_id)
-        .all()
-    )
-    expected_page_numbers = sorted({row[0] for row in page_rows if row[0]})
-
-    if not expected_page_numbers:
-        # Fallback: read PDF page count
-        source = upload_dir / material.file_path
-        if source.is_file():
-            try:
-                pdf = fitz.open(str(source))
-                expected_page_numbers = list(range(1, len(pdf) + 1))
-                pdf.close()
-            except Exception:
-                pass
-
-    if not expected_page_numbers:
-        # Last resort: use max page_no from existing assets
-        assets_for_pages = (
-            db.query(MaterialPageAsset.page_no)
-            .filter(MaterialPageAsset.material_version_id == version_id)
-            .all()
-        )
-        max_page = max((r[0] for r in assets_for_pages if r[0]), default=0)
-        if max_page > 0:
-            expected_page_numbers = list(range(1, max_page + 1))
+    # Keep reader, repair and readiness on the same active-version boundary.
+    facts = resolve_expected_page_numbers(db, material)
+    expected_page_numbers = facts["expected_page_numbers"]
 
     if not expected_page_numbers:
         return {
             "expected_pages": 0, "ready_pages": 0, "missing_pages": 0,
             "missing_page_numbers": [], "invalid_page_numbers": [],
             "duplicate_page_numbers": [], "extra_page_numbers": [],
-            "status": "missing",
+            "status": "missing", **facts,
         }
 
     expected_set = set(expected_page_numbers)
@@ -149,16 +124,14 @@ def evaluate_page_asset_coverage(db: Session, material: Material) -> dict:
 
     # 5. Compute missing and extra
     missing_page_numbers = sorted(expected_set - ready_page_numbers)
-    extra_page_numbers = sorted(
-        {a.page_no for a in assets if a.page_no and a.page_no not in expected_set}
-    )
+    extra_page_numbers = facts["extra_page_numbers"]
 
     # 6. Determine status — duplicates or invalid pages prevent 'ready'
     ready_pages = len(ready_page_numbers & expected_set)
     expected_pages = len(expected_page_numbers)
     missing_pages = expected_pages - ready_pages
 
-    has_issues = bool(duplicate_page_numbers or invalid_page_numbers)
+    has_issues = bool(duplicate_page_numbers or invalid_page_numbers or facts["invalid_page_numbers"])
     if missing_pages == 0 and not has_issues:
         status = "ready"
     elif ready_pages > 0:
@@ -167,6 +140,7 @@ def evaluate_page_asset_coverage(db: Session, material: Material) -> dict:
         status = "missing"
 
     return {
+        **facts,
         "expected_pages": expected_pages,
         "ready_pages": ready_pages,
         "missing_pages": missing_pages,
@@ -176,6 +150,38 @@ def evaluate_page_asset_coverage(db: Session, material: Material) -> dict:
         "extra_page_numbers": extra_page_numbers,
         "status": status,
     }
+
+
+def backfill_missing_material_pages(
+    db: Session, material: Material, *, page_numbers: list[int],
+) -> dict:
+    """Add durable placeholder pages for a legacy active version.
+
+    The caller owns the surrounding transaction.  This intentionally does not
+    overwrite parsed content and is idempotent across repair and migration
+    runs.
+    """
+    if not material.active_version_id:
+        return {"created": 0, "page_numbers": []}
+    wanted = sorted({number for number in page_numbers if number > 0})
+    existing = {
+        row[0]
+        for row in db.query(MaterialPage.page_no).filter(
+            MaterialPage.material_id == material.id,
+            MaterialPage.material_version_id == material.active_version_id,
+        ).all()
+    }
+    missing = [number for number in wanted if number not in existing]
+    for number in missing:
+        db.add(MaterialPage(
+            material_id=material.id,
+            material_version_id=material.active_version_id,
+            page_no=number,
+            page_type="unknown",
+            parser_version="legacy-page-catalog-backfill-v1",
+            raw_text="", clean_text="", blocks_json="[]", decisions_json="[]",
+        ))
+    return {"created": len(missing), "page_numbers": missing}
 
 
 # ── V7.5.2-03: Rebuild with compensation transaction ────────────────
@@ -329,22 +335,10 @@ def _do_rebuild(
 ) -> dict:
     """Inner rebuild logic with compensation at every failure point."""
 
-    # 1. Determine expected pages
-    page_rows = (
-        db.query(MaterialPage.page_no)
-        .filter(MaterialPage.material_version_id == version_id)
-        .all()
-    )
-    expected_page_numbers = sorted({row[0] for row in page_rows if row[0]})
+    # 1. Resolve the same reader boundary used by readiness and /pages.
+    expected_page_numbers = resolve_expected_page_numbers(db, material)["expected_page_numbers"]
     if not expected_page_numbers:
-        try:
-            pdf = fitz.open(str(source))
-            expected_page_numbers = list(range(1, len(pdf) + 1))
-            pdf.close()
-        except Exception:
-            return evaluate_page_asset_coverage(db, material)
-        if not expected_page_numbers:
-            return evaluate_page_asset_coverage(db, material)
+        return evaluate_page_asset_coverage(db, material)
 
     expected_pages = len(expected_page_numbers)
 
@@ -448,6 +442,9 @@ def _do_rebuild(
                 sha256=r.sha256,
                 render_status="ready",
             ))
+        backfill_missing_material_pages(
+            db, material, page_numbers=[rendered_page.page_no for rendered_page in rendered],
+        )
         db.flush()
         db.commit()
     except Exception as exc:

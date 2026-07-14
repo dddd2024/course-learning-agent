@@ -52,6 +52,7 @@ MIGRATION_MODULES = [
     "021_v7_4_3_reschedule_history",
     "022_v7_4_4_plan_task_identity",
     "023_v7_5_page_assets",
+    "024_v7_5_2_page_catalog_recovery",
 ]
 
 
