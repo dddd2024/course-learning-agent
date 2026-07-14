@@ -8,11 +8,20 @@ Safe classification rules:
 from __future__ import annotations
 
 import json
+import os
+import sys
+from pathlib import Path
 
-from backend.app.core.database import SessionLocal
-from backend.app.models.material import MaterialVersion
-from backend.app.models.material_chunk import MaterialChunk
-from backend.app.models.material_image import MaterialImage
+repo_root = Path(__file__).resolve().parent.parent
+backend_dir = repo_root / "backend"
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+os.chdir(backend_dir)
+
+from app.core.database import SessionLocal
+from app.models.material import MaterialVersion
+from app.models.material_chunk import MaterialChunk
+from app.models.material_image import MaterialImage
 
 
 def migrate() -> dict:
@@ -47,6 +56,7 @@ def migrate() -> dict:
                 image.material_version_id = target_version_id
                 if image.render_status == "quarantined":
                     image.render_status = "ready"
+                    image.error_code = None
             else:
                 image.render_status = "quarantined"
                 image.error_code = "LEGACY_IMAGE_VERSION_AMBIGUOUS"
