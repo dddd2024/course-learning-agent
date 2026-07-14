@@ -62,3 +62,11 @@ it also records observed-meta, repair, and LLM-call counters.
 Run the command twice against the same code SHA before claiming the real-model
 gate is complete. Do not create an RC tag until both runs, standard CI, and the
 Windows smoke evidence have passed.
+
+## R5 local evidence
+
+The R5 C1 SHA `d3425ecce8ad81984ca1d46187291baeac1ce81c` passed the standard
+closure check (22/22) and two isolated runs: `r5-c1-a9` and `r5-c1-b`. Each
+recorded 6/6 scenarios, five observed real-model calls, zero mock/fallback/
+degraded/missing-meta counts, and a passed local secret scan. These ignored
+local artifacts are evidence indexes only; they contain no credential values.
