@@ -1,4 +1,4 @@
-"""State-contract tests for the V7.5.2 RC blocker recovery round."""
+"""State-contract tests for the V7.5.2 RC blocker recovery rounds."""
 from __future__ import annotations
 
 import json
@@ -31,8 +31,11 @@ def test_v7_5_2_records_honest_current_state() -> None:
     state = _load_state()
 
     assert state["version"] == "v7.5.2"
-    assert state["base_commit"] == "a07b9332ac0a11ef53bd4e9081b845c1073da445"
-    assert state["branch"] == "codex/v7-5-2-r5-real-llm-hardening"
+    assert state["base_commit"] in {
+        "a07b9332ac0a11ef53bd4e9081b845c1073da445",
+        "4cd1d2d2bfe6db49f370f7cfa9a7cba15bb1ba84",
+    }
+    assert state["branch"].startswith("codex/v7-5-2-")
     assert state["overall_status"] in {"in_progress", "verified_locally"}
 
     if state["overall_status"] == "in_progress":
@@ -54,9 +57,16 @@ def test_failed_or_incomplete_gate_forces_in_progress() -> None:
     failed_gates = gate.get("failed_gates") or []
     not_run_gates = gate.get("not_run_gates") or []
 
-    has_failed_count = any(int(item.get("failed", 0)) > 0 for item in failed_gates)
+    has_failed_count = any(
+        isinstance(item, dict) and int(item.get("failed", 0)) > 0
+        for item in failed_gates
+    )
     local_pending_only = set(not_run_gates) <= {"remote_ci_verification"}
-    if gate.get("overall") != "success" or has_failed_count or (not_run_gates and not local_pending_only):
+    if (
+        gate.get("overall") != "success"
+        or has_failed_count
+        or (not_run_gates and not local_pending_only)
+    ):
         assert state["overall_status"] == "in_progress"
         assert state["local_closure"] is None
         assert state["release_candidate"] is None
@@ -78,21 +88,30 @@ def test_verified_locally_requires_every_release_gate() -> None:
     assert gate.get("overall") == "success"
     assert gate.get("failed_gates") == []
     assert set(gate.get("not_run_gates") or []) <= {"remote_ci_verification"}
-    required_local = REQUIRED_RELEASE_GATES - {"windows_launcher_smoke", "remote_ci_verification"}
+    required_local = REQUIRED_RELEASE_GATES - {
+        "windows_launcher_smoke",
+        "remote_ci_verification",
+    }
     assert required_local.issubset(set(gate.get("passed_gates") or []))
-    assert all(task["status"] in {"done", "superseded"} for task in state["tasks"].values())
+    assert all(
+        task["status"] in {"done", "superseded"}
+        for task in state["tasks"].values()
+    )
     assert state["remote_ci"] in {"pending", "success"}
     assert state["closure_evidence"]["tested_code_sha"] == gate["commit_sha"]
     assert len(state["closure_evidence"]["real_llm_runs"]) == 2
 
 
-def test_done_tasks_have_test_evidence() -> None:
+def test_done_tasks_have_complete_evidence() -> None:
     state = _load_state()
     for task_id, task in state["tasks"].items():
         if task["status"] == "done":
             assert task["tests_run"], (
                 f"Task {task_id} is done but has empty tests_run; "
                 "release evidence cannot be bypassed"
+            )
+            assert task.get("remaining") == [], (
+                f"Task {task_id} is done but still names remaining work"
             )
 
 
