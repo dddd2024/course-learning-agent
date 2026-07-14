@@ -1,26 +1,23 @@
 {
-  "version": "v7.5.2",
-  "base_commit": "fd5198b63e25b869b3a31fb0e7178b9c02f3c294",
-  "branch": "codex/v7-5-2-rc-blocker-fix",
-  "started_at": "2026-07-14T00:00:00+08:00",
-  "overall_status": "verified_locally",
-  "current_task": null,
-  "local_closure": "V7.5.2_RC_BLOCKERS_CLOSED_LOCALLY",
-  "closure_evidence": {
-    "timestamp": "2026-07-14T09:30:00+08:00",
-    "backend_tests": "890 passed",
-    "frontend_build": "passed",
-    "e2e_config": "isolated (CLEAN_E2E_DB, dedicated database + upload dir)"
-  },
-  "release_candidate": "v1.0.0-rc3",
+  "version": "v7.5.3",
+  "base_commit": "b7facf8b891468010d88cf171497934763a12b77",
+  "branch": "codex/v7-5-3-rc3-audit-closure",
+  "started_at": "2026-07-14T11:30:00+08:00",
+  "overall_status": "in_progress",
+  "current_task": "V7.5.3-00",
+  "local_closure": null,
+  "closure_evidence": null,
+  "release_candidate": null,
   "remote_ci": "deferred_to_v1_1",
-  "audit_blockers": [],
-  "resolved_blockers": [
-    "new_version_image_binding",
-    "page_asset_expected_page_coverage",
-    "page_asset_db_fs_compensation",
-    "e2e_environment_isolation"
+  "audit_blockers": [
+    "e2e_real_service_reuse",
+    "e2e_non_unique_environment",
+    "page_asset_recovery_outside_lock",
+    "page_asset_recovery_db_fs_ambiguity",
+    "page_asset_lock_ownership",
+    "missing_executed_e2e_evidence"
   ],
+  "resolved_blockers": [],
   "deferred_to_v1_1": [
     "remote_ci",
     "cross_platform_evidence",
@@ -29,92 +26,79 @@
     "advanced_document_layout"
   ],
   "tasks": {
-    "V7.5.2-00": {
+    "V7.5.3-00": {
       "status": "done",
       "changed_files": [
         "docs/engineering/v7-execution-state.json",
-        "docs/engineering/v7-5-2-scope.md",
-        "backend/app/tests/test_v7_5_2_execution_state.py"
+        "docs/engineering/v7-5-3-scope.md",
+        "backend/app/tests/test_v7_5_3_execution_state.py"
       ],
-      "tests_run": ["test_v7_5_2_execution_state.py"],
-      "remaining": [],
-      "next_task": "V7.5.2-01",
+      "tests_run": [],
+      "remaining": ["run state-contract tests"],
+      "next_task": "V7.5.3-01",
+      "commits": ["9b082f9680b831405ec128cdc9c85ac79bc39b7c"]
+    },
+    "V7.5.3-01": {
+      "status": "pending",
+      "changed_files": [],
+      "tests_run": [],
+      "remaining": ["implement isolated non-reusable E2E runtime"],
+      "next_task": "V7.5.3-02",
       "commits": []
     },
-    "V7.5.2-01": {
-      "status": "done",
-      "changed_files": [
-        "backend/app/services/material_image_service.py",
-        "backend/app/services/material_parser.py",
-        "backend/app/tests/test_v7_5_2_versioned_image_parse.py",
-        "backend/app/tests/test_v7_5_0_document_fidelity.py",
-        "backend/app/tests/test_v7_document_ir_pipeline.py"
-      ],
-      "tests_run": ["test_v7_5_2_versioned_image_parse.py"],
-      "remaining": [],
-      "next_task": "V7.5.2-02",
+    "V7.5.3-02": {
+      "status": "pending",
+      "changed_files": [],
+      "tests_run": [],
+      "remaining": ["move recovery under owned lock and use manifests"],
+      "next_task": "V7.5.3-03",
       "commits": []
     },
-    "V7.5.2-02": {
-      "status": "done",
-      "changed_files": [
-        "backend/app/services/material_page_asset_service.py",
-        "backend/app/tests/test_v7_5_2_page_asset_integrity.py"
-      ],
-      "tests_run": ["test_v7_5_2_page_asset_integrity.py"],
-      "remaining": [],
-      "next_task": "V7.5.2-03",
+    "V7.5.3-03": {
+      "status": "pending",
+      "changed_files": [],
+      "tests_run": [],
+      "remaining": ["add SHA-bound executable release gate"],
+      "next_task": "V7.5.3-04",
       "commits": []
     },
-    "V7.5.2-03": {
-      "status": "done",
-      "changed_files": [
-        "backend/app/services/material_page_asset_service.py",
-        "backend/app/tests/test_v7_5_2_page_asset_transaction.py"
-      ],
-      "tests_run": ["test_v7_5_2_page_asset_transaction.py"],
-      "remaining": [],
-      "next_task": "V7.5.2-04",
+    "V7.5.3-04": {
+      "status": "pending",
+      "changed_files": [],
+      "tests_run": [],
+      "remaining": ["migrate or quarantine NULL-version images"],
+      "next_task": "V7.5.3-05",
       "commits": []
     },
-    "V7.5.2-04": {
-      "status": "done",
-      "changed_files": [
-        "frontend/playwright.config.ts"
-      ],
-      "tests_run": ["playwright.config.ts isolation review"],
-      "remaining": [],
-      "next_task": "V7.5.2-05",
+    "V7.5.3-05": {
+      "status": "pending",
+      "changed_files": [],
+      "tests_run": [],
+      "remaining": ["replace six skippable E2E paths"],
+      "next_task": "V7.5.3-06",
       "commits": []
     },
-    "V7.5.2-05": {
-      "status": "done",
-      "changed_files": [
-        "frontend/tests/e2e/v7-5-2-user-paths.spec.ts"
-      ],
-      "tests_run": ["v7-5-2-user-paths.spec.ts strengthened assertions review"],
-      "remaining": [],
-      "next_task": "V7.5.2-06",
+    "V7.5.3-06": {
+      "status": "pending",
+      "changed_files": [],
+      "tests_run": [],
+      "remaining": ["add real embedded-image full reparse tests"],
+      "next_task": "V7.5.3-07",
       "commits": []
     },
-    "V7.5.2-06": {
-      "status": "done",
-      "changed_files": [
-        "frontend/src/components/document/PageCanvas.vue",
-        "backend/app/tests/test_v7_5_2_page_edge_cases.py"
-      ],
-      "tests_run": ["test_v7_5_2_page_edge_cases.py"],
-      "remaining": [],
-      "next_task": "V7.5.2-07",
+    "V7.5.3-07": {
+      "status": "pending",
+      "changed_files": [],
+      "tests_run": [],
+      "remaining": ["add page retry and Object URL cleanup"],
+      "next_task": "V7.5.3-08",
       "commits": []
     },
-    "V7.5.2-07": {
-      "status": "done",
-      "changed_files": [
-        "docs/engineering/v7-execution-state.json"
-      ],
-      "tests_run": ["full suite: 890 passed"],
-      "remaining": [],
+    "V7.5.3-08": {
+      "status": "pending",
+      "changed_files": [],
+      "tests_run": [],
+      "remaining": ["run clean-SHA release gate and review evidence"],
       "next_task": null,
       "commits": []
     }
