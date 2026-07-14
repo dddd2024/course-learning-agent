@@ -61,11 +61,18 @@
         "backend/app/tests/test_v7_5_2_execution_state.py"
       ],
       "tests_run": [
-        "python -m pytest backend/app/tests/test_v7_5_2_execution_state.py -q"
+        "python -m pytest backend/app/tests/test_v7_5_2_execution_state.py -q: 5 passed"
       ],
       "remaining": [],
       "next_task": "V7.5.2-04",
-      "commits": []
+      "commits": [
+        "3363c6a7ebbccd5d0b1de2cdb2720eb8f0389d44",
+        "276af68358fc1def0d5c55bddd2443bd6345a6e9",
+        "639d26818a50572b6a38e9a36acc36e7313a333b",
+        "ce12ed47d2ee3605120790a6df681edc370664e1",
+        "cdb94afc14da7ed3d6b0d60464028752df75f6d4",
+        "2baf49470ed5a116f2d74f7a7df41a51c5f8328a"
+      ]
     },
     "V7.5.2-01": {
       "status": "done",
