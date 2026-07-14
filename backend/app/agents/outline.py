@@ -15,6 +15,7 @@ The agent:
 """
 from __future__ import annotations
 
+import json
 import re
 from collections import defaultdict
 from typing import Any
@@ -362,7 +363,20 @@ def _reconcile_chunk_ids(
     every available chunk turns an ungrounded answer into fabricated evidence.
     """
     valid_set = set(valid_ids)
-    matched = [cid for cid in (raw_ids or []) if cid in valid_set]
+    # OpenAI-compatible providers frequently serialize numeric JSON values as
+    # strings. Canonicalising an exact decimal representation back to an
+    # existing database id preserves the model's evidence binding; it does not
+    # add a source or widen the evidence set.
+    canonical_ids = {str(value): value for value in valid_set}
+    matched: list = []
+    for raw_id in raw_ids or []:
+        raw_text = str(raw_id).strip()
+        label_match = re.fullmatch(r"chunk_id\s*[=_]\s*(\d+)", raw_text, re.IGNORECASE)
+        candidate = raw_id if raw_id in valid_set else canonical_ids.get(
+            label_match.group(1) if label_match else raw_text
+        )
+        if candidate in valid_set and candidate not in matched:
+            matched.append(candidate)
     return matched
 
 
@@ -419,6 +433,76 @@ def _fetch_chunks(db: Session, course_id: int) -> list[dict]:
         }
         for c in sampled
     ]
+
+
+class OutlineContractError(RuntimeError):
+    """Raised when a real outline cannot satisfy the minimum evidence contract."""
+
+
+def evaluate_outline_contract(points: list[dict], source_chunks: list[dict]) -> dict[str, int | bool]:
+    """Evaluate the output contract without inventing or splitting concepts."""
+    valid_ids = {chunk.get("chunk_id") for chunk in source_chunks}
+    titles: list[str] = []
+    missing_source_count = 0
+    source_ids: set[Any] = set()
+    for point in points:
+        title = _normalize_title(_clean_title(str(point.get("title") or "")))
+        sources = point.get("source_chunk_ids") or []
+        matched = [source for source in sources if source in valid_ids]
+        if not title or not _is_valid_concept_title(title) or not matched:
+            missing_source_count += 1
+            continue
+        titles.append(re.sub(r"^[\d.、\-\s]+", "", title).strip().lower())
+        source_ids.update(matched)
+    duplicate_title_count = len(titles) - len(set(titles))
+    valid_count = len(titles)
+    return {
+        "valid_count": valid_count,
+        "missing_source_count": missing_source_count,
+        "duplicate_title_count": duplicate_title_count,
+        "distinct_source_count": len(source_ids),
+        "passed": valid_count >= 2 and missing_source_count == 0 and duplicate_title_count == 0,
+    }
+
+
+def _repair_results(raw_points: list[dict], chunks: list[dict]) -> list[dict[str, Any]]:
+    """Apply the same validation pipeline to a model-provided repair output."""
+    valid_chunk_ids = [chunk["chunk_id"] for chunk in chunks]
+    results: list[dict[str, Any]] = []
+    seen_titles: set[str] = set()
+    for point in raw_points:
+        title = _normalize_title(_clean_title(point.get("title", "")))
+        summary = _clean_text(point.get("summary", ""))
+        if (not title or title in _TOO_BROAD_TITLES or not _is_valid_concept_title(title)
+                or title in seen_titles):
+            continue
+        source_ids = _reconcile_chunk_ids(point.get("source_chunk_ids", []), valid_chunk_ids)
+        if not source_ids:
+            continue
+        seen_titles.add(title)
+        try:
+            llm_importance = int(point.get("importance", 3))
+        except (TypeError, ValueError):
+            llm_importance = 3
+        results.append({
+            "title": title,
+            "summary": summary,
+            "importance": calculate_importance(llm_importance, title, source_ids, chunks),
+            "source_chunk_ids": source_ids,
+            "exam_style": point.get("exam_style", ""),
+            "review_action": point.get("review_action", ""),
+        })
+    return _cluster_merge_titles(results)
+
+
+def _is_observed_real_meta(meta: dict[str, Any]) -> bool:
+    return (
+        meta.get("meta_observed") is True
+        and str(meta.get("actual_provider") or "").strip() not in {"", "mock", "unknown"}
+        and bool(str(meta.get("actual_model") or "").strip())
+        and meta.get("fallback_used") is False
+        and meta.get("degraded") is False
+    )
 
 
 def generate(
@@ -531,6 +615,55 @@ def generate(
     # all merge into the shortest representative: "RDT2.0"
     results = _cluster_merge_titles(results)
 
+    initial_contract = evaluate_outline_contract(results, chunks)
+    meta = dict(meta)
+    meta["initial_contract"] = initial_contract
+    meta["repair_attempted"] = False
+    meta["repair_success"] = False
+    meta["llm_call_count"] = 1
+    if not initial_contract["passed"] and _is_observed_real_meta(meta):
+        repair_template = load_prompt("outline_repair")
+        repair_prompt = repair_template.format(
+            course_name=course_name,
+            retrieved_chunks=_format_chunks(chunks),
+            original_output=json.dumps(output, ensure_ascii=False),
+            failure_reason=(
+                f"valid_count={initial_contract['valid_count']}, "
+                f"missing_source_count={initial_contract['missing_source_count']}, "
+                f"duplicate_title_count={initial_contract['duplicate_title_count']}"
+            ),
+        )
+        repair_output, repair_meta = call_llm_with_meta(
+            repair_prompt, agent_type="outline", user_config=user_config
+        )
+        repair_results = _repair_results(repair_output.get("knowledge_points", []), chunks)
+        repair_contract = evaluate_outline_contract(repair_results, chunks)
+        meta.update({
+            "repair_attempted": True,
+            "repair_success": bool(repair_contract["passed"] and _is_observed_real_meta(repair_meta)),
+            "repair_contract": repair_contract,
+            "repair_provider": repair_meta.get("actual_provider"),
+            "repair_model": repair_meta.get("actual_model"),
+            "repair_fallback_used": repair_meta.get("fallback_used"),
+            "llm_call_count": 2,
+        })
+        if not _is_observed_real_meta(repair_meta):
+            meta.update({
+                "actual_provider": repair_meta.get("actual_provider"),
+                "actual_model": repair_meta.get("actual_model"),
+                "fallback_used": repair_meta.get("fallback_used"),
+                "degraded": True,
+            })
+            raise OutlineContractError("OUTLINE_REPAIR_REAL_META_REQUIRED")
+        if not repair_contract["passed"]:
+            raise OutlineContractError(
+                "OUTLINE_REPAIR_CONTRACT_FAILED:"
+                f"valid_count={repair_contract['valid_count']},"
+                f"missing_source_count={repair_contract['missing_source_count']},"
+                f"duplicate_title_count={repair_contract['duplicate_title_count']}"
+            )
+        results = repair_results
+
     if return_meta:
         return results, meta
     return results
@@ -577,8 +710,16 @@ def _cluster_merge_titles(
     used: set[int] = set()
 
     for root, indices in groups.items():
-        # Only merge groups with 3+ members
-        if len(indices) < 3:
+        # Only merge tightly related sub-topics.  A shared broad prefix can
+        # legitimately cover different source sections (for example CRC,
+        # stop-and-wait, and sliding-window under a data-link-layer heading);
+        # collapsing those would destroy independently grounded concepts.
+        distinct_sources = {
+            source_id
+            for i in indices
+            for source_id in results[i].get("source_chunk_ids", [])
+        }
+        if len(indices) < 3 or len(distinct_sources) >= 2:
             for i in indices:
                 if i not in used:
                     merged.append(results[i])

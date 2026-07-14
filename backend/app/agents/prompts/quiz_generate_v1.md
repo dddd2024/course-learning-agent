@@ -41,7 +41,8 @@ CONTRACT_JSON_END
       "explanation": "答案解析",
       "rubric": [],
       "knowledge_point_ids": ["kp_1"],
-      "source_chunk_ids": ["chunk_id_1"]
+      "source_chunk_ids": [1],
+      "source_evidence": [{{"chunk_id": 1, "quote_text": "资料中的原文短句"}}]
     }}
   ]
 }}
@@ -56,7 +57,8 @@ CONTRACT_JSON_END
 - `explanation`：解析，说明为何此答案正确。
 - `rubric`：仅简答题填写 2-4 个评分要点，每项为 `{{"criterion":"要点说明","keywords":["可匹配关键词"]}}`；选择题和判断题填空数组。关键词必须来自参考答案或资料，不得凭空扩展。
 - `knowledge_point_ids`：关联知识点 ID 数组。
-- `source_chunk_ids`：来源片段 ID 数组，不得伪造。
+- `source_chunk_ids`：来源片段 ID 数组，必须使用资料中显示的数字 ID，不得伪造。
+- `source_evidence`：每题至少一项，包含相同的数字 `chunk_id` 和该资料片段中的简短原文 `quote_text`；没有可逐字引用的原文时不要出题。
 
 ## 出题原则
 - 题目必须基于资料片段，不得超纲。

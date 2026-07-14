@@ -249,6 +249,9 @@ def answer_question(
     # T05: attach provider/fallback info so chat_service can surface it
     # to the frontend via ChatResult.provider / fallback_used.
     output["provider"] = llm_meta["provider"]
+    output["actual_provider"] = llm_meta.get("actual_provider")
+    output["model_name"] = llm_meta.get("actual_model")
+    output["meta_observed"] = llm_meta.get("meta_observed") is True
     output["fallback_used"] = llm_meta["fallback_used"]
     output["fallback_reason"] = llm_meta["fallback_reason"]
     _ensure_fields(output)

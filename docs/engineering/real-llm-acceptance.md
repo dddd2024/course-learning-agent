@@ -29,13 +29,18 @@ collide. It never accesses a regular user database or stored configuration.
 
 ## Strict success criteria
 
-Every audited agent execution must report a non-mock provider, a non-empty
-model identity, `fallback_used=false`, and `degraded=false`. A connection
+Every audited agent execution must report `meta_observed=true`, a non-mock
+actual provider, a non-empty actual model identity, `fallback_used=false`, and
+`degraded=false`. A connection
 failure, timeout, non-JSON provider response, schema-invalid answer, or any
 fallback causes a non-zero exit code. The six covered paths are config
 connection, knowledge points, grounded chat, quiz plus weak point, learning
-plan, and material overview; the chat path also checks an out-of-scope question
-does not create a citation.
+plan, and material overview. The knowledge-point path requires at least two
+source-bound points; a structurally weak first real response receives exactly
+one same-model repair request, never a rule-generated replacement. The chat
+path requires an out-of-scope answer to have no citations and explicitly state
+insufficient evidence. The plan path requires at least one task bound to the
+fixture material and course.
 
 Each run writes the following under
 `artifacts/verification/real-llm/<run-id>/`:
@@ -48,6 +53,11 @@ Each run writes the following under
 
 Only the provider, scheme/host, model, statuses and timings are retained. API
 keys, authorization headers, response bodies and fallback text are redacted.
+Artifacts are first written to a temporary directory, then recursively scanned
+for raw, URL-encoded, JSON-escaped, and common header/assignment secret forms.
+Only a passed scan is atomically moved into the final artifact directory. The
+summary records `secret_scan.files_scanned`, `patterns_checked`, and `matches`;
+it also records observed-meta, repair, and LLM-call counters.
 
 Run the command twice against the same code SHA before claiming the real-model
 gate is complete. Do not create an RC tag until both runs, standard CI, and the

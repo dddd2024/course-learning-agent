@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from datetime import datetime
 from typing import Any
@@ -339,8 +340,9 @@ def _process_llm_output(
     all_evidence_ids: set[int] = set()
     for q in output.get("questions", []):
         for raw_id in q.get("source_chunk_ids", []):
-            if str(raw_id).isdigit():
-                all_evidence_ids.add(int(raw_id))
+            parsed = _canonical_chunk_id(raw_id)
+            if parsed is not None:
+                all_evidence_ids.add(parsed)
     chunk_rows: list = []
     if all_evidence_ids:
         chunk_rows = (
@@ -384,15 +386,16 @@ def _process_llm_output(
         # Filter source_evidence to only include entries whose chunk_id is
         # in the valid evidence_ids set.
         valid_eid_set = set(evidence_ids)
-        filtered_source_evidence = [
-            {
-                "chunk_id": ev.get("chunk_id"),
-                "quote_text": ev.get("quote_text", ""),
-            }
-            for ev in source_evidence
-            if isinstance(ev, dict)
-            and ev.get("chunk_id") in valid_eid_set
-        ]
+        filtered_source_evidence = []
+        for ev in source_evidence:
+            if not isinstance(ev, dict):
+                continue
+            chunk_id = _canonical_chunk_id(ev.get("chunk_id"))
+            if chunk_id in valid_eid_set:
+                filtered_source_evidence.append({
+                    "chunk_id": chunk_id,
+                    "quote_text": ev.get("quote_text", ""),
+                })
 
         # V6-31: drop items that have no source_evidence after filtering.
         if not filtered_source_evidence:
@@ -686,8 +689,17 @@ def _valid_evidence_ids(db: Session, course_id: int, raw_ids: list, points: list
     valid = {r[0] for r in db.query(MaterialChunk.id).filter(
         MaterialChunk.course_id == course_id, MaterialChunk.is_active == 1
     )}
-    selected = [int(x) for x in raw_ids if str(x).isdigit() and int(x) in valid]
+    selected = [parsed for x in raw_ids if (parsed := _canonical_chunk_id(x)) in valid]
     return selected[:5]
+
+
+def _canonical_chunk_id(value: Any) -> int | None:
+    """Parse only exact numeric or prompt-labelled chunk identifiers."""
+    if isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    match = re.fullmatch(r"(?:chunk_id\s*[=_]\s*)?(\d+)", text, re.IGNORECASE)
+    return int(match.group(1)) if match else None
 
 
 def _format_evidence(db: Session, points: list[KnowledgePoint]) -> str:

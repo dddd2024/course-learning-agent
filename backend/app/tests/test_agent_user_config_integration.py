@@ -99,13 +99,21 @@ def _outline_response() -> dict:
     return {
         "knowledge_points": [
             {
-                "title": "知识点1",
+                "title": "快表地址转换",
                 "summary": "...",
                 "importance": 3,
-                "source_chunk_ids": ["chunk_1"],
+                "source_chunk_ids": [1],
                 "exam_style": "简答题",
                 "review_action": "复习",
-            }
+            },
+            {
+                "title": "页表映射关系",
+                "summary": "...",
+                "importance": 3,
+                "source_chunk_ids": [1],
+                "exam_style": "简答题",
+                "review_action": "复习",
+            },
         ]
     }
 
@@ -172,6 +180,15 @@ def test_chat_uses_user_config_when_active(
     assert user_config["base_url"] == LLM_CONFIG_PAYLOAD["base_url"]
     assert user_config["model"] == LLM_CONFIG_PAYLOAD["model"]
     assert user_config["api_key"] == PLAINTEXT_KEY
+    db = _get_db_session()
+    try:
+        run = db.query(AgentRun).filter(AgentRun.run_type == "course_qa").order_by(AgentRun.id.desc()).first()
+        assert run is not None
+        assert run.actual_provider == "user"
+        assert run.actual_model == LLM_CONFIG_PAYLOAD["model"]
+        assert run.fallback_used == 0
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------

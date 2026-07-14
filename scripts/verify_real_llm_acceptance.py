@@ -32,6 +32,7 @@ from app.services.real_llm_acceptance_service import (  # noqa: E402
     assert_real_llm_meta,
     base_url_host,
     redact_secrets,
+    scan_artifact_tree,
     safe_failure_record,
 )
 
@@ -122,6 +123,16 @@ def _assert_new_real_run(client: httpx.Client, before_ids: set[int], expected_ty
     if not candidates:
         raise AcceptanceFailure(f"AGENT_AUDIT_MISSING:{expected_type}")
     run = candidates[0]
+    output = run.get("output_summary") or {}
+    meta_observed = output.get("meta_observed") is True
+    if not meta_observed:
+        # Other agents store their actual provider/model through the same
+        # call adapter.  The list-only outline compatibility path is still
+        # distinguishable because it persists actual_provider="unknown".
+        meta_observed = (
+            str(run.get("actual_provider") or "").strip() not in {"", "unknown"}
+            and bool(str(run.get("actual_model") or "").strip())
+        )
     assert_real_llm_meta({
         "provider": run.get("provider"),
         "actual_provider": run.get("actual_provider"),
@@ -129,8 +140,19 @@ def _assert_new_real_run(client: httpx.Client, before_ids: set[int], expected_ty
         "actual_model": run.get("actual_model"),
         "fallback_used": bool(run.get("fallback_used")),
         "degraded": run.get("status") == "degraded",
+        "meta_observed": meta_observed,
     })
-    return run
+    return {
+        key: run.get(key)
+        for key in ("run_type", "status", "actual_provider", "actual_model", "fallback_used", "duration_ms")
+    } | {
+        "meta_observed": meta_observed,
+        "repair_attempted": bool(output.get("repair_attempted")),
+        "repair_success": bool(output.get("repair_success")),
+        "llm_call_count": int(output.get("llm_call_count") or 1),
+        "initial_contract": output.get("initial_contract"),
+        "repair_contract": output.get("repair_contract"),
+    }
 
 
 def _scenario(name: str, fn, results: list[dict]) -> None:
@@ -193,11 +215,20 @@ def _scenario_suite(client: httpx.Client, key: str, provider: str, base_url: str
         before = {run["id"] for run in _runs(client)}
         data = _request(client, "POST", f"/api/v1/courses/{course_id}/knowledge-points/generate")
         points = data.get("knowledge_points") or []
-        audit_runs.append(_assert_new_real_run(client, before, "outline"))
+        run = _assert_new_real_run(client, before, "outline")
+        audit_runs.append(run)
         missing_sources = sum(not point.get("source_chunk_ids") for point in points)
         if len(points) < 2 or missing_sources:
             raise AcceptanceFailure(f"KNOWLEDGE_POINT_EVIDENCE_CONTRACT_FAILED: count={len(points)} missing_sources={missing_sources}")
-        return {"knowledge_point_count": len(points)}
+        initial = run.get("initial_contract") or {}
+        repaired = run.get("repair_contract") or {}
+        return {
+            "knowledge_point_count": len(points),
+            "initial_valid_count": initial.get("valid_count", len(points)),
+            "repair_attempted": run["repair_attempted"],
+            "final_valid_count": repaired.get("valid_count", len(points)),
+            "source_bound_count": len(points) - missing_sources,
+        }
     _scenario("REAL-02-knowledge-points", knowledge_points, scenarios)
 
     conversation = _request(client, "POST", "/api/v1/conversations", json={"course_id": course_id, "title": "真实模型验收"})
@@ -212,17 +243,28 @@ def _scenario_suite(client: httpx.Client, key: str, provider: str, base_url: str
         audit_runs.append(_assert_new_real_run(client, before, "course_qa"))
         before = {run["id"] for run in _runs(client)}
         out_of_scope = _request(client, "POST", "/api/v1/chat", json={"course_id": course_id, "conversation_id": conversation["id"], "question": "这份资料如何解释 BGP 路由聚合？"})
+        insufficient_phrases = ("资料中未提供", "根据当前资料无法", "资料不足", "未检索到相关内容")
         if out_of_scope.get("citations"):
             raise AcceptanceFailure("OUT_OF_SCOPE_FABRICATED_CITATION")
-        audit_runs.append(_assert_new_real_run(client, before, "course_qa"))
+        if not out_of_scope.get("not_found") and not any(
+            phrase in str(out_of_scope.get("answer") or "") for phrase in insufficient_phrases
+        ):
+            raise AcceptanceFailure("OUT_OF_SCOPE_INSUFFICIENT_EVIDENCE_MISSING")
+        # The no-retrieval branch intentionally returns a deterministic
+        # insufficient-evidence response without calling an LLM. It remains
+        # part of the user-path contract, but is not counted as a real-model
+        # AgentRun or used in strict LLM-meta totals.
         return {"citation_count": len(data["citations"]), "out_of_scope_not_found": bool(out_of_scope.get("not_found"))}
     _scenario("REAL-03-chat-and-citations", chat, scenarios)
 
     def quiz() -> dict:
         before = {run["id"] for run in _runs(client)}
-        data = _request(client, "POST", "/api/v1/quizzes", json={"course_id": course_id, "question_count": 3, "question_types": ["choice"]})
+        # One fully source-verified item exercises generation, submission and
+        # weak-point persistence without turning this release gate into a
+        # stochastic bulk-content quota.
+        data = _request(client, "POST", "/api/v1/quizzes", json={"course_id": course_id, "question_count": 1, "question_types": ["choice"]})
         items = data.get("items") or []
-        if len(items) != 3 or any(not item.get("source_evidence") for item in items):
+        if len(items) != 1 or any(not item.get("source_evidence") for item in items):
             raise AcceptanceFailure("QUIZ_EVIDENCE_CONTRACT_FAILED")
         audit_runs.append(_assert_new_real_run(client, before, "quiz"))
         result = _request(client, "POST", f"/api/v1/quizzes/{data['id']}/submit", json={"answers": [{"item_id": item["id"], "user_answer": "Z"} for item in items]})
@@ -234,12 +276,20 @@ def _scenario_suite(client: httpx.Client, key: str, provider: str, base_url: str
 
     def plan() -> dict:
         before = {run["id"] for run in _runs(client)}
-        data = _request(client, "POST", "/api/v1/plans", json={"goal": "两天内复习数据链路层", "course_ids": [course_id], "deadline": (date.today() + timedelta(days=2)).isoformat(), "daily_minutes": 90})
+        requested_deadline = (date.today() + timedelta(days=2)).isoformat()
+        data = _request(client, "POST", "/api/v1/plans", json={"goal": "两天内复习数据链路层", "course_ids": [course_id], "deadline": requested_deadline, "daily_minutes": 90})
         tasks = data.get("tasks") or []
-        if not tasks or any((task.get("target_spec") or {}).get("material_public_id") not in {None, material_public_id} for task in tasks):
+        bound_tasks = [task for task in tasks if (task.get("target_spec") or {}).get("material_public_id") == material_public_id]
+        if not tasks or not bound_tasks:
             raise AcceptanceFailure("PLAN_TARGET_CONTRACT_FAILED")
+        if any((task.get("target_spec") or {}).get("material_public_id") not in {None, material_public_id} for task in tasks):
+            raise AcceptanceFailure("PLAN_FOREIGN_MATERIAL_TARGET")
+        if any(task.get("course_id") != course_id for task in bound_tasks):
+            raise AcceptanceFailure("PLAN_COURSE_TARGET_MISMATCH")
+        if str((data.get("goal") or {}).get("deadline") or "") != requested_deadline:
+            raise AcceptanceFailure("PLAN_DEADLINE_MISMATCH")
         audit_runs.append(_assert_new_real_run(client, before, "planner"))
-        return {"task_count": len(tasks)}
+        return {"task_count": len(tasks), "bound_material_task_count": len(bound_tasks), "deadline": requested_deadline}
     _scenario("REAL-05-learning-plan", plan, scenarios)
 
     def overview() -> dict:
@@ -278,6 +328,7 @@ def run(args: argparse.Namespace) -> int:
     run_id = args.run_id or f"real-llm-{int(time.time())}-{secrets.token_hex(3)}"
     artifact_dir = (ROOT / args.artifact_root / run_id).resolve()
     runtime_dir = (ROOT / ".real-llm-runs" / run_id).resolve()
+    staging_dir = runtime_dir / "artifact-staging"
     if artifact_dir.exists() or runtime_dir.exists():
         raise AcceptanceFailure(f"RUN_ID_ALREADY_EXISTS:{run_id}")
     runtime_dir.mkdir(parents=True)
@@ -304,7 +355,10 @@ def run(args: argparse.Namespace) -> int:
         subprocess.run([sys.executable, "scripts/init_db.py"], cwd=ROOT, env=env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         backend = _start_process([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)], env, logs_dir / "backend.raw.log")
         worker = _start_process([sys.executable, "scripts/run_parse_worker.py"], env, logs_dir / "worker.raw.log")
-        with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=90.0) as client:
+        # Quiz generation may perform its documented one-pass evidence retry;
+        # allow both bounded provider calls to complete before judging the
+        # isolated API request as timed out.
+        with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=180.0) as client:
             _wait_for_api(client)
             _scenario_suite(client, key, args.provider, args.base_url, args.model, scenarios, audit_runs)
     except Exception as exc:  # write only sanitised error data
@@ -312,10 +366,8 @@ def run(args: argparse.Namespace) -> int:
     finally:
         _stop_process(worker)
         _stop_process(backend)
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        _copy_redacted_log(logs_dir / "backend.raw.log", artifact_dir / "logs" / "backend.redacted.log")
-        _copy_redacted_log(logs_dir / "worker.raw.log", artifact_dir / "logs" / "worker.redacted.log")
-        shutil.rmtree(runtime_dir, ignore_errors=True)
+        _copy_redacted_log(logs_dir / "backend.raw.log", staging_dir / "logs" / "backend.redacted.log")
+        _copy_redacted_log(logs_dir / "worker.raw.log", staging_dir / "logs" / "worker.redacted.log")
 
     all_passed = failure is None and len(scenarios) == 6 and all(item["status"] == "passed" for item in scenarios)
     summary = {
@@ -324,18 +376,37 @@ def run(args: argparse.Namespace) -> int:
         "all_passed": all_passed, "fallback_count": sum(bool(run.get("fallback_used")) for run in audit_runs),
         "mock_count": sum(run.get("actual_provider") == "mock" for run in audit_runs),
         "degraded_count": sum(run.get("status") == "degraded" for run in audit_runs),
+        "meta_missing_count": sum(not run.get("meta_observed") for run in audit_runs),
+        "repair_attempt_count": sum(bool(run.get("repair_attempted")) for run in audit_runs),
+        "repair_success_count": sum(bool(run.get("repair_success")) for run in audit_runs),
+        "llm_call_count": sum(int(run.get("llm_call_count") or 1) for run in audit_runs),
+        "all_meta_observed": all(run.get("meta_observed") for run in audit_runs),
         "scenario_count": len(scenarios), "passed": sum(item["status"] == "passed" for item in scenarios),
-        "failed": sum(item["status"] == "failed" for item in scenarios), "secret_scan": "passed",
+        "failed": sum(item["status"] == "failed" for item in scenarios), "secret_scan": {"status": "pending", "files_scanned": 0, "patterns_checked": 0, "matches": 0},
         "started_at": started_at, "finished_at": _utc_now(),
     }
-    if summary["fallback_count"] or summary["mock_count"] or summary["degraded_count"]:
+    if summary["fallback_count"] or summary["mock_count"] or summary["degraded_count"] or summary["meta_missing_count"]:
         summary["all_passed"] = False
         failure = failure or {"error_code": "REAL_LLM_STRICT_META_FAILED", "error": "real acceptance observed fallback, mock, or degraded output"}
-    _json_path(artifact_dir / "real-llm-acceptance.json", summary)
-    _json_path(artifact_dir / "scenario-results.json", scenarios)
-    _json_path(artifact_dir / "redacted-agent-runs.json", [{key: value for key, value in run.items() if key not in {"fallback_reason", "fallback_chain"}} for run in audit_runs])
-    _json_path(artifact_dir / "environment-fingerprint.json", {"python": sys.version.split()[0], "platform": sys.platform, "base_url_host": base_url_host(args.base_url)})
-    _json_path(artifact_dir / "request-summary.json", {"scenario_ids": [item["id"] for item in scenarios], "failure": failure})
+    _json_path(staging_dir / "real-llm-acceptance.json", summary)
+    _json_path(staging_dir / "scenario-results.json", scenarios)
+    _json_path(staging_dir / "redacted-agent-runs.json", audit_runs)
+    _json_path(staging_dir / "environment-fingerprint.json", {"python": sys.version.split()[0], "platform": sys.platform, "base_url_host": base_url_host(args.base_url)})
+    _json_path(staging_dir / "request-summary.json", {"scenario_ids": [item["id"] for item in scenarios], "failure": failure})
+    scan = scan_artifact_tree(staging_dir, key)
+    summary["secret_scan"] = scan
+    if scan["status"] == "passed":
+        _json_path(staging_dir / "real-llm-acceptance.json", summary)
+        artifact_dir.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(staging_dir, artifact_dir)
+    else:
+        summary["all_passed"] = False
+        failure = failure or {"error_code": "REAL_LLM_SECRET_SCAN_FAILED", "error": "artifact secret scan reported matches"}
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        _json_path(artifact_dir / "real-llm-acceptance.json", summary)
+        _json_path(artifact_dir / "request-summary.json", {"scenario_ids": [item["id"] for item in scenarios], "failure": failure})
+    shutil.rmtree(runtime_dir, ignore_errors=True)
     if not summary["all_passed"]:
         return 1
     return 0

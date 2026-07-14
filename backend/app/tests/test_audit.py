@@ -317,7 +317,9 @@ def test_outline_run_created(client, tmp_path, monkeypatch) -> None:
     )
     outline_runs = [r for r in items if r["run_type"] == "outline"]
     assert len(outline_runs) >= 1
-    assert outline_runs[0]["status"] == "success"
+    # Mock output remains usable in ordinary mode but is explicitly degraded;
+    # it must never look like an observed real-provider success.
+    assert outline_runs[0]["status"] == "degraded"
 
 
 def test_planner_run_created(client, tmp_path, monkeypatch) -> None:

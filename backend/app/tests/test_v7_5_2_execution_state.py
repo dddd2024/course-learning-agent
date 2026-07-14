@@ -99,15 +99,15 @@ def test_done_tasks_have_test_evidence() -> None:
             )
 
 
-def test_v7_5_2_scope_matches_r4_real_llm_release_state() -> None:
+def test_v7_5_2_scope_matches_r5_real_llm_release_state() -> None:
     scope = SCOPE_PATH.read_text(encoding="utf-8")
     lower_scope = scope.lower()
 
-    assert "R4 scope" in scope
-    assert "9552c2ecd5f0b70c9be6a61eb02958ea4becfe2a" in scope
+    assert "R5 scope" in scope
+    assert "a07b9332ac0a11ef53bd4e9081b845c1073da445" in scope
     assert "real_llm_acceptance_harness" in scope
     assert "real_llm_no_mock_fallback_proof" in scope
-    assert "windows_launcher_smoke" in scope
+    assert "manual verification" in scope
     assert "rc3_evidence_transaction" in scope
     assert "in_progress" in scope
     assert "v1.0.0-rc3" in scope

@@ -594,7 +594,8 @@ def run_chat_pipeline(
             model_name=result.get("model_name") or model_name,
             provider=provider,
             meta={
-                "actual_provider": result.get("provider"),
+                "meta_observed": result.get("meta_observed") is True,
+                "actual_provider": result.get("actual_provider"),
                 "actual_model": result.get("model_name"),
                 "fallback_used": result.get("fallback_used", False),
                 "fallback_reason": result.get("fallback_reason"),

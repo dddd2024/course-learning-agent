@@ -29,7 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.agents.audit import AgentAudit
-from app.agents.outline import generate as outline_generate
+from app.agents.outline import OutlineContractError, generate as outline_generate
 from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
@@ -49,6 +49,7 @@ from app.services.llm_config_service import (
     build_user_config,
     get_active_config,
 )
+from app.services.real_llm_acceptance_service import RealLLMAcceptanceError, assert_real_llm_meta
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -170,11 +171,26 @@ def generate_knowledge_points(
         else:
             points = generated_outline
             llm_meta = {
-                "actual_provider": provider,
-                "actual_model": model_name,
-                "fallback_used": False,
-                "degraded": False,
+                "meta_observed": False,
+                "requested_provider": provider,
+                "requested_model": model_name,
+                "actual_provider": "unknown",
+                "actual_model": None,
+                "fallback_used": None,
+                "degraded": True,
+                "fallback_reason": "LLM_META_NOT_OBSERVED",
             }
+        if settings.REAL_LLM_ACCEPTANCE_MODE:
+            assert_real_llm_meta(llm_meta)
+    except OutlineContractError as exc:
+        _safe_finish_run(
+            db,
+            run_id=run_id,
+            status="failed",
+            error_message=str(exc),
+            started_at=run_started_at,
+        )
+        raise BusinessException(message=str(exc), status_code=422)
     except Exception as exc:
         _safe_finish_run(
             db,
@@ -194,7 +210,13 @@ def generate_knowledge_points(
         step_name="generate",
         step_index=0,
         input_data={"prompt_version": _PROMPT_VERSION},
-        output_data={"knowledge_point_count": len(points)},
+        output_data={
+            "knowledge_point_count": len(points),
+            "initial_contract": llm_meta.get("initial_contract"),
+            "repair_attempted": bool(llm_meta.get("repair_attempted")),
+            "repair_contract": llm_meta.get("repair_contract"),
+            "llm_call_count": llm_meta.get("llm_call_count", 1),
+        },
         duration_ms=generate_duration,
     )
 
@@ -320,8 +342,16 @@ def generate_knowledge_points(
     _safe_finish_run(
         db,
         run_id=run_id,
-        status="success",
-        output_summary={"knowledge_point_count": len(persisted)},
+        status="degraded" if llm_meta.get("degraded") else "success",
+        output_summary={
+            "knowledge_point_count": len(persisted),
+            "meta_observed": llm_meta.get("meta_observed") is True,
+            "initial_contract": llm_meta.get("initial_contract"),
+            "repair_attempted": bool(llm_meta.get("repair_attempted")),
+            "repair_success": bool(llm_meta.get("repair_success")),
+            "repair_contract": llm_meta.get("repair_contract"),
+            "llm_call_count": llm_meta.get("llm_call_count", 1),
+        },
         duration_ms=int((time.monotonic() - run_started_at) * 1000),
     )
 

@@ -88,6 +88,7 @@ def call_llm_with_meta(
                 prompt, agent_type, schema, user_config, timeout_override
             )
             return result, {
+                "meta_observed": True,
                 "provider": "real",
                 "model_name": user_config.get("model", ""),
                 "requested_provider": "user", "requested_model": user_config.get("model", ""),
@@ -103,6 +104,7 @@ def call_llm_with_meta(
                 try:
                     result = _real_response(prompt, agent_type, schema, None, timeout_override)
                     return result, {
+                        "meta_observed": True,
                         "provider": "real", "model_name": settings.LLM_MODEL,
                         "requested_provider": "user", "requested_model": user_config.get("model", ""),
                         "actual_provider": "system", "actual_model": settings.LLM_MODEL,
@@ -113,6 +115,7 @@ def call_llm_with_meta(
                 except Exception as system_exc:  # noqa: BLE001
                     user_reason = f"user: {user_reason}; system: {system_exc}"
             return _mock_response(agent_type, prompt), {
+                "meta_observed": True,
                 "provider": "mock", "model_name": "mock",
                 "requested_provider": "user", "requested_model": user_config.get("model", ""),
                 "actual_provider": "mock", "actual_model": "mock",
@@ -129,6 +132,7 @@ def call_llm_with_meta(
                 prompt, agent_type, schema, None, timeout_override
             )
             return result, {
+                "meta_observed": True,
                 "provider": "real",
                 "model_name": settings.LLM_MODEL,
                 "requested_provider": "system", "requested_model": settings.LLM_MODEL,
@@ -142,6 +146,7 @@ def call_llm_with_meta(
                 "System real LLM failed, falling back to mock: %s", exc
             )
             return _mock_response(agent_type, prompt), {
+                "meta_observed": True,
                 "provider": "mock",
                 "model_name": "mock",
                 "requested_provider": "system", "requested_model": settings.LLM_MODEL,
@@ -153,6 +158,7 @@ def call_llm_with_meta(
 
     # 3. Mock provider (default, or unknown provider) keeps the demo alive.
     return _mock_response(agent_type, prompt), {
+        "meta_observed": True,
         "provider": "mock",
         "model_name": "mock",
         "requested_provider": "mock", "requested_model": "mock",
