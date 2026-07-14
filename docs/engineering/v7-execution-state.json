@@ -56,6 +56,6 @@
     "AUDIT-R6-02": {"status": "done", "changed_files": ["backend/app/agents/outline.py", "backend/app/agents/prompts/outline_repair_v1.md", "backend/app/tests/test_r6_outline_repair_evidence.py"], "tests_run": ["outline evidence fixtures", "backend full pytest"], "remaining": [], "next_task": null, "commits": ["7b7401b"]},
     "AUDIT-R6-03": {"status": "done", "changed_files": ["scripts/verify_real_llm_evidence.py", "backend/app/tests/test_r6_real_llm_evidence.py"], "tests_run": ["evidence verifier fixtures", "Run A and Run B verifier", "committed bundle hash recomputation in CI"], "remaining": [], "next_task": null, "commits": ["7b7401b", "a0698e1", "5b07d40", "19a920c", "a413626"]},
     "AUDIT-R6-04": {"status": "done", "changed_files": [], "tests_run": ["964 backend passed", "32 frontend passed", "75 Playwright passed with failed=0 skipped=0", "22 V7 checks passed", "two 6/6 real-LLM runs"], "remaining": [], "next_task": null, "commits": ["7b7401b", "a413626"]},
-    "AUDIT-R6-05": {"status": "done", "changed_files": ["docs/engineering/v7-execution-state.json"], "tests_run": ["GitHub Actions CI run 29359449548: all five jobs passed"], "remaining": [], "next_task": null, "commits": ["pending-final-state-commit"]}
+    "AUDIT-R6-05": {"status": "done", "changed_files": ["docs/engineering/v7-execution-state.json"], "tests_run": ["GitHub Actions CI run 29359449548: all five jobs passed"], "remaining": [], "next_task": null, "commits": ["af23e43"]}
   }
 }
