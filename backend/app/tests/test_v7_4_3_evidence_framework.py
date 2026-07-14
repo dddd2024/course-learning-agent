@@ -52,6 +52,7 @@ def test_state_resets_false_v7_4_2_closure():
             "V7.5.0_DOCUMENT_FIDELITY_AND_RC_CLOSED_LOCALLY",
             "V7.5.1_V1_USER_PATHS_CLOSED_LOCALLY",
             "V7.5.2_RC_BLOCKERS_CLOSED_LOCALLY",
+            "V7.5.2_R6_VERIFIED_LOCALLY",
         }
     for task_id, task in state["tasks"].items():
         if not task_id.startswith("V7.4."):
