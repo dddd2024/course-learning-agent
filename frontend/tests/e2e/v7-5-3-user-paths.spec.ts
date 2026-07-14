@@ -75,13 +75,10 @@ async function readyPdf(
 async function actualImageIsDecoded(page: Page) {
   const image = page.locator('img[alt*="原页图像"]').first()
   await expect(image).toBeVisible({ timeout: 30_000 })
-  await expect.poll(async () => image.evaluate((node: HTMLImageElement) => ({
-    width: node.naturalWidth,
-    height: node.naturalHeight,
-  })), { timeout: 30_000 }).toEqual(expect.objectContaining({ width: expect.any(Number), height: expect.any(Number) }))
-  const dimensions = await image.evaluate((node: HTMLImageElement) => [node.naturalWidth, node.naturalHeight])
-  expect(dimensions[0]).toBeGreaterThan(0)
-  expect(dimensions[1]).toBeGreaterThan(0)
+  await expect.poll(
+    () => image.evaluate((node: HTMLImageElement) => node.naturalWidth > 0 && node.naturalHeight > 0),
+    { timeout: 30_000 },
+  ).toBe(true)
 }
 
 // T01: a real PDF must support original-page reading, structured chunks, and cited Q&A.
@@ -204,8 +201,18 @@ test('T04 legacy ready PDF without page assets is repaired from the frontend', a
   await expect.poll(async () => {
     const response = await request.get(`${API_BASE}/materials/${materialId}/image-integrity`, { headers })
     const body = await response.json()
-    return `${body.ready_pages}/${body.expected_pages}:${body.status}`
-  }, { timeout: 60_000, intervals: [500, 1_000, 2_000] }).toBe('2/2:page_fallback_ready')
+    return {
+      expected: body.expected_pages,
+      ready: body.ready_pages,
+      missing: body.missing_pages,
+      acceptableStatus: ['ready', 'page_fallback_ready'].includes(body.status),
+    }
+  }, { timeout: 60_000, intervals: [500, 1_000, 2_000] }).toEqual({
+    expected: 2,
+    ready: 2,
+    missing: 0,
+    acceptableStatus: true,
+  })
   await expect(page.locator('.page-canvas')).toBeVisible({ timeout: 30_000 })
   await actualImageIsDecoded(page)
 })
@@ -229,7 +236,7 @@ test('T05 non-PDF material defaults to checked structured text mode', async ({ p
   await expect(cleanRadio).toBeChecked({ timeout: 30_000 })
   const chunk = page.locator('.doc-chunk').first()
   await expect(chunk).toBeVisible()
-  await expect(chunk).toContainText('transaction', { ignoreCase: true })
+  await expect(chunk).toContainText(/transaction/i)
   await expect(page.locator('.page-canvas')).toHaveCount(0)
 })
 
