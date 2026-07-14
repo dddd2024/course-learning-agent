@@ -32,7 +32,7 @@
         v-model="selectedMaterialId"
         placeholder="选择学习资料"
         class="material-select"
-        @change="loadChunks"
+        @change="handleMaterialChange"
       >
         <el-option
           v-for="m in materials"
@@ -689,13 +689,13 @@ onMounted(async () => {
         }
       }
 
-      const queryMaterialId = route.query.material_id
-        ? Number(route.query.material_id)
-        : null
-      const match = queryMaterialId
-        ? materials.value.find((m) => m.id === queryMaterialId)
-        : null
+      const publicMaterial = typeof route.query.material === 'string' ? route.query.material : null
+      const queryMaterialId = route.query.material_id ? Number(route.query.material_id) : null
+      const match = publicMaterial
+        ? materials.value.find((m) => m.public_id === publicMaterial)
+        : queryMaterialId ? materials.value.find((m) => m.id === queryMaterialId) : null
       selectedMaterialId.value = match ? match.id : materials.value[0].id
+      syncPublicMaterialRoute()
       await loadChunks()
       // Load knowledge-point terms for highlighting (course-level, non-blocking).
       loadKeyTerms()
@@ -753,6 +753,19 @@ async function getAllMaterialChunks(
     page += 1
   }
   return items
+}
+
+function syncPublicMaterialRoute() {
+  const material = selectedMaterial.value
+  if (!material || route.query.material === material.public_id) return
+  const query: Record<string, string | undefined> = { ...route.query, material: material.public_id }
+  delete query.material_id
+  router.replace({ query })
+}
+
+async function handleMaterialChange() {
+  syncPublicMaterialRoute()
+  await loadChunks()
 }
 
 async function loadChunks() {
