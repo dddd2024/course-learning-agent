@@ -112,6 +112,11 @@ def remove_page_assets(material_id: int, break_first_image: bool) -> dict:
                 .first()
             )
             if image is not None:
+                # Guarantee that the default reader query returns this row so
+                # the UI observes a real broken-image signal and exposes the
+                # repair button. This mutation is isolated to the E2E database.
+                image.is_decorative = 0
+                image.decorative_reason = None
                 image_path = Path(settings.UPLOAD_DIR) / image.image_path
                 image_path.unlink(missing_ok=True)
                 broken_image = image.id
@@ -145,7 +150,11 @@ def remove_chunks(material_id: int) -> dict:
             .delete(synchronize_session=False)
         )
         db.commit()
-        return {"chunk_ids": chunk_ids, "deleted_chunks": deleted, "fts_remaining": _fts_count(db, chunk_ids)}
+        return {
+            "chunk_ids": chunk_ids,
+            "deleted_chunks": deleted,
+            "fts_remaining": _fts_count(db, chunk_ids),
+        }
     except Exception:
         db.rollback()
         raise
