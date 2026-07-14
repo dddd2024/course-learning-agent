@@ -22,6 +22,7 @@ from app.models.material_chunk import MaterialChunk
 from app.models.user import User
 from app.schemas.material_overview import MaterialOverviewResponse, MaterialStudyGuideResponse
 from app.services.llm_config_service import build_user_config, get_active_config
+from app.services.material_identity_service import resolve_owned_material
 
 router = APIRouter()
 
@@ -41,13 +42,9 @@ _TOKEN_RE = re.compile(r"[\u4e00-\u9fff]{2,}|[A-Za-z][A-Za-z0-9_]{2,}")
 
 
 def _get_owned_material(
-    db: Session, material_id: int, user_id: int
+    db: Session, material_id: str | int, user_id: int
 ) -> Material:
-    material = (
-        db.query(Material)
-        .filter(Material.id == material_id, Material.user_id == user_id)
-        .first()
-    )
+    material = resolve_owned_material(db, material_id, user_id)
     if material is None:
         raise NotFoundException(message="资料不存在")
     return material
@@ -103,7 +100,7 @@ def _sample_chunks_by_page(chunks: list[MaterialChunk], limit: int = 12) -> list
     response_model=MaterialOverviewResponse,
 )
 def get_material_overview(
-    material_id: int,
+    material_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MaterialOverviewResponse:
@@ -111,7 +108,7 @@ def get_material_overview(
     material = _get_owned_material(db, material_id, current_user.id)
     chunks = (
         db.query(MaterialChunk)
-        .filter(MaterialChunk.material_id == material_id)
+        .filter(MaterialChunk.material_id == material.id)
         .order_by(MaterialChunk.chunk_index.asc())
         .all()
     )
@@ -138,14 +135,14 @@ def get_material_overview(
 
         security_count = (
             db.query(MaterialSecurityFinding)
-            .filter(MaterialSecurityFinding.material_id == material_id)
+            .filter(MaterialSecurityFinding.material_id == material.id)
             .count()
         )
     except Exception:
         pass
 
     return MaterialOverviewResponse(
-        material_id=material_id,
+        material_id=material.id,
         status=material.status or "unknown",
         chunk_count=len(chunks),
         page_range=page_range,
@@ -158,14 +155,14 @@ def get_material_overview(
 
 @router.post("/{material_id}/study-guide", response_model=MaterialStudyGuideResponse)
 def generate_material_study_guide(
-    material_id: int,
+    material_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MaterialStudyGuideResponse:
     """Generate a guide from evenly sampled active evidence, never chat text."""
     material = _get_owned_material(db, material_id, current_user.id)
     chunks = db.query(MaterialChunk).filter(
-        MaterialChunk.material_id == material_id,
+        MaterialChunk.material_id == material.id,
         MaterialChunk.is_active == 1,
         MaterialChunk.is_indexable == 1,
     ).order_by(MaterialChunk.chunk_index.asc()).all()
@@ -181,7 +178,7 @@ def generate_material_study_guide(
     user_config = build_user_config(config) if config else None
     run = AgentAudit.create_run(
         db, user_id=current_user.id, run_type="material_overview",
-        input_summary={"material_id": material_id, "evidence_ids": evidence_ids},
+        input_summary={"material_id": material.id, "evidence_ids": evidence_ids},
         prompt_version="material_overview_v1",
         model_name=(config.model if config else "mock"),
         provider=("user" if config else "mock"), config_id=(config.id if config else None),
@@ -199,7 +196,7 @@ def generate_material_study_guide(
     )
     db.commit()
     return MaterialStudyGuideResponse(
-        material_id=material_id, answer=answer, evidence_ids=evidence_ids,
+        material_id=material.id, answer=answer, evidence_ids=evidence_ids,
         sampled_pages=sorted({chunk.page_no for chunk in samples if chunk.page_no is not None}),
         coverage_note=f"本速览均匀抽样了 {len(samples)} 个证据片段，不代表整份资料的完整覆盖。",
         provider=meta.get("actual_provider", meta.get("provider", "mock")),

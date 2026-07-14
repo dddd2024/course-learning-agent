@@ -22,6 +22,7 @@ from app.models.user import User
 from app.schemas.material import ChunkListResponse, MaterialListResponse, MaterialResponse
 from app.services.error_logger import log_error
 from app.services.material_delete_service import delete_material
+from app.services.material_identity_service import resolve_owned_material
 
 router = APIRouter()
 
@@ -57,7 +58,7 @@ def _get_owned_course(db: Session, course_id: int, user_id: int) -> Course:
 def _material_response(material: Material) -> MaterialResponse:
     """Serialize without leaking the storage-relative file path."""
     data = MaterialResponse.model_validate(material).model_dump()
-    data["file_url"] = f"/api/v1/materials/{material.id}/file"
+    data["file_url"] = f"/api/v1/materials/{material.public_id}/file"
     return MaterialResponse(**data)
 
 
@@ -277,7 +278,7 @@ def list_materials(
 @router.get("/{course_id}/materials/{material_id}/chunks", response_model=ChunkListResponse)
 def list_course_material_chunks(
     course_id: int,
-    material_id: int,
+    material_id: str,
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
     include_decorative: bool = Query(False),
@@ -290,20 +291,18 @@ def list_course_material_chunks(
     surfaces apply the same ownership and active-version filter.
     """
     _get_owned_course(db, course_id, current_user.id)
-    material = db.query(Material).filter(
-        Material.id == material_id,
-        Material.course_id == course_id,
-        Material.user_id == current_user.id,
-    ).first()
+    material = resolve_owned_material(db, material_id, current_user.id)
+    if material is not None and material.course_id != course_id:
+        material = None
     if material is None:
         raise NotFoundException(message="资料不存在")
     from app.api.v1.endpoints.parse import list_chunks
-    return list_chunks(material_id, page, page_size, include_decorative, db, current_user)
+    return list_chunks(str(material.id), page, page_size, include_decorative, db, current_user)
 
 
 @router.delete("/materials/{material_id}", status_code=204)
-def delete_owned_material(material_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> None:
-    material = db.query(Material).filter(Material.id == material_id, Material.user_id == current_user.id).first()
+def delete_owned_material(material_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> None:
+    material = resolve_owned_material(db, material_id, current_user.id)
     if material is None:
         raise NotFoundException(message="资料不存在")
     delete_material(db, material)

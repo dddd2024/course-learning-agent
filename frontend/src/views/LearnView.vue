@@ -146,6 +146,16 @@
               </el-button>
             </el-alert>
           </div>
+          <div v-if="readiness?.page_catalog_synthetic_numbers?.length" class="image-info-banner" data-testid="legacy-page-catalog-repair">
+            <el-alert type="info" :closable="false" show-icon>
+              <template #title>
+                <span>检测到 {{ readiness.page_catalog_synthetic_numbers.length }} 页旧资料目录记录，建议持久化修复预览。</span>
+              </template>
+              <el-button type="primary" size="small" :loading="reextractingImages" @click="handleRepairDocument">
+                修复文档预览
+              </el-button>
+            </el-alert>
+          </div>
           <div class="image-filter-control">
             <el-switch
               v-model="showFilteredImages"
@@ -890,11 +900,17 @@ async function handleRepairDocument() {
   if (!selectedMaterialId.value || reextractingImages.value) return
   reextractingImages.value = true
   try {
-    // Step 1: Rebuild page assets (page images)
-    try {
-      await rebuildPageAssets(selectedMaterialId.value)
-    } catch {
-      // Page rebuild failure is non-fatal; continue with image re-extraction
+    // A failed/partial page rebuild is not a successful document repair.
+    // Do not continue to a success toast merely because image extraction can
+    // run independently.
+    const { data: rebuilt } = await rebuildPageAssets(selectedMaterialId.value)
+    if (
+      rebuilt.status !== 'ready'
+      || rebuilt.expected_pages <= 0
+      || rebuilt.ready_pages !== rebuilt.expected_pages
+      || rebuilt.missing_pages !== 0
+    ) {
+      throw new Error(`页面资源重建未完成：${rebuilt.ready_pages}/${rebuilt.expected_pages} 页可读`)
     }
 
     // Step 2: Re-extract standalone images

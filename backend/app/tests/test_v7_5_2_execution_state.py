@@ -17,6 +17,9 @@ REQUIRED_RELEASE_GATES = {
     "migration_dry_run_and_smoke",
     "playwright_e2e",
     "v7_acceptance_verification",
+    "real_sqlalchemy_legacy_schema_migration",
+    "r2_playwright_e2e",
+    "remote_ci_verification",
 }
 
 
@@ -28,7 +31,7 @@ def test_v7_5_2_records_honest_current_state() -> None:
     state = _load_state()
 
     assert state["version"] == "v7.5.2"
-    assert state["base_commit"] == "e6148a2808b70cd1b0ddb3c762d225a13009e4e9"
+    assert state["base_commit"] == "f75cbca6f556c2eb6045b49e169e68442461bcea"
     assert state["overall_status"] in {"in_progress", "verified_locally"}
 
     if state["overall_status"] == "in_progress":
@@ -74,6 +77,8 @@ def test_verified_locally_requires_every_release_gate() -> None:
     summary = json.loads(artifact.read_text(encoding="utf-8"))
     assert summary["commit_sha"] == gate["commit_sha"]
     assert summary["playwright_failed"] == summary["playwright_skipped"] == 0
+    assert summary["remote_ci"] == "success"
+    assert summary["legacy_migration"] == "passed"
 
 
 def test_done_tasks_have_test_evidence() -> None:
@@ -86,17 +91,16 @@ def test_done_tasks_have_test_evidence() -> None:
             )
 
 
-def test_v7_5_2_scope_matches_reopened_release_state() -> None:
+def test_v7_5_2_scope_matches_r2_reopened_release_state() -> None:
     scope = SCOPE_PATH.read_text(encoding="utf-8")
     lower_scope = scope.lower()
 
-    assert "new_version_image_binding" in scope
-    assert "page_asset_expected_page_coverage" in scope
-    assert "page_asset_db_fs_compensation" in scope
-    assert "e2e_environment_isolation" in scope
-    assert "e2e_user_path_acceptance" in scope
-    assert "v7_acceptance_verification" in scope
-    assert "47 passed, 27 failed, 2 did not run" in scope
+    assert "R2 audit recovery supersession" in scope
+    assert "f75cbca6f556c2eb6045b49e169e68442461bcea" in scope
+    assert "real_sqlalchemy_legacy_schema_migration" in scope
+    assert "material_external_identity" in scope
+    assert "blob_request_race" in scope
+    assert "remote_ci_verification" in scope
     assert "in_progress" in scope
     assert "v1.0.0-rc3" in scope
     assert "cross-windows/linux" in lower_scope
