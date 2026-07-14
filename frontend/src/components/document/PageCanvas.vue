@@ -117,6 +117,10 @@ async function loadPage(page: ReaderPage, force = false) {
 
   try {
     const { data } = await request.get(requestUrl, { responseType: 'blob' })
+    // A page can be removed or receive a new asset while the old request is
+    // in flight. Ignore that stale response instead of leaking an Object URL
+    // or overwriting the new page state.
+    if (sourceKeys[page.id] !== key) return
     if (!(data instanceof Blob) || data.size === 0) {
       states[page.id] = 'failed'
       errors[page.id] = 'empty'
@@ -125,6 +129,7 @@ async function loadPage(page: ReaderPage, force = false) {
     urls[page.id] = URL.createObjectURL(data)
     states[page.id] = 'ready'
   } catch {
+    if (sourceKeys[page.id] !== key) return
     states[page.id] = 'failed'
     errors[page.id] = 'network'
   }
