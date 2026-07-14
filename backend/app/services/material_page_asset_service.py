@@ -1,10 +1,7 @@
 """Page-asset coverage, repair, and crash-safe rebuild services.
 
-V7.5.3 keeps page rendering recoverable across process crashes by combining:
-- actual page-number coverage validation;
-- an owner-token lock with heartbeat;
-- a journal containing old/new asset manifests; and
-- database/file-system compensation based on manifest equality.
+V7.5.3 combines actual page-number coverage, an owner-token lock with
+heartbeat, journaled old/new manifests, and DB/filesystem compensation.
 """
 from __future__ import annotations
 
@@ -39,7 +36,6 @@ LOCK_STALE_SECONDS = 120
 
 
 def _decode_and_verify(path: Path, expected_sha256: str | None) -> bool:
-    """Return True when a page image exists, decodes, and matches its hash."""
     if not path.is_file() or path.stat().st_size == 0:
         return False
     try:
@@ -76,7 +72,6 @@ def _expected_page_numbers(db: Session, material: Material) -> list[int]:
 
 
 def evaluate_page_asset_coverage(db: Session, material: Material) -> dict:
-    """Compute active-version page coverage from actual expected page numbers."""
     empty = {
         "expected_pages": 0,
         "ready_pages": 0,
@@ -91,31 +86,27 @@ def evaluate_page_asset_coverage(db: Session, material: Material) -> dict:
     if not material.active_version_id:
         return {**empty, "status": "missing"}
 
-    expected_numbers = _expected_page_numbers(db, material)
     version_id = material.active_version_id
     assets = (
         db.query(MaterialPageAsset)
         .filter(MaterialPageAsset.material_version_id == version_id)
         .all()
     )
-
-    # Very old records can lack MaterialPage rows and the source PDF may be
-    # temporarily unavailable.  Existing asset page numbers are only a last
-    # resort; they are never preferred over the real PDF/page IR.
+    expected_numbers = _expected_page_numbers(db, material)
     if not expected_numbers:
-        max_page = max((a.page_no for a in assets if a.page_no and a.page_no > 0), default=0)
+        max_page = max((row.page_no for row in assets if row.page_no and row.page_no > 0), default=0)
         if max_page:
             expected_numbers = list(range(1, max_page + 1))
     if not expected_numbers:
         return {**empty, "status": "missing"}
 
     expected_set = set(expected_numbers)
-    counts = Counter(a.page_no for a in assets if a.page_no is not None)
+    counts = Counter(row.page_no for row in assets if row.page_no is not None)
     duplicates = sorted(page_no for page_no, count in counts.items() if count > 1)
     ready_numbers: set[int] = set()
     invalid_numbers: set[int] = set()
-
     upload_root = Path(settings.UPLOAD_DIR)
+
     for asset in assets:
         if not asset.page_no or asset.page_no not in expected_set:
             continue
@@ -128,15 +119,14 @@ def evaluate_page_asset_coverage(db: Session, material: Material) -> dict:
             invalid_numbers.add(asset.page_no)
 
     missing_numbers = sorted(expected_set - ready_numbers)
-    extras = sorted({a.page_no for a in assets if a.page_no and a.page_no not in expected_set})
+    extras = sorted({row.page_no for row in assets if row.page_no and row.page_no not in expected_set})
     ready_pages = len(ready_numbers)
     expected_pages = len(expected_numbers)
     missing_pages = expected_pages - ready_pages
     has_issues = bool(duplicates or invalid_numbers or extras)
-
     if missing_pages == 0 and not has_issues:
         status = "ready"
-    elif ready_pages > 0:
+    elif ready_pages:
         status = "partial"
     else:
         status = "missing"
@@ -154,8 +144,7 @@ def evaluate_page_asset_coverage(db: Session, material: Material) -> dict:
 
 
 def _page_root(material: Material) -> Path:
-    source = Path(settings.UPLOAD_DIR) / material.file_path
-    return source.parent / "pages"
+    return (Path(settings.UPLOAD_DIR) / material.file_path).parent / "pages"
 
 
 def _lock_path(material: Material, version_id: int) -> Path:
@@ -167,10 +156,8 @@ def _utc_now() -> str:
 
 
 def _parse_time(value: str | None) -> float | None:
-    if not value:
-        return None
     try:
-        return datetime.fromisoformat(value).timestamp()
+        return datetime.fromisoformat(value).timestamp() if value else None
     except Exception:
         return None
 
@@ -219,24 +206,23 @@ def _lock_is_stale(lock_dir: Path) -> bool:
 def _acquire_lock(material: Material, version_id: int) -> _OwnedLock | None:
     lock_dir = _lock_path(material, version_id)
     lock_dir.parent.mkdir(parents=True, exist_ok=True)
-    token = uuid4().hex
-
-    while True:
+    owner_token = uuid4().hex
+    try:
+        lock_dir.mkdir(exist_ok=False)
+    except FileExistsError:
+        if not _lock_is_stale(lock_dir):
+            return None
+        stale_dir = lock_dir.with_name(f"{lock_dir.name}.stale-{uuid4().hex}")
         try:
+            lock_dir.replace(stale_dir)
             lock_dir.mkdir(exist_ok=False)
-            break
-        except FileExistsError:
-            if not _lock_is_stale(lock_dir):
-                return None
-            stale_dir = lock_dir.with_name(f"{lock_dir.name}.stale-{uuid4().hex}")
-            try:
-                lock_dir.replace(stale_dir)
-            except (FileExistsError, FileNotFoundError, PermissionError, OSError):
-                return None
+        except (FileExistsError, FileNotFoundError, PermissionError, OSError):
+            return None
+        finally:
             shutil.rmtree(stale_dir, ignore_errors=True)
 
     owner = {
-        "owner_token": token,
+        "owner_token": owner_token,
         "pid": os.getpid(),
         "host": socket.gethostname(),
         "started_at": _utc_now(),
@@ -245,13 +231,12 @@ def _acquire_lock(material: Material, version_id: int) -> _OwnedLock | None:
         "version_id": version_id,
     }
     _write_owner(lock_dir, owner)
-
     stop_event = threading.Event()
 
     def heartbeat() -> None:
         while not stop_event.wait(LOCK_HEARTBEAT_SECONDS):
             current = _read_owner(lock_dir)
-            if not current or current.get("owner_token") != token:
+            if not current or current.get("owner_token") != owner_token:
                 return
             current["heartbeat_at"] = _utc_now()
             try:
@@ -259,9 +244,13 @@ def _acquire_lock(material: Material, version_id: int) -> _OwnedLock | None:
             except Exception:
                 logger.warning("Failed to heartbeat page-asset lock %s", lock_dir)
 
-    thread = threading.Thread(target=heartbeat, name=f"page-asset-lock-{material.id}", daemon=True)
+    thread = threading.Thread(
+        target=heartbeat,
+        name=f"page-asset-lock-{material.id}-{version_id}",
+        daemon=True,
+    )
     thread.start()
-    return _OwnedLock(lock_dir, token, stop_event, thread)
+    return _OwnedLock(lock_dir, owner_token, stop_event, thread)
 
 
 def _release_lock(lock: _OwnedLock) -> None:
@@ -273,13 +262,13 @@ def _release_lock(lock: _OwnedLock) -> None:
 
 
 def _manifest_record(page_no: int, filename: str, sha256: str | None) -> dict:
-    return {"page_no": int(page_no), "filename": filename, "sha256": sha256 or ""}
+    return {"page_no": int(page_no), "filename": Path(filename).name, "sha256": sha256 or ""}
 
 
 def _normalise_manifest(records: list[dict]) -> list[dict]:
     return sorted(
         [
-            _manifest_record(record["page_no"], Path(record["filename"]).name, record.get("sha256"))
+            _manifest_record(record["page_no"], record["filename"], record.get("sha256"))
             for record in records
         ],
         key=lambda item: (item["page_no"], item["filename"], item["sha256"]),
@@ -294,11 +283,7 @@ def _db_manifest(db: Session, version_id: int) -> list[dict]:
     )
     return _normalise_manifest(
         [
-            {
-                "page_no": row.page_no,
-                "filename": Path(row.asset_path or "").name,
-                "sha256": row.sha256,
-            }
+            {"page_no": row.page_no, "filename": row.asset_path, "sha256": row.sha256}
             for row in rows
             if row.page_no and row.asset_path
         ]
@@ -312,6 +297,25 @@ def _render_manifest(rendered) -> list[dict]:
             for item in rendered
         ]
     )
+
+
+def _directory_matches_manifest(directory: Path, manifest: list[dict]) -> bool:
+    """Compare the exact direct-file set and SHA-256 values to a manifest."""
+    manifest = _normalise_manifest(manifest)
+    if not directory.exists():
+        return not manifest
+    if not directory.is_dir():
+        return False
+    actual_files = sorted(path for path in directory.iterdir() if path.is_file())
+    expected_names = sorted(record["filename"] for record in manifest)
+    if [path.name for path in actual_files] != expected_names:
+        return False
+    expected_hashes = {record["filename"]: record["sha256"] for record in manifest}
+    for path in actual_files:
+        expected_hash = expected_hashes[path.name]
+        if expected_hash and hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash:
+            return False
+    return True
 
 
 def _write_journal(path: Path, **payload) -> None:
@@ -332,24 +336,34 @@ def _remove_path(path: Path) -> None:
         path.unlink(missing_ok=True)
 
 
-def _restore_old_directory(version_dir: Path, backup_dir: Path) -> bool:
+def _restore_backup(version_dir: Path, backup_dir: Path, old_manifest: list[dict], new_manifest: list[dict]) -> bool:
+    """Restore a verified old backup without deleting ambiguous evidence."""
+    if not backup_dir.exists() or not _directory_matches_manifest(backup_dir, old_manifest):
+        return False
+    if version_dir.exists() and not _directory_matches_manifest(version_dir, new_manifest):
+        return False
     trash: Path | None = None
     try:
         if version_dir.exists():
             trash = version_dir.with_name(f"{version_dir.name}.trash-{uuid4().hex}")
             version_dir.replace(trash)
-        if backup_dir.exists():
-            backup_dir.replace(version_dir)
-        elif trash is not None:
-            # No historical directory existed; remove the promoted new one.
-            _remove_path(trash)
-            return True
+        backup_dir.replace(version_dir)
         if trash is not None:
             _remove_path(trash)
-        return version_dir.exists()
+        return _directory_matches_manifest(version_dir, old_manifest)
     except Exception:
         logger.exception("Failed to restore page-asset backup %s", backup_dir)
         return False
+
+
+def _recovery_required(db: Session, material: Material, code: str, journal_path: Path, **details) -> dict:
+    return {
+        **evaluate_page_asset_coverage(db, material),
+        "status": "recovery_required",
+        "code": code,
+        "journal": str(journal_path),
+        **details,
+    }
 
 
 def _recover_incomplete_rebuild(
@@ -363,12 +377,7 @@ def _recover_incomplete_rebuild(
     for journal_path in sorted(page_root.glob(f"{prefix}*")):
         journal = _read_journal(journal_path)
         if not journal:
-            return {
-                **evaluate_page_asset_coverage(db, material),
-                "status": "recovery_required",
-                "code": "JOURNAL_UNREADABLE",
-                "journal": str(journal_path),
-            }
+            return _recovery_required(db, material, "JOURNAL_UNREADABLE", journal_path)
 
         stage = journal.get("stage")
         staging_dir = Path(journal.get("staging_dir", ""))
@@ -381,66 +390,101 @@ def _recover_incomplete_rebuild(
             _remove_path(staging_dir)
             journal_path.unlink(missing_ok=True)
             continue
+        if stage == "recovery_required":
+            return _recovery_required(db, material, "PREVIOUS_RECOVERY_REQUIRED", journal_path)
 
         db_manifest = _db_manifest(db, version_id)
         if stage in {"promoting", "db_replacing"}:
             if db_manifest == new_manifest and new_manifest:
-                if not version_dir.exists():
-                    return {
-                        **evaluate_page_asset_coverage(db, material),
-                        "status": "recovery_required",
-                        "code": "NEW_DB_WITHOUT_NEW_DIRECTORY",
-                        "journal": str(journal_path),
-                    }
+                if not _directory_matches_manifest(version_dir, new_manifest):
+                    return _recovery_required(
+                        db,
+                        material,
+                        "NEW_DB_DIRECTORY_MISMATCH",
+                        journal_path,
+                        db_manifest=db_manifest,
+                        new_manifest=new_manifest,
+                    )
                 _remove_path(backup_dir)
                 _remove_path(staging_dir)
                 journal_path.unlink(missing_ok=True)
                 continue
+
             if db_manifest == old_manifest:
-                if not _restore_old_directory(version_dir, backup_dir):
-                    return {
-                        **evaluate_page_asset_coverage(db, material),
-                        "status": "recovery_required",
-                        "code": "OLD_DIRECTORY_RESTORE_FAILED",
-                        "journal": str(journal_path),
-                    }
-                _remove_path(staging_dir)
-                journal_path.unlink(missing_ok=True)
-                continue
-            return {
-                **evaluate_page_asset_coverage(db, material),
-                "status": "recovery_required",
-                "code": "DB_MANIFEST_AMBIGUOUS",
-                "journal": str(journal_path),
-                "db_manifest": db_manifest,
-                "old_manifest": old_manifest,
-                "new_manifest": new_manifest,
-            }
+                # Crash before the old directory was moved: it is already the
+                # correct readable version. Never rename/delete it just because
+                # a promoting journal exists.
+                if not backup_dir.exists() and _directory_matches_manifest(version_dir, old_manifest):
+                    _remove_path(staging_dir)
+                    journal_path.unlink(missing_ok=True)
+                    continue
+
+                # Crash after backup and possibly after promotion: restore only
+                # when both old and new directories match their journal manifests.
+                if backup_dir.exists() and _restore_backup(
+                    version_dir, backup_dir, old_manifest, new_manifest
+                ):
+                    _remove_path(staging_dir)
+                    journal_path.unlink(missing_ok=True)
+                    continue
+
+                # First-ever build: the old manifest is empty and DB still has
+                # no rows. A promoted directory matching the new manifest is
+                # uncommitted and can be discarded safely.
+                if (
+                    not old_manifest
+                    and not backup_dir.exists()
+                    and _directory_matches_manifest(version_dir, new_manifest)
+                ):
+                    _remove_path(version_dir)
+                    _remove_path(staging_dir)
+                    journal_path.unlink(missing_ok=True)
+                    continue
+                if not old_manifest and not version_dir.exists() and not backup_dir.exists():
+                    _remove_path(staging_dir)
+                    journal_path.unlink(missing_ok=True)
+                    continue
+
+                return _recovery_required(
+                    db,
+                    material,
+                    "OLD_DB_DIRECTORY_AMBIGUOUS",
+                    journal_path,
+                    db_manifest=db_manifest,
+                    old_manifest=old_manifest,
+                    new_manifest=new_manifest,
+                )
+
+            return _recovery_required(
+                db,
+                material,
+                "DB_MANIFEST_AMBIGUOUS",
+                journal_path,
+                db_manifest=db_manifest,
+                old_manifest=old_manifest,
+                new_manifest=new_manifest,
+            )
 
         if stage == "committed":
-            if db_manifest != new_manifest:
-                return {
-                    **evaluate_page_asset_coverage(db, material),
-                    "status": "recovery_required",
-                    "code": "COMMITTED_MANIFEST_MISMATCH",
-                    "journal": str(journal_path),
-                }
+            if db_manifest != new_manifest or not _directory_matches_manifest(version_dir, new_manifest):
+                return _recovery_required(
+                    db,
+                    material,
+                    "COMMITTED_MANIFEST_MISMATCH",
+                    journal_path,
+                    db_manifest=db_manifest,
+                    new_manifest=new_manifest,
+                )
             _remove_path(backup_dir)
             _remove_path(staging_dir)
             journal_path.unlink(missing_ok=True)
             continue
 
-        return {
-            **evaluate_page_asset_coverage(db, material),
-            "status": "recovery_required",
-            "code": "UNKNOWN_JOURNAL_STAGE",
-            "journal": str(journal_path),
-        }
+        return _recovery_required(db, material, "UNKNOWN_JOURNAL_STAGE", journal_path)
     return None
 
 
 def ensure_active_page_assets(db: Session, material: Material) -> dict:
-    """Return current coverage or rebuild incomplete active PDF assets."""
     current = evaluate_page_asset_coverage(db, material)
     if current["status"] in {"ready", "not_applicable"}:
         return current
@@ -448,12 +492,10 @@ def ensure_active_page_assets(db: Session, material: Material) -> dict:
 
 
 def rebuild_page_assets(db: Session, material: Material) -> dict:
-    """Render and replace active page assets with lock-owned compensation."""
     if material.file_type.lower() != "pdf":
         return {**evaluate_page_asset_coverage(db, material), "status": "not_applicable"}
     if not material.active_version_id:
         return evaluate_page_asset_coverage(db, material)
-
     source = Path(settings.UPLOAD_DIR) / material.file_path
     if not source.is_file():
         return evaluate_page_asset_coverage(db, material)
@@ -463,8 +505,11 @@ def rebuild_page_assets(db: Session, material: Material) -> dict:
     page_root.mkdir(parents=True, exist_ok=True)
     lock = _acquire_lock(material, version_id)
     if lock is None:
-        return {**evaluate_page_asset_coverage(db, material), "status": "busy", "code": "REBUILD_BUSY"}
-
+        return {
+            **evaluate_page_asset_coverage(db, material),
+            "status": "busy",
+            "code": "REBUILD_BUSY",
+        }
     try:
         recovery = _recover_incomplete_rebuild(db, material, page_root, version_id)
         if recovery is not None:
@@ -503,7 +548,6 @@ def _do_rebuild(
         old_manifest=old_manifest,
         new_manifest=[],
     )
-
     try:
         rendered = list(render_pdf_pages(source, staging_dir))
     except Exception:
@@ -513,9 +557,12 @@ def _do_rebuild(
         return evaluate_page_asset_coverage(db, material)
 
     rendered_numbers = sorted(item.page_no for item in rendered)
-    if rendered_numbers != expected_numbers:
+    if rendered_numbers != expected_numbers or any(
+        not _decode_and_verify(staging_dir / item.filename, item.sha256)
+        for item in rendered
+    ):
         logger.warning(
-            "Page-asset rebuild page set mismatch for material %s: expected=%s rendered=%s",
+            "Page-asset staging validation failed for material %s: expected=%s rendered=%s",
             material.id,
             expected_numbers,
             rendered_numbers,
@@ -523,12 +570,6 @@ def _do_rebuild(
         _remove_path(staging_dir)
         journal_path.unlink(missing_ok=True)
         return evaluate_page_asset_coverage(db, material)
-
-    for item in rendered:
-        if not _decode_and_verify(staging_dir / item.filename, item.sha256):
-            _remove_path(staging_dir)
-            journal_path.unlink(missing_ok=True)
-            return evaluate_page_asset_coverage(db, material)
 
     new_manifest = _render_manifest(rendered)
     _write_journal(
@@ -594,8 +635,13 @@ def _do_rebuild(
     except Exception:
         logger.exception("Page-asset DB replacement failed for material %s", material.id)
         db.rollback()
-        restored = _restore_old_directory(version_dir, backup_dir)
-        if restored:
+        if backup_dir.exists() and _restore_backup(
+            version_dir, backup_dir, old_manifest, new_manifest
+        ):
+            journal_path.unlink(missing_ok=True)
+            return evaluate_page_asset_coverage(db, material)
+        if not old_manifest and _directory_matches_manifest(version_dir, new_manifest):
+            _remove_path(version_dir)
             journal_path.unlink(missing_ok=True)
             return evaluate_page_asset_coverage(db, material)
         _write_journal(
@@ -609,12 +655,14 @@ def _do_rebuild(
             old_manifest=old_manifest,
             new_manifest=new_manifest,
         )
-        return {
-            **evaluate_page_asset_coverage(db, material),
-            "status": "recovery_required",
-            "code": "DB_FAILURE_RESTORE_FAILED",
-            "journal": str(journal_path),
-        }
+        return _recovery_required(
+            db,
+            material,
+            "DB_FAILURE_RESTORE_FAILED",
+            journal_path,
+            old_manifest=old_manifest,
+            new_manifest=new_manifest,
+        )
 
     _write_journal(
         journal_path,
