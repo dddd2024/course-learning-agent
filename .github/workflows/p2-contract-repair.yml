@@ -1,15 +1,16 @@
 name: Apply P2 contract repair
 
 on:
-  push:
+  pull_request:
     branches:
-      - codex/v7-5-2-close-p2-contracts
+      - main
 
 permissions:
   contents: write
 
 jobs:
   patch:
+    if: github.head_ref == 'codex/v7-5-2-close-p2-contracts'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,7 +34,7 @@ jobs:
           Path("backend/app/services/page_asset_rebuild_contract.py").write_text('''"""Stable public contract for page-asset rebuild responses.
 
 The rebuild service historically returned raw coverage dictionaries from a
-few early-exit paths.  Public API callers must receive one shape regardless
+few early-exit paths. Public API callers must receive one shape regardless
 of the internal failure phase so the frontend cannot mistake readable legacy
 assets for a completed repair.
 """
