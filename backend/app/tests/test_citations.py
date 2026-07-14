@@ -217,6 +217,7 @@ def test_unverified_citations_do_not_turn_into_fallback_evidence(monkeypatch) ->
     assert result["citations"] == []
     assert result["not_found"] is True
     assert "未能提供可验证" in result["answer"]
+    assert "根据当前资料无法" in result["answer"]
 
 
 def test_not_found_flag_cannot_leak_an_uncited_partial_answer(monkeypatch) -> None:
@@ -242,6 +243,7 @@ def test_not_found_flag_cannot_leak_an_uncited_partial_answer(monkeypatch) -> No
     assert result["citations"] == []
     assert "虚拟存储器会扩充" not in result["answer"]
     assert "未能提供可验证" in result["answer"]
+    assert "根据当前资料无法" in result["answer"]
 
 
 def test_exact_quote_without_claim_is_marked_weak(monkeypatch) -> None:

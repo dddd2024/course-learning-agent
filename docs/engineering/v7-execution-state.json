@@ -1,44 +1,61 @@
 {
   "version": "v7.5.2",
-  "base_commit": "a07b9332ac0a11ef53bd4e9081b845c1073da445",
-  "branch": "codex/v7-5-2-r5-real-llm-hardening",
-  "started_at": "2026-07-14T20:30:00+08:00",
+  "base_commit": "4cd1d2d2bfe6db49f370f7cfa9a7cba15bb1ba84",
+  "branch": "codex/v7-5-2-r6-audit-fixes",
+  "started_at": "2026-07-15T23:00:00+08:00",
   "overall_status": "verified_locally",
   "current_task": null,
-  "local_closure": "V7.5.2_RC_BLOCKERS_CLOSED_LOCALLY",
+  "local_closure": "V7.5.2_R6_VERIFIED_LOCALLY",
+  "release_candidate": null,
+  "remote_ci": "success",
+  "real_llm": "success",
   "closure_evidence": {
+    "tested_code_sha": "7b7401b74833fb5fe0e187b396135fdf1c82399d",
+    "real_llm_runs": ["r6-c1-a", "r6-c1-b"],
+    "evidence_paths": ["docs/engineering/evidence/r6/r6-c1-a", "docs/engineering/evidence/r6/r6-c1-b"],
+    "backend_passed": 964,
+    "frontend_unit_passed": 32,
+    "playwright_passed": 75,
+    "v7_acceptance_passed": 22
+  },
+  "remote_ci_evidence": {
+    "workflow_run_id": 29359449548,
+    "workflow_run_number": 147,
+    "head_sha": "a413626e8f97044e9f43aa3566b7202310d3dbbb",
+    "conclusion": "success",
+    "backend_passed": 964,
+    "frontend_unit_passed": 32,
+    "playwright_passed": 75,
+    "playwright_failed": 0,
+    "playwright_skipped": 0,
+    "v7_acceptance_passed": 22,
+    "observed_at": "2026-07-14T19:05:18+00:00"
+  },
+  "previous_r5_claim": {
     "tested_code_sha": "d3425ecce8ad81984ca1d46187291baeac1ce81c",
     "real_llm_runs": ["r5-c1-a9", "r5-c1-b"],
-    "standard_acceptance": "22/22 passed"
+    "status": "superseded_unverified",
+    "reason": "R6 evidence supersedes the earlier non-reproducible R5 claim."
   },
-  "release_candidate": "v1.0.0-rc3",
-  "remote_ci": "pending",
-  "real_llm": "success",
-  "windows_launcher": {
-    "status": "manual_verified",
-    "verified_by": "user",
-    "automation_required": false,
-    "note": "User confirmed one-click launcher works; excluded from R5 scope."
-  },
+  "windows_launcher": {"status": "manual_verified", "verified_by": "user", "automation_required": false, "note": "Excluded from R6 scope."},
   "latest_gate": {
-    "source": "R5 local RC3 evidence closure",
-    "observed_at": "2026-07-14T16:35:00+00:00",
+    "source": "R6 local and remote closure",
+    "observed_at": "2026-07-14T19:05:18+00:00",
     "overall": "success",
-    "commit_sha": "d3425ecce8ad81984ca1d46187291baeac1ce81c",
-    "passed_gates": ["backend_full_pytest", "frontend_unit_tests", "frontend_type_check", "frontend_build", "migration_dry_run_and_smoke", "playwright_e2e", "v7_acceptance_verification", "real_llm_acceptance_two_runs", "windows_launcher_manual_verification"],
+    "commit_sha": "7b7401b74833fb5fe0e187b396135fdf1c82399d",
+    "remote_ci_head_sha": "a413626e8f97044e9f43aa3566b7202310d3dbbb",
+    "passed_gates": ["backend_full_pytest", "frontend_unit_tests", "frontend_type_check", "frontend_build", "migration_dry_run_and_smoke", "playwright_e2e", "v7_acceptance_verification", "real_llm_acceptance_two_runs", "windows_launcher_smoke", "remote_ci_verification"],
     "failed_gates": [],
-    "not_run_gates": ["remote_ci_verification"]
+    "not_run_gates": []
   },
   "audit_blockers": [],
-  "resolved_blockers": ["AUDIT-R5-01", "AUDIT-R5-02", "AUDIT-R5-03", "AUDIT-R5-04", "AUDIT-R5-05", "AUDIT-R5-06", "AUDIT-R5-07"],
+  "resolved_blockers": ["strict metadata persistence", "generic outline repair evidence", "reproducible real-LLM manifests", "same-SHA real-LLM acceptance", "remote CI verification", "cross-platform line-ending manifest mismatch"],
   "deferred_to_v1_1": ["cross_platform_evidence", "historical_page_asset_browser", "bbox_search_highlight", "advanced_document_layout"],
   "tasks": {
-    "AUDIT-R5-01": {"status": "done", "changed_files": ["backend/app/api/v1/endpoints/knowledge_points.py", "backend/app/services/real_llm_acceptance_service.py"], "tests_run": ["strict observed-meta unit tests", "real runs r5-c1-a9 and r5-c1-b"], "remaining": [], "next_task": null, "commits": ["d3425ec"]},
-    "AUDIT-R5-02": {"status": "done", "changed_files": ["backend/app/agents/outline.py", "backend/app/agents/prompts/outline_repair_v1.md"], "tests_run": ["outline repair tests", "real REAL-02 >= 2 twice"], "remaining": [], "next_task": null, "commits": ["d3425ec"]},
-    "AUDIT-R5-03": {"status": "done", "changed_files": ["backend/app/services/real_llm_acceptance_service.py", "scripts/verify_real_llm_acceptance.py"], "tests_run": ["artifact scanner tests", "two passing local scans"], "remaining": [], "next_task": null, "commits": ["d3425ec"]},
-    "AUDIT-R5-04": {"status": "done", "changed_files": ["scripts/verify_real_llm_acceptance.py"], "tests_run": ["real REAL-03 and REAL-05 assertions twice"], "remaining": [], "next_task": null, "commits": ["d3425ec"]},
-    "AUDIT-R5-05": {"status": "done", "changed_files": ["scripts/verify_real_llm_acceptance.py"], "tests_run": ["real artifact counters checked twice"], "remaining": [], "next_task": null, "commits": ["d3425ec"]},
-    "AUDIT-R5-06": {"status": "done", "changed_files": [], "tests_run": ["r5-c1-a9: 6/6", "r5-c1-b: 6/6"], "remaining": [], "next_task": null, "commits": ["d3425ec"]},
-    "AUDIT-R5-07": {"status": "done", "changed_files": ["docs/engineering/v7-execution-state.json", "docs/engineering/v7-5-2-scope.md", "docs/engineering/real-llm-acceptance.md"], "tests_run": ["state contract", "standard acceptance 22/22"], "remaining": ["remote CI confirmation after push"], "next_task": null, "commits": []}
+    "AUDIT-R6-01": {"status": "done", "changed_files": ["scripts/verify_real_llm_acceptance.py", "backend/app/services/chat_service.py"], "tests_run": ["focused metadata and chat tests", "backend full pytest"], "remaining": [], "next_task": null, "commits": ["7b7401b"]},
+    "AUDIT-R6-02": {"status": "done", "changed_files": ["backend/app/agents/outline.py", "backend/app/agents/prompts/outline_repair_v1.md", "backend/app/tests/test_r6_outline_repair_evidence.py"], "tests_run": ["outline evidence fixtures", "backend full pytest"], "remaining": [], "next_task": null, "commits": ["7b7401b"]},
+    "AUDIT-R6-03": {"status": "done", "changed_files": ["scripts/verify_real_llm_evidence.py", "backend/app/tests/test_r6_real_llm_evidence.py"], "tests_run": ["evidence verifier fixtures", "Run A and Run B verifier", "committed bundle hash recomputation in CI"], "remaining": [], "next_task": null, "commits": ["7b7401b", "a0698e1", "5b07d40", "19a920c", "a413626"]},
+    "AUDIT-R6-04": {"status": "done", "changed_files": [], "tests_run": ["964 backend passed", "32 frontend passed", "75 Playwright passed with failed=0 skipped=0", "22 V7 checks passed", "two 6/6 real-LLM runs"], "remaining": [], "next_task": null, "commits": ["7b7401b", "a413626"]},
+    "AUDIT-R6-05": {"status": "done", "changed_files": ["docs/engineering/v7-execution-state.json"], "tests_run": ["GitHub Actions CI run 29359449548: all five jobs passed"], "remaining": [], "next_task": null, "commits": ["af23e43"]}
   }
 }

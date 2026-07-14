@@ -290,7 +290,7 @@ def answer_question(
     # and make the evidence gap explicit while retaining the retrieval view.
     if not output["citations"]:
         output["answer"] = (
-            "已检索到相关资料片段，但本次回答未能提供可验证的原文引用。"
+            "根据当前资料无法确认该问题。已检索到相关资料片段，但本次回答未能提供可验证的原文引用。"
             "为避免把未经证实的内容当作课程结论，请查看“检索过程”中的片段后重试或换一种问法。"
         )
         output["key_points"] = []

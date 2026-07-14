@@ -189,7 +189,10 @@ def generate(
     _safe_finalize_run(
         db, run_id=run_id,
         fallback_used=bool(meta.get("fallback_used", False)),
-        output_summary={"task_count": len(normalised_tasks)},
+        output_summary={
+            "task_count": len(normalised_tasks),
+            "meta_observed": meta.get("meta_observed") is True,
+        },
         duration_ms=int((time.monotonic() - run_started_at) * 1000),
     )
 

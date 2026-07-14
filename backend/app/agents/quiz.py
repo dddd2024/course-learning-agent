@@ -578,12 +578,12 @@ def generate_quiz(
     # V6-31: process the LLM output into validated items.
     items = _process_llm_output(output, db, course_id, knowledge_points)
 
-    # V6-31: if we got some valid items but fewer than requested, retry
-    # once with a stronger prompt before settling for a partial result.
-    # When zero items survived (e.g. insufficient evidence), retrying
-    # with the same material won't help, so skip the retry.
+    # V6-31: if fewer than requested items survive validation, retry once
+    # with a stronger prompt before settling for a partial result.  A real
+    # provider can return structurally invalid output on one call and a
+    # grounded result on the next, including when zero items first survive.
     retried = False
-    if 0 < len(items) < question_count:
+    if len(items) < question_count:
         retry_prompt = (
             prompt
             + f"\n\n重要提示：上次只生成了 {len(items)} 道符合条件的题目，"
@@ -644,7 +644,11 @@ def generate_quiz(
         run_id=run_id,
         fallback_used=bool(meta.get("fallback_used", False)),
         evidence_status="insufficient" if not items else None,
-        output_summary={"item_count": len(items), "retried": retried},
+        output_summary={
+            "item_count": len(items),
+            "retried": retried,
+            "meta_observed": meta.get("meta_observed") is True,
+        },
         started_at=run_started_at,
     )
 

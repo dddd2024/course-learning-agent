@@ -22,7 +22,8 @@ REAL_META = {
 
 
 def _point(title: str, chunk_id: int) -> dict:
-    return {"title": title, "summary": title, "importance": 3, "source_chunk_ids": [chunk_id], "exam_style": "解释", "review_action": "复习"}
+    quote = next(chunk["text"] for chunk in CHUNKS if chunk["chunk_id"] == chunk_id)
+    return {"title": title, "summary": title, "importance": 3, "source_chunk_ids": [chunk_id], "source_evidence": [{"chunk_id": chunk_id, "quote_text": quote}], "exam_style": "解释", "review_action": "复习"}
 
 
 def test_outline_contract_detects_number_only_duplicate_titles() -> None:
