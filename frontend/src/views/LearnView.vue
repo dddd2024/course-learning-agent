@@ -834,7 +834,11 @@ async function loadChunks() {
     loadImageIntegrity()
     // V7: task start only creates the in-progress state.  Evidence is sent
     // after the target material and its rendered reader data have loaded.
-    const expectedMaterialId = Number(route.query.material_id)
+    // Route URLs use the immutable public identity, while task-event
+    // evidence intentionally retains the resolved numeric primary key.
+    const expectedMaterialId = typeof route.query.material === 'string'
+      ? (selectedMaterial.value?.id ?? 0)
+      : Number(route.query.material_id)
     if (
       fromTaskId.value &&
       !targetLoadRecorded.value &&
