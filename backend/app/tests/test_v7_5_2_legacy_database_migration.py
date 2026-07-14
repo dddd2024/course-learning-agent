@@ -144,3 +144,30 @@ def test_public_id_constraint_repair_regenerates_empty_and_duplicate_values_idem
     after = migration.dry_run(None, engine)
     assert after["would_change"] == 0
     assert after["public_id_null_rows"] == after["public_id_duplicate_rows"] == 0
+
+
+def test_public_id_constraint_repair_normalizes_whitespace_only_values(tmp_path):
+    """A valid-looking deployed schema can still contain a blank public ID."""
+    engine = _legacy_engine(tmp_path)
+    migration = _migration()
+    migration.up(None, engine)
+
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE materials SET public_id='   ' WHERE id=7"))
+
+    before = migration.dry_run(None, engine)
+    assert before["public_id_not_null_missing"] is False
+    assert before["public_id_unique_missing"] is False
+    assert before["public_id_null_rows"] == 1
+    assert before["would_change"] > 0
+
+    migration.up(None, engine)
+    with engine.connect() as conn:
+        snapshot = migration.inspect_materials_schema(conn)
+        public_id = conn.execute(text("SELECT public_id FROM materials WHERE id=7")).scalar_one()
+        assert public_id.strip()
+        assert snapshot.public_id_null_rows == snapshot.public_id_duplicate_rows == 0
+        assert conn.execute(text("PRAGMA foreign_key_check")).fetchall() == []
+
+    migration.up(None, engine)
+    assert migration.dry_run(None, engine)["would_change"] == 0

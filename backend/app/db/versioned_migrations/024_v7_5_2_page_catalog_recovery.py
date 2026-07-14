@@ -160,6 +160,11 @@ def _rebuild_materials_for_autoincrement(engine: Engine) -> None:
         needs_rebuild = (
             not before.columns or not before.has_autoincrement or not before.has_public_id
             or not before.public_id_not_null or not before.public_id_unique
+            # ``TRIM(public_id) = ''`` is reported by dry-run as an invalid
+            # external identity.  Rebuild even when the schema constraints
+            # already exist so copy_materials_rows can replace whitespace-only
+            # values and make the next dry-run genuinely idempotent.
+            or before.public_id_null_rows > 0 or before.public_id_duplicate_rows > 0
         )
         if not needs_rebuild:
             return
