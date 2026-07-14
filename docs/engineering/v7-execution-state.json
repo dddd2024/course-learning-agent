@@ -1,28 +1,56 @@
 {
   "version": "v7.5.2",
   "base_commit": "fd5198b63e25b869b3a31fb0e7178b9c02f3c294",
-  "branch": "codex/v7-5-2-rc-blocker-fix",
+  "branch": "codex/v1-rc3-regression-gate",
   "started_at": "2026-07-14T00:00:00+08:00",
-  "overall_status": "verified_locally",
-  "current_task": null,
-  "local_closure": "V7.5.2_RC_BLOCKERS_CLOSED_LOCALLY",
-  "closure_evidence": {
-    "timestamp": "2026-07-14T09:30:00+08:00",
-    "backend_tests": "890 passed",
-    "frontend_build": "passed",
-    "e2e_config": "isolated (CLEAN_E2E_DB, dedicated database + upload dir)"
+  "overall_status": "in_progress",
+  "current_task": "V7.5.2-04",
+  "local_closure": null,
+  "closure_evidence": null,
+  "release_candidate": null,
+  "remote_ci": "required_before_local_closure",
+  "required_gates": [
+    "backend_full_pytest",
+    "frontend_unit_tests",
+    "frontend_type_check",
+    "frontend_build",
+    "migration_dry_run_and_smoke",
+    "playwright_e2e",
+    "v7_acceptance_verification"
+  ],
+  "latest_regression": {
+    "workflow_run_id": 29305042716,
+    "head_commit": "99aace222c9a6f65edac5d1b1b0f16c8a8aa5a2e",
+    "recorded_at": "2026-07-14T12:22:25+08:00",
+    "gates": {
+      "backend_full_pytest": "passed",
+      "frontend_unit_tests": "passed",
+      "frontend_type_check": "passed",
+      "frontend_build": "passed",
+      "migration_dry_run_and_smoke": "passed",
+      "playwright_e2e": "failed",
+      "v7_acceptance_verification": "not_run"
+    },
+    "playwright_summary": {
+      "passed": 47,
+      "failed": 27,
+      "not_run": 2
+    }
   },
-  "release_candidate": "v1.0.0-rc3",
-  "remote_ci": "deferred_to_v1_1",
-  "audit_blockers": [],
+  "audit_blockers": [
+    "e2e_environment_isolation",
+    "material_chunk_and_page_asset_pipeline",
+    "knowledge_point_and_quiz_evidence",
+    "authentication_test_state_isolation",
+    "plan_lifecycle_contracts",
+    "v7_5_2_user_path_acceptance"
+  ],
   "resolved_blockers": [
     "new_version_image_binding",
     "page_asset_expected_page_coverage",
-    "page_asset_db_fs_compensation",
-    "e2e_environment_isolation"
+    "page_asset_db_fs_compensation"
   ],
   "deferred_to_v1_1": [
-    "remote_ci",
     "cross_platform_evidence",
     "historical_page_asset_browser",
     "bbox_search_highlight",
@@ -36,7 +64,9 @@
         "docs/engineering/v7-5-2-scope.md",
         "backend/app/tests/test_v7_5_2_execution_state.py"
       ],
-      "tests_run": ["test_v7_5_2_execution_state.py"],
+      "tests_run": [
+        "backend/app/tests/test_v7_5_2_execution_state.py"
+      ],
       "remaining": [],
       "next_task": "V7.5.2-01",
       "commits": []
@@ -50,7 +80,9 @@
         "backend/app/tests/test_v7_5_0_document_fidelity.py",
         "backend/app/tests/test_v7_document_ir_pipeline.py"
       ],
-      "tests_run": ["test_v7_5_2_versioned_image_parse.py"],
+      "tests_run": [
+        "test_v7_5_2_versioned_image_parse.py"
+      ],
       "remaining": [],
       "next_task": "V7.5.2-02",
       "commits": []
@@ -61,7 +93,9 @@
         "backend/app/services/material_page_asset_service.py",
         "backend/app/tests/test_v7_5_2_page_asset_integrity.py"
       ],
-      "tests_run": ["test_v7_5_2_page_asset_integrity.py"],
+      "tests_run": [
+        "test_v7_5_2_page_asset_integrity.py"
+      ],
       "remaining": [],
       "next_task": "V7.5.2-03",
       "commits": []
@@ -72,49 +106,63 @@
         "backend/app/services/material_page_asset_service.py",
         "backend/app/tests/test_v7_5_2_page_asset_transaction.py"
       ],
-      "tests_run": ["test_v7_5_2_page_asset_transaction.py"],
+      "tests_run": [
+        "test_v7_5_2_page_asset_transaction.py"
+      ],
       "remaining": [],
       "next_task": "V7.5.2-04",
       "commits": []
     },
     "V7.5.2-04": {
-      "status": "done",
+      "status": "in_progress",
       "changed_files": [
         "frontend/playwright.config.ts"
       ],
-      "tests_run": ["playwright.config.ts isolation review"],
-      "remaining": [],
+      "tests_run": [],
+      "remaining": [
+        "use unique E2E database and upload directory per run",
+        "disable existing server reuse",
+        "add global setup and teardown with normal-storage snapshot verification",
+        "reject normal database and upload paths in E2E mode"
+      ],
       "next_task": "V7.5.2-05",
       "commits": []
     },
     "V7.5.2-05": {
-      "status": "done",
+      "status": "pending",
       "changed_files": [
         "frontend/tests/e2e/v7-5-2-user-paths.spec.ts"
       ],
-      "tests_run": ["v7-5-2-user-paths.spec.ts strengthened assertions review"],
-      "remaining": [],
+      "tests_run": [],
+      "remaining": [
+        "repair and pass all V7.5.2 user paths under isolated E2E state"
+      ],
       "next_task": "V7.5.2-06",
       "commits": []
     },
     "V7.5.2-06": {
-      "status": "done",
+      "status": "pending",
       "changed_files": [
         "frontend/src/components/document/PageCanvas.vue",
         "backend/app/tests/test_v7_5_2_page_edge_cases.py"
       ],
-      "tests_run": ["test_v7_5_2_page_edge_cases.py"],
-      "remaining": [],
+      "tests_run": [],
+      "remaining": [
+        "verify page rendering edge cases through the full E2E gate"
+      ],
       "next_task": "V7.5.2-07",
       "commits": []
     },
     "V7.5.2-07": {
-      "status": "done",
+      "status": "pending",
       "changed_files": [
         "docs/engineering/v7-execution-state.json"
       ],
-      "tests_run": ["full suite: 890 passed"],
-      "remaining": [],
+      "tests_run": [],
+      "remaining": [
+        "all required gates must pass in the same regression run",
+        "record the verified commit and exact gate evidence"
+      ],
       "next_task": null,
       "commits": []
     }
