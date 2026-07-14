@@ -72,7 +72,8 @@ def _make_course(user_id: int, name: str = "测试课程") -> Course:
 
 
 def _stable_key(course_id: int, task_type: str, title: str) -> str:
-    return f"{course_id}:{task_type}:{re.sub(r'\\s+', '', title).lower()}"
+    normalized_title = re.sub(r"\s+", "", title).lower()
+    return f"{course_id}:{task_type}:{normalized_title}"
 
 
 def _seed_plan_with_tasks(
