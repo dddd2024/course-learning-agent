@@ -35,6 +35,15 @@ zero skipped, and remote CI success.  No deleted pre-migration SQLite high
 watermark is claimed to be recoverable; only IDs allocated after the rebuild
 must not be reused.
 
+## R3 repair and public-identity gates
+
+R3 starts from merged `main` at `0ae352e3f49984cd919c461359d4b2c7593dfb2c`.
+It keeps the release `in_progress` while it closes truthful page-catalogue
+backfill results, independent-image partial-failure messaging, public identity
+schema consistency and public-id learning links. Remote CI is three-state:
+`success`, `failure`, or `unavailable`; an unavailable API result is not a
+failure, but it also cannot authorize RC3.
+
 ## Verified regression facts
 
 GitHub Actions PR #6, run #96, was executed against the recovery branch.

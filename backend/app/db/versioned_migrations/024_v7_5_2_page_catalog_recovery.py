@@ -33,23 +33,40 @@ class MaterialsSchemaSnapshot:
     schema_hash: str
     has_autoincrement: bool
     has_public_id: bool
+    public_id_not_null: bool
+    public_id_unique: bool
+    public_id_null_rows: int
+    public_id_duplicate_rows: int
 
 
 def inspect_materials_schema(conn: Connection) -> MaterialsSchemaSnapshot:
     table_sql = conn.execute(text("SELECT sql FROM sqlite_master WHERE type='table' AND name='materials'")).scalar()
     if not table_sql:
-        return MaterialsSchemaSnapshot((), 0, 0, (), (), "", False, False)
-    columns = tuple(row[1] for row in conn.execute(text("PRAGMA table_info(materials)")).fetchall())
+        return MaterialsSchemaSnapshot((), 0, 0, (), (), "", False, False, False, False, 0, 0)
+    column_rows = conn.execute(text("PRAGMA table_info(materials)")).fetchall()
+    columns = tuple(row[1] for row in column_rows)
+    public_info = next((row for row in column_rows if row[1] == "public_id"), None)
+    public_not_null = bool(public_info and public_info[3])
+    unique = False
+    for index in conn.execute(text("PRAGMA index_list(materials)")).fetchall():
+        if index[2] and [row[2] for row in conn.execute(text(f"PRAGMA index_info('{index[1]}')")).fetchall()] == ["public_id"]:
+            unique = True
     indexes = tuple(
         row[0] for row in conn.execute(text("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='materials' AND sql IS NOT NULL")).fetchall()
     )
     foreign_keys = tuple(tuple(row) for row in conn.execute(text("PRAGMA foreign_key_list(materials)")).fetchall())
     row_count = int(conn.execute(text("SELECT COUNT(*) FROM materials")).scalar_one())
     max_id = int(conn.execute(text("SELECT COALESCE(MAX(id), 0) FROM materials")).scalar_one())
+    null_rows = duplicate_rows = 0
+    if "public_id" in columns:
+        null_rows = int(conn.execute(text("SELECT COUNT(*) FROM materials WHERE public_id IS NULL OR TRIM(public_id) = ''")).scalar_one())
+        duplicate_rows = int(conn.execute(text("SELECT COALESCE(SUM(n - 1), 0) FROM (SELECT COUNT(*) AS n FROM materials WHERE public_id IS NOT NULL AND TRIM(public_id) <> '' GROUP BY public_id HAVING n > 1)" )).scalar_one())
     return MaterialsSchemaSnapshot(
         columns=columns, row_count=row_count, max_id=max_id, indexes=indexes,
         foreign_keys=foreign_keys, schema_hash=sha256(table_sql.encode("utf-8")).hexdigest(),
         has_autoincrement="AUTOINCREMENT" in table_sql.upper(), has_public_id="public_id" in columns,
+        public_id_not_null=public_not_null, public_id_unique=unique,
+        public_id_null_rows=null_rows, public_id_duplicate_rows=duplicate_rows,
     )
 
 
@@ -93,11 +110,14 @@ def copy_materials_rows(conn: Connection, snapshot: MaterialsSchemaSnapshot) -> 
     rows = conn.execute(text(f"SELECT {', '.join(select_columns)} FROM materials")).mappings().all()
     target_columns = ["id", "public_id", *source_columns[1:]]
     params = []
+    seen: set[str] = set()
     for row in rows:
         payload = {column: row[column] for column in source_columns}
         # Preserve an already-issued external identity during a second schema
         # repair.  Only genuinely old rows receive a new UUID.
-        payload["public_id"] = row.get("public_id") or str(uuid4())
+        candidate = str(row.get("public_id") or "").strip()
+        payload["public_id"] = candidate if candidate and candidate not in seen else str(uuid4())
+        seen.add(payload["public_id"])
         params.append(payload)
     if params:
         names = ", ".join(target_columns)
@@ -115,7 +135,7 @@ def validate_materials_rebuild(conn: Connection, before: MaterialsSchemaSnapshot
     after = inspect_materials_schema(conn)
     if after.row_count != before.row_count:
         raise RuntimeError(f"materials row count changed: {before.row_count} -> {after.row_count}")
-    if not after.has_autoincrement or not after.has_public_id:
+    if not after.has_autoincrement or not after.has_public_id or not after.public_id_not_null or not after.public_id_unique:
         raise RuntimeError("materials rebuild did not create AUTOINCREMENT/public_id")
     if after.foreign_keys != before.foreign_keys:
         raise RuntimeError("materials foreign keys changed during rebuild")
@@ -132,7 +152,11 @@ def _set_future_id_floor(conn: Connection) -> None:
 def _rebuild_materials_for_autoincrement(engine: Engine) -> None:
     with engine.connect() as conn:
         before = inspect_materials_schema(conn)
-        if not before.columns or before.has_autoincrement:
+        needs_rebuild = (
+            not before.columns or not before.has_autoincrement or not before.has_public_id
+            or not before.public_id_not_null or not before.public_id_unique
+        )
+        if not needs_rebuild:
             return
         conn.commit()
         foreign_keys = int(conn.exec_driver_sql("PRAGMA foreign_keys").scalar_one())
@@ -235,8 +259,13 @@ def dry_run(db, engine: Engine) -> dict:
     stats = _catalog_stats(engine)
     stats.update({
         "material_autoincrement_missing": not snapshot.has_autoincrement,
+        "public_id_column_missing": not snapshot.has_public_id,
         "public_id_missing": not snapshot.has_public_id,
-        "would_change": stats["missing_page_rows"] + int(not snapshot.has_autoincrement) + int(not snapshot.has_public_id),
+        "public_id_not_null_missing": not snapshot.public_id_not_null,
+        "public_id_unique_missing": not snapshot.public_id_unique,
+        "public_id_null_rows": snapshot.public_id_null_rows,
+        "public_id_duplicate_rows": snapshot.public_id_duplicate_rows,
+        "would_change": stats["missing_page_rows"] + int(not snapshot.has_autoincrement) + int(not snapshot.has_public_id) + int(not snapshot.public_id_not_null) + int(not snapshot.public_id_unique) + snapshot.public_id_null_rows + snapshot.public_id_duplicate_rows,
     })
     return stats
 

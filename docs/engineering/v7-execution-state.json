@@ -1,32 +1,31 @@
 {
   "version": "v7.5.2",
-  "base_commit": "f75cbca6f556c2eb6045b49e169e68442461bcea",
-  "branch": "codex/v7-5-2-audit-r2-migration-release-gates",
-  "started_at": "2026-07-14T18:00:00+08:00",
+  "base_commit": "0ae352e3f49984cd919c461359d4b2c7593dfb2c",
+  "branch": "codex/v7-5-2-audit-r3-repair-identity-gates",
+  "started_at": "2026-07-14T19:30:00+08:00",
   "overall_status": "in_progress",
-  "current_task": "AUDIT-R2-01",
+  "current_task": "AUDIT-R3-01",
   "local_closure": null,
   "closure_evidence": null,
   "release_candidate": null,
-  "remote_ci": "required_before_release",
+  "remote_ci": "unavailable",
   "latest_gate": {
-    "source": "R2 audit recovery reopened after main f75cbca baseline review",
-    "observed_at": "2026-07-14T18:00:00+08:00",
+    "source": "R3 audit recovery after merged R2 main baseline",
+    "observed_at": "2026-07-14T19:30:00+08:00",
     "overall": "not_run",
     "commit_sha": null,
     "passed_gates": [],
     "failed_gates": [],
-    "not_run_gates": ["real_sqlalchemy_legacy_schema_migration", "public_material_identity", "repair_result_truthfulness", "blob_request_race", "r2_playwright_e2e", "acceptance_summary_artifact", "remote_ci_verification"]
+    "not_run_gates": ["page_catalog_backfill_result_truthfulness", "public_id_schema_constraint_consistency", "public_id_external_link_adoption", "remote_ci_evidence_recovery"]
   },
   "audit_blockers": [
-    "real_sqlalchemy_legacy_schema_migration",
-    "material_external_identity",
-    "repair_result_truthfulness",
-    "real_repair_button_e2e",
-    "image_decode_evidence",
-    "blob_request_race",
-    "acceptance_summary_artifact",
-    "remote_ci_verification"
+    "page_catalog_backfill_result_truthfulness",
+    "image_reextract_result_truthfulness",
+    "public_id_schema_constraint_consistency",
+    "public_id_data_integrity_dry_run",
+    "public_id_external_link_adoption",
+    "backfill_failure_regression",
+    "remote_ci_evidence_recovery"
   ],
   "resolved_blockers": [
     "new_version_image_binding",
@@ -40,6 +39,13 @@
     "advanced_document_layout"
   ],
   "tasks": {
+    "AUDIT-R3-00": {"status": "done", "changed_files": ["docs/engineering/v7-execution-state.json"], "tests_run": ["state contract pending R3 update"], "remaining": [], "next_task": "AUDIT-R3-01", "commits": []},
+    "AUDIT-R3-01": {"status": "in_progress", "changed_files": [], "tests_run": [], "remaining": ["backfill failure contract"], "next_task": "AUDIT-R3-02", "commits": []},
+    "AUDIT-R3-02": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["reader UI partial status"], "next_task": "AUDIT-R3-03", "commits": []},
+    "AUDIT-R3-03": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["public ID constraints"], "next_task": "AUDIT-R3-04", "commits": []},
+    "AUDIT-R3-04": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["public external links"], "next_task": "AUDIT-R3-05", "commits": []},
+    "AUDIT-R3-05": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["R3 browser regressions"], "next_task": "AUDIT-R3-06", "commits": []},
+    "AUDIT-R3-06": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["remote CI evidence"], "next_task": null, "commits": []},
     "AUDIT-R2-00": {
       "status": "done",
       "changed_files": ["docs/engineering/v7-execution-state.json", "docs/engineering/v7-5-2-scope.md", "backend/app/tests/test_v7_5_2_execution_state.py"],
