@@ -4,6 +4,7 @@ import { backendPort } from './e2e-runtime'
 export const API_BASE = `http://127.0.0.1:${backendPort}/api/v1`
 export const TEST_USER = { username: 'test', password: 'test1234', email: 'test@example.com' }
 
+/** Register against the isolated backend and log in through the frontend. */
 export async function loginWithFreshUser(page: Page) {
   const registration = await page.request.post(`${API_BASE}/auth/register`, { data: TEST_USER })
   expect([201, 400, 409]).toContain(registration.status())
@@ -22,7 +23,6 @@ export async function registerUniqueUser(
   const username = `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}`
   const password = 'test1234'
   const email = `${username}@example.com`
-
   const reg = await request.post(`${API_BASE}/auth/register`, {
     data: { username, password, email },
   })
@@ -103,12 +103,7 @@ export async function uploadMaterial(
 ): Promise<number> {
   const fs = await import('fs')
   const buffer = fs.readFileSync(fixturePath)
-  const res = await request.post(`${API_BASE}/courses/${courseId}/materials`, {
-    headers,
-    multipart: { file: { name: filename, mimeType, buffer } },
-  })
-  expect(res.ok()).toBeTruthy()
-  return (await res.json()).id
+  return uploadBuffer(request, headers, courseId, buffer, filename, mimeType)
 }
 
 export async function uploadBuffer(
@@ -136,4 +131,50 @@ export async function parseMaterial(
   const response = await request.post(`${API_BASE}/materials/${materialId}/parse`, { headers })
   expect(response.ok()).toBeTruthy()
   await waitForMaterialStatus(request, headers, courseId, materialId, 'ready', 90_000)
+}
+
+/** Rich text content used by legacy acceptance specs and KP generation. */
+const TEXT_FALLBACK = `操作系统课程笔记
+
+快表 TLB 是页表的高速缓存，用于加速虚拟地址到物理地址的转换。
+页表存储虚拟页到物理页的映射关系。
+TLB 命中时无需访问内存中的页表，提升了地址转换速度。
+`
+
+async function uploadTextMaterial(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  courseId: number,
+): Promise<number> {
+  return uploadBuffer(
+    request,
+    headers,
+    courseId,
+    Buffer.from(TEXT_FALLBACK, 'utf-8'),
+    'networking-notes.txt',
+    'text/plain',
+  )
+}
+
+/** Preserve the shared setup contract used by the pre-V7.5.3 E2E suites. */
+export async function setupCourseWithMaterialAndKPs(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  courseName: string,
+  _fixturePath?: string,
+  _filename?: string,
+  _mimeType?: string,
+): Promise<{ courseId: number; materialId: number; kpCount: number }> {
+  const courseId = await createCourse(request, headers, courseName)
+  const materialId = await uploadTextMaterial(request, headers, courseId)
+  await parseMaterial(request, headers, courseId, materialId)
+
+  const kpRes = await request.post(
+    `${API_BASE}/courses/${courseId}/knowledge-points/generate`,
+    { headers },
+  )
+  expect(kpRes.ok()).toBeTruthy()
+  const kpBody = await kpRes.json()
+  expect(kpBody.knowledge_points.length).toBeGreaterThan(0)
+  return { courseId, materialId, kpCount: kpBody.knowledge_points.length }
 }
