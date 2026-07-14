@@ -14,7 +14,7 @@ settings.validate_prod_secrets()
 app = FastAPI(
     title="Course Learning Assistant API",
     description="课程学习助手 Agent 平台后端",
-    version="0.1.0",
+    version=settings.APP_VERSION,
 )
 
 # T09: CORS origins are now driven by the CORS_ORIGINS env var instead
