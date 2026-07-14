@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     # Task C: project identity exposed by /api/v1/health so the Windows
     # launcher can verify port 8000 actually serves this backend.
     APP_NAME: str = "course-learning-agent"
-    APP_VERSION: str = "0.1.0"
+    APP_VERSION: str = "1.0.0-rc.3"
     # Task D: build identity for /health. APP_GIT_COMMIT is injected by
     # start_windows.ps1 (via $env:APP_GIT_COMMIT = git rev-parse HEAD) so
     # the launcher can detect when port 8000 is held by a stale backend
