@@ -29,36 +29,25 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = ""
     LLM_MODEL: str = ""
     LLM_TIMEOUT_SECONDS: int = 60
-    # Task 9: concept compare can take longer than the default 60s
-    # timeout on first call, so give it a dedicated, longer window.
     LLM_CONCEPT_COMPARE_TIMEOUT_SECONDS: int = 120
     LLM_TEMPERATURE: float = 0.2
     LLM_MAX_TOKENS: int = 2000
     LLM_CONFIG_SECRET_KEY: str = _DEFAULT_LLM_CONFIG_SECRET
     EMBEDDING_PROVIDER: str = "mock"
     MAX_UPLOAD_MB: int = 30
-    # Phase 2 Task B: trace persistence level.
-    # - "error": only persist steps when the run fails (default)
-    # - "always": persist all steps (verbose, for debugging)
-    # - "off": never persist steps (audit run header only)
     AGENT_TRACE_MODE: str = "error"
-    # T09: environment + CORS hardening.
-    ENVIRONMENT: str = "development"  # development | production
+    ENVIRONMENT: str = "development"  # development | production | e2e
     CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
-    # SEC-V3-01: When True, allow private/localhost LLM endpoints in ALL
-    # environments. Defaults to False so SSRF protection is always active.
-    # The cloud metadata endpoint 169.254.169.254 is ALWAYS blocked.
     ALLOW_PRIVATE_LLM_ENDPOINTS: bool = False
-    # Task C: project identity exposed by /api/v1/health so the Windows
-    # launcher can verify port 8000 actually serves this backend.
     APP_NAME: str = "course-learning-agent"
     APP_VERSION: str = "0.1.0"
-    # Task D: build identity for /health. APP_GIT_COMMIT is injected by
-    # start_windows.ps1 (via $env:APP_GIT_COMMIT = git rev-parse HEAD) so
-    # the launcher can detect when port 8000 is held by a stale backend
-    # running an older commit. APP_LAUNCH_ID is generated per-process.
     APP_GIT_COMMIT: str = ""
     APP_LAUNCH_ID: str = ""
+    # V7.5.3-01: required when ENVIRONMENT=e2e.  They bind every process to
+    # one unique Playwright database/upload root and are validated before the
+    # SQLAlchemy engine is created.
+    E2E_RUN_ID: str = ""
+    E2E_RUN_ROOT: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -75,15 +64,7 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
     def validate_prod_secrets(self) -> None:
-        """Reject default secret values when ``ENVIRONMENT=production``.
-
-        Raises ``ValueError`` if any secret still holds its default
-        placeholder value, or if ``CORS_ORIGINS`` is empty or contains
-        the ``*`` wildcard (a misconfiguration that would disable the
-        same-origin policy in production). In development this is a
-        no-op so the platform runs out-of-the-box without configuration.
-        """
-        # T0-3: ENVIRONMENT 判断大小写不敏感，Production/PRODUCTION 均触发。
+        """Reject default secret values when ``ENVIRONMENT=production``."""
         if self.ENVIRONMENT.lower() != "production":
             return
         if self.JWT_SECRET_KEY in (_DEFAULT_JWT_SECRET, ""):
@@ -95,8 +76,6 @@ class Settings(BaseSettings):
                 "生产环境不能使用默认 LLM_CONFIG_SECRET_KEY，请设置一个 "
                 "Fernet 兼容密钥。"
             )
-        # T04: production 下拒绝 CORS_ORIGINS="*" 或空来源，避免误配置
-        # 关闭同源策略。
         origins = self.cors_origin_list()
         if not origins or "*" in origins:
             raise ValueError(
@@ -106,22 +85,12 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Task D: process-wide launch metadata exposed via /health. ``started_at``
-# is captured once at import time so every /health response in this process
-# reports the same startup timestamp. ``launch_id`` is a short uuid so the
-# launcher can tell "same process" from "restarted process" even if the
-# git commit is unchanged.
 _APP_STARTED_AT = datetime.now(timezone.utc).isoformat()
 _APP_LAUNCH_ID = settings.APP_LAUNCH_ID or uuid4().hex[:12]
 
 
 def app_build_info() -> dict:
-    """Return the ``build`` block for /health.
-
-    Kept as a function (not a module-level dict) so callers always see the
-    current ``settings.APP_GIT_COMMIT`` value even if it is mutated after
-    import (e.g. by tests).
-    """
+    """Return the build block exposed by ``/health``."""
     return {
         "git_commit": settings.APP_GIT_COMMIT,
         "launch_id": _APP_LAUNCH_ID,
