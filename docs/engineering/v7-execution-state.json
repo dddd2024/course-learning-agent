@@ -4,19 +4,19 @@
   "branch": "codex/v7-5-2-audit-r3-repair-identity-gates",
   "started_at": "2026-07-14T19:30:00+08:00",
   "overall_status": "in_progress",
-  "current_task": "AUDIT-R3-01",
+  "current_task": "AUDIT-R3-06",
   "local_closure": null,
   "closure_evidence": null,
   "release_candidate": null,
   "remote_ci": "unavailable",
   "latest_gate": {
     "source": "R3 audit recovery after merged R2 main baseline",
-    "observed_at": "2026-07-14T19:30:00+08:00",
-    "overall": "not_run",
+    "observed_at": "2026-07-14T20:23:00+08:00",
+    "overall": "local_passed_remote_pending",
     "commit_sha": null,
-    "passed_gates": [],
+    "passed_gates": ["backfill_failure_contract", "image_reextract_partial_success", "public_id_schema_constraints", "public_id_external_links", "backend_full_916_passed", "frontend_unit_27_passed", "frontend_typecheck", "frontend_build", "playwright_full_75_passed_zero_skipped"],
     "failed_gates": [],
-    "not_run_gates": ["page_catalog_backfill_result_truthfulness", "public_id_schema_constraint_consistency", "public_id_external_link_adoption", "remote_ci_evidence_recovery"]
+    "not_run_gates": ["acceptance_evidence_bundle", "remote_ci_evidence_recovery"]
   },
   "audit_blockers": [
     "page_catalog_backfill_result_truthfulness",
@@ -41,12 +41,12 @@
   "tasks": {
     "V7.5.2-00": {"status": "done", "changed_files": ["docs/engineering/v7-execution-state.json"], "tests_run": ["compatibility state contract"], "remaining": [], "next_task": "AUDIT-R3-01", "commits": []},
     "AUDIT-R3-00": {"status": "done", "changed_files": ["docs/engineering/v7-execution-state.json"], "tests_run": ["state contract pending R3 update"], "remaining": [], "next_task": "AUDIT-R3-01", "commits": []},
-    "AUDIT-R3-01": {"status": "in_progress", "changed_files": [], "tests_run": [], "remaining": ["backfill failure contract"], "next_task": "AUDIT-R3-02", "commits": []},
-    "AUDIT-R3-02": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["reader UI partial status"], "next_task": "AUDIT-R3-03", "commits": []},
-    "AUDIT-R3-03": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["public ID constraints"], "next_task": "AUDIT-R3-04", "commits": []},
-    "AUDIT-R3-04": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["public external links"], "next_task": "AUDIT-R3-05", "commits": []},
-    "AUDIT-R3-05": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["R3 browser regressions"], "next_task": "AUDIT-R3-06", "commits": []},
-    "AUDIT-R3-06": {"status": "pending", "changed_files": [], "tests_run": [], "remaining": ["remote CI evidence"], "next_task": null, "commits": []},
+    "AUDIT-R3-01": {"status": "done", "changed_files": ["backend/app/services/material_page_asset_service.py", "backend/app/api/v1/endpoints/parse.py"], "tests_run": ["page backfill failure unit and browser contract"], "remaining": [], "next_task": "AUDIT-R3-02", "commits": ["fd43915"]},
+    "AUDIT-R3-02": {"status": "done", "changed_files": ["frontend/src/views/LearnView.vue", "frontend/src/components/reader/PageCanvas.vue"], "tests_run": ["frontend unit", "P0-L02B", "P0-L02C"], "remaining": [], "next_task": "AUDIT-R3-03", "commits": ["fd43915"]},
+    "AUDIT-R3-03": {"status": "done", "changed_files": ["backend/app/db/versioned_migrations/024_v7_5_2_page_catalog_recovery.py"], "tests_run": ["legacy migration and public identity tests"], "remaining": [], "next_task": "AUDIT-R3-04", "commits": ["07b23bc", "610b918"]},
+    "AUDIT-R3-04": {"status": "done", "changed_files": ["frontend/src/views/LearnView.vue", "frontend/src/views/OutlineView.vue", "frontend/src/views/PlansView.vue", "frontend/src/views/ChatView.vue"], "tests_run": ["P1-ID01", "P1-ID02", "P1-ID03", "plan execution browser regression"], "remaining": [], "next_task": "AUDIT-R3-05", "commits": ["8d8f23a", "07b23bc", "2f00876", "dd37a95"]},
+    "AUDIT-R3-05": {"status": "done", "changed_files": ["frontend/tests/e2e/v7-5-2-legacy-page-preview.spec.ts", "frontend/tests/e2e/v7-5-2-material-public-id.spec.ts", "scripts/verify_function_closure_v7.py"], "tests_run": ["npx playwright test: 75 passed, 0 skipped"], "remaining": [], "next_task": "AUDIT-R3-06", "commits": ["07b23bc"]},
+    "AUDIT-R3-06": {"status": "in_progress", "changed_files": ["artifacts/verification/v7-audit-recovery"], "tests_run": ["local gates completed"], "remaining": ["acceptance evidence bundle", "branch PR CI success", "main CI success"], "next_task": null, "commits": []},
     "AUDIT-R2-00": {
       "status": "done",
       "changed_files": ["docs/engineering/v7-execution-state.json", "docs/engineering/v7-5-2-scope.md", "backend/app/tests/test_v7_5_2_execution_state.py"],
