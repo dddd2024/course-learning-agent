@@ -498,10 +498,10 @@ def run_chat_pipeline(
         assistant_msg = Message(
             conversation_id=conversation.id,
             role="assistant",
-            content="未检索到与该问题相关的课程资料，请先上传并解析材料后再提问。",
+            content="未检索到相关内容或可用的课程资料，请先上传并解析材料后再提问。",
             answer_json=json.dumps(
                 {
-                    "answer": "未检索到与该问题相关的课程资料，请先上传并解析材料后再提问。",
+                    "answer": "未检索到相关内容或可用的课程资料，请先上传并解析材料后再提问。",
                     "not_found": True,
                     "citations": [],
                     "follow_up_questions": [],
@@ -526,7 +526,7 @@ def run_chat_pipeline(
             "event": "final",
             "data": ChatResponse(
                 message_id=assistant_msg.id,
-                answer="未检索到与该问题相关的课程资料，请先上传并解析材料后再提问。",
+                answer="未检索到相关内容或可用的课程资料，请先上传并解析材料后再提问。",
                 citations=[],
                 not_found=True,
                 follow_up_questions=[],
@@ -710,7 +710,7 @@ def run_chat_pipeline(
     original_citation_count = len(result.get("citations", []))
     if not citations and original_citation_count > 0:
         evidence_insufficient_msg = (
-            "本次回答未能提供可验证的原文引用，证据不足，请查看检索片段后重试。"
+            "根据当前资料无法确认该问题：本次回答未能提供可验证的原文引用，证据不足，请查看检索片段后重试。"
         )
         result["answer"] = evidence_insufficient_msg
         result["not_found"] = True
@@ -753,6 +753,9 @@ def run_chat_pipeline(
         output_summary={
             "answer": _summarise(result.get("answer", ""), 200),
             "citation_count": len(citations),
+            # The acceptance harness reads this persisted value directly;
+            # provider/model fields must never be used as a proxy for it.
+            "meta_observed": result.get("meta_observed") is True,
         },
         duration_ms=total_duration,
     )

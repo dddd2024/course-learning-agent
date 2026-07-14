@@ -202,6 +202,33 @@ def test_quiz_drops_items_without_evidence(db_session, monkeypatch):
         assert len(item["source_evidence"]) > 0
 
 
+def test_quiz_retries_when_first_output_has_no_valid_items(db_session, monkeypatch):
+    """A transient malformed real-model response gets one grounded retry."""
+    user, course, chunks, kps = _setup_env(db_session, n_chunks=1, n_kps=1)
+    invalid = _make_tf_question(0, chunks[0], source_evidence=[])
+    valid = _make_tf_question(0, chunks[0])
+    responses = iter([{"questions": [invalid]}, {"questions": [valid]}])
+    calls = []
+
+    def mock_llm(prompt, agent_type, schema=None, user_config=None):
+        calls.append((prompt, agent_type))
+        return next(responses), _mock_meta()
+
+    monkeypatch.setattr("app.agents.quiz.call_llm_with_meta", mock_llm)
+
+    result = generate_quiz(
+        db=db_session,
+        user_id=user.id,
+        course_id=course.id,
+        knowledge_points=kps,
+        course_name="操作系统",
+        question_count=1,
+    )
+
+    assert result["generated_count"] == 1
+    assert len(calls) == 2
+
+
 def test_quiz_drops_items_with_invalid_kp(db_session, monkeypatch):
     """Items with invalid KP references are dropped."""
     user, course, chunks, kps = _setup_env(db_session, n_chunks=5, n_kps=5)

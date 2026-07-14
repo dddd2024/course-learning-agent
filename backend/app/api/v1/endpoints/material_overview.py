@@ -192,7 +192,11 @@ def generate_material_study_guide(
     answer = str(output.get("answer") or "资料不足，无法生成内容速览。")
     AgentAudit.finish_run(
         db, run.id, status="degraded" if meta.get("degraded") else "success",
-        output_summary={"evidence_ids": evidence_ids, "provider": meta.get("actual_provider")},
+        output_summary={
+            "evidence_ids": evidence_ids,
+            "provider": meta.get("actual_provider"),
+            "meta_observed": meta.get("meta_observed") is True,
+        },
     )
     db.commit()
     return MaterialStudyGuideResponse(

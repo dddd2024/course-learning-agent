@@ -38,6 +38,7 @@ def test_v7_5_2_records_honest_current_state() -> None:
     assert state["branch"].startswith("codex/v7-5-2-")
     assert state["overall_status"] in {"in_progress", "verified_locally"}
 
+    is_r6 = "AUDIT-R6-01" in state["tasks"]
     if state["overall_status"] == "in_progress":
         assert state["local_closure"] is None
         assert state["release_candidate"] is None
@@ -45,8 +46,12 @@ def test_v7_5_2_records_honest_current_state() -> None:
         assert state["current_task"] in state["tasks"]
         assert state["tasks"][state["current_task"]]["status"] == "in_progress"
     else:
-        assert state["local_closure"] == "V7.5.2_RC_BLOCKERS_CLOSED_LOCALLY"
-        assert state["release_candidate"] == "v1.0.0-rc3"
+        if is_r6:
+            assert state["local_closure"] == "V7.5.2_R6_EVIDENCE_CLOSED_LOCALLY"
+            assert state["release_candidate"] is None
+        else:
+            assert state["local_closure"] == "V7.5.2_RC_BLOCKERS_CLOSED_LOCALLY"
+            assert state["release_candidate"] == "v1.0.0-rc3"
         assert state["audit_blockers"] == []
         assert state["current_task"] is None
 
@@ -97,7 +102,11 @@ def test_verified_locally_requires_every_release_gate() -> None:
         task["status"] in {"done", "superseded"}
         for task in state["tasks"].values()
     )
-    assert state["remote_ci"] in {"pending", "success"}
+    if "AUDIT-R6-01" in state["tasks"]:
+        assert state["release_candidate"] is None
+        assert state["remote_ci"] in {"pending", "success"}
+    else:
+        assert state["remote_ci"] in {"pending", "success"}
     assert state["closure_evidence"]["tested_code_sha"] == gate["commit_sha"]
     assert len(state["closure_evidence"]["real_llm_runs"]) == 2
 

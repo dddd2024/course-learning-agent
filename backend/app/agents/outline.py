@@ -445,7 +445,9 @@ def evaluate_outline_contract(points: list[dict], source_chunks: list[dict]) -> 
     titles: list[str] = []
     missing_source_count = 0
     source_ids: set[Any] = set()
+    unsupported_evidence_count = 0
     for point in points:
+        unsupported_evidence_count += int(point.get("_unsupported_evidence_count", 0) or 0)
         title = _normalize_title(_clean_title(str(point.get("title") or "")))
         sources = point.get("source_chunk_ids") or []
         matched = [source for source in sources if source in valid_ids]
@@ -461,23 +463,27 @@ def evaluate_outline_contract(points: list[dict], source_chunks: list[dict]) -> 
         "missing_source_count": missing_source_count,
         "duplicate_title_count": duplicate_title_count,
         "distinct_source_count": len(source_ids),
-        "passed": valid_count >= 2 and missing_source_count == 0 and duplicate_title_count == 0,
+        "unsupported_evidence_count": unsupported_evidence_count,
+        "passed": valid_count >= 2 and missing_source_count == 0 and duplicate_title_count == 0 and unsupported_evidence_count == 0,
     }
 
 
-def _repair_results(raw_points: list[dict], chunks: list[dict]) -> list[dict[str, Any]]:
+def _repair_results(raw_points: list[dict], chunks: list[dict]) -> tuple[list[dict[str, Any]], int]:
     """Apply the same validation pipeline to a model-provided repair output."""
     valid_chunk_ids = [chunk["chunk_id"] for chunk in chunks]
     results: list[dict[str, Any]] = []
     seen_titles: set[str] = set()
+    unsupported_evidence_count = 0
     for point in raw_points:
         title = _normalize_title(_clean_title(point.get("title", "")))
         summary = _clean_text(point.get("summary", ""))
         if (not title or title in _TOO_BROAD_TITLES or not _is_valid_concept_title(title)
                 or title in seen_titles):
             continue
-        source_ids = _reconcile_chunk_ids(point.get("source_chunk_ids", []), valid_chunk_ids)
-        if not source_ids:
+        evidence = _verified_repair_evidence(point.get("source_evidence"), chunks)
+        source_ids = sorted({item["chunk_id"] for item in evidence})
+        if not source_ids or not _title_is_supported_by_evidence(title, evidence):
+            unsupported_evidence_count += 1
             continue
         seen_titles.add(title)
         try:
@@ -489,10 +495,44 @@ def _repair_results(raw_points: list[dict], chunks: list[dict]) -> list[dict[str
             "summary": summary,
             "importance": calculate_importance(llm_importance, title, source_ids, chunks),
             "source_chunk_ids": source_ids,
+            "source_evidence": evidence,
             "exam_style": point.get("exam_style", ""),
             "review_action": point.get("review_action", ""),
         })
-    return _cluster_merge_titles(results)
+    return _cluster_merge_titles(results), unsupported_evidence_count
+
+
+def _verified_repair_evidence(raw_evidence: Any, chunks: list[dict]) -> list[dict[str, Any]]:
+    """Accept only explicit, verbatim evidence from the supplied chunks."""
+    by_id = {chunk.get("chunk_id"): str(chunk.get("text") or "") for chunk in chunks}
+    verified: list[dict[str, Any]] = []
+    for item in raw_evidence if isinstance(raw_evidence, list) else []:
+        if not isinstance(item, dict):
+            continue
+        ids = _reconcile_chunk_ids([item.get("chunk_id")], list(by_id))
+        quote = str(item.get("quote_text") or "").strip()
+        if not ids or not quote:
+            continue
+        normalized_quote = re.sub(r"\s+", " ", quote)
+        for chunk_id in ids:
+            normalized_chunk = re.sub(r"\s+", " ", by_id[chunk_id])
+            if normalized_quote in normalized_chunk:
+                verified.append({"chunk_id": chunk_id, "quote_text": quote})
+    return verified
+
+
+def _title_is_supported_by_evidence(title: str, evidence: list[dict[str, Any]]) -> bool:
+    """Require an auditable title-to-quote link, not only a valid chunk id."""
+    normalized_title = re.sub(r"\s+", "", title).lower()
+    tokens = re.findall(r"[a-z0-9]{2,}", normalized_title)
+    tokens.extend(
+        normalized_title[index:index + 2]
+        for index in range(max(0, len(normalized_title) - 1))
+        if "\u4e00" <= normalized_title[index] <= "\u9fff"
+        and "\u4e00" <= normalized_title[index + 1] <= "\u9fff"
+    )
+    quote_text = " ".join(str(item.get("quote_text") or "") for item in evidence).lower()
+    return bool(tokens) and any(token in quote_text for token in tokens)
 
 
 def _is_observed_real_meta(meta: dict[str, Any]) -> bool:
@@ -636,8 +676,14 @@ def generate(
         repair_output, repair_meta = call_llm_with_meta(
             repair_prompt, agent_type="outline", user_config=user_config
         )
-        repair_results = _repair_results(repair_output.get("knowledge_points", []), chunks)
+        repair_results, unsupported_evidence_count = _repair_results(
+            repair_output.get("knowledge_points", []), chunks
+        )
         repair_contract = evaluate_outline_contract(repair_results, chunks)
+        repair_contract["unsupported_evidence_count"] = unsupported_evidence_count
+        repair_contract["passed"] = bool(
+            repair_contract["passed"] and unsupported_evidence_count == 0
+        )
         meta.update({
             "repair_attempted": True,
             "repair_success": bool(repair_contract["passed"] and _is_observed_real_meta(repair_meta)),

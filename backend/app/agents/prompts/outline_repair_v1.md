@@ -12,9 +12,10 @@
 4. 标题必须具有实际语义，不能仅靠编号、前后缀或“概述/总结”等词制造差异。
 5. 每条必须绑定资料中实际存在且能支持该知识点的 chunk_id；不得使用不存在的 ID，也不得把无关片段作为来源。
 6. 所有标题、摘要、考试形式和复习动作都必须能从给定资料推出；资料不足时宁可少输出，不得补充外部知识。
+7. 每条必须提供至少一条 `source_evidence`，格式为 `{{"chunk_id": 数字ID, "quote_text": "资料中逐字存在的短句"}}`。`quote_text` 不能为空，且必须来自该数字 ID 对应的资料片段；章节名、标题和外部知识不能代替原文证据。
 
 资料片段：
 {retrieved_chunks}
 
 仅输出符合原有 schema 的 JSON：
-{{"knowledge_points":[{{"title":"","summary":"","importance":3,"source_chunk_ids":[],"exam_style":"","review_action":""}}]}}
+{{"knowledge_points":[{{"title":"","summary":"","importance":3,"source_chunk_ids":[],"source_evidence":[{{"chunk_id":0,"quote_text":""}}],"exam_style":"","review_action":""}}]}}

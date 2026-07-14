@@ -192,6 +192,7 @@ def test_chat_not_found(client, tmp_path, monkeypatch) -> None:
     body = resp.json()
     # Either not_found is true or citations is empty — no fabricated citations.
     assert body["not_found"] is True or len(body["citations"]) == 0
+    assert "未检索到相关内容" in body["answer"] or body["citations"]
 
 
 def test_chat_isolation(client, tmp_path, monkeypatch) -> None:

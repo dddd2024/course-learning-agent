@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from datetime import date, datetime, timedelta, timezone
 import json
 import os
@@ -59,6 +60,17 @@ def _pick_port() -> int:
 def _json_path(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _write_evidence_manifest(root: Path, summary: dict, audited_runs: list[dict]) -> None:
+    files = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file() and path.name != "evidence-manifest.json":
+            relative = path.relative_to(root).as_posix()
+            data = path.read_bytes()
+            files[relative] = {"sha256": hashlib.sha256(data).hexdigest(), "size_bytes": len(data)}
+    manifest = {"schema_version": 1, "run_id": summary["run_id"], "tested_code_sha": summary["tested_code_sha"], "generated_at": _utc_now(), "provider": summary["provider"], "base_url_host": summary["base_url_host"], "model": summary["model"], "scenario_count": summary["scenario_count"], "passed": summary["passed"], "audited_agent_run_count": len(audited_runs), "fallback_count": summary["fallback_count"], "mock_count": summary["mock_count"], "degraded_count": summary["degraded_count"], "meta_missing_count": summary["meta_missing_count"], "secret_scan_status": summary["secret_scan"]["status"], "files": files}
+    _json_path(root / "evidence-manifest.json", manifest)
 
 
 def _clean_text(text: str) -> str:
@@ -350,6 +362,17 @@ def run(args: argparse.Namespace) -> int:
     summary["secret_scan"] = scan
     if scan["status"] == "passed":
         _json_path(staging_dir / "real-llm-acceptance.json", summary)
+        _write_evidence_manifest(staging_dir, summary, audit_runs)
+        scan = scan_artifact_tree(staging_dir, key)
+        if scan["status"] != "passed":
+            summary["all_passed"] = False
+            failure = {"error_code": "REAL_LLM_SECRET_SCAN_FAILED", "error": "manifest scan reported matches"}
+            shutil.rmtree(staging_dir, ignore_errors=True)
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            _json_path(artifact_dir / "real-llm-acceptance.json", summary)
+            _json_path(artifact_dir / "request-summary.json", {"scenario_ids": [item["id"] for item in scenarios], "failure": failure})
+            shutil.rmtree(runtime_dir, ignore_errors=True)
+            return 1
         artifact_dir.parent.mkdir(parents=True, exist_ok=True)
         os.replace(staging_dir, artifact_dir)
     else:

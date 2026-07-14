@@ -407,7 +407,9 @@ def test_quizzes_uses_user_config(
         )
 
     assert resp.status_code == 422, resp.text
-    assert mock_real.call_count == 3
+    # Invalid zero-item output receives one constrained retry; each real
+    # provider call has the configured three-attempt transport budget.
+    assert mock_real.call_count == 6
     user_config = _extract_user_config(mock_real.call_args)
     assert user_config is not None
     assert user_config["base_url"] == LLM_CONFIG_PAYLOAD["base_url"]

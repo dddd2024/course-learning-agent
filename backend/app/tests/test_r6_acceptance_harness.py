@@ -11,6 +11,7 @@ from app.services.real_llm_acceptance_service import RealLLMAcceptanceError
 PROJECT_DIR = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = PROJECT_DIR / "scripts" / "verify_real_llm_acceptance.py"
 PROMPT_PATH = PROJECT_DIR / "backend" / "app" / "agents" / "prompts" / "outline_repair_v1.md"
+PLANNER_PROMPT_PATH = PROJECT_DIR / "backend" / "app" / "agents" / "prompts" / "planner_v1.md"
 
 
 def _load_harness():
@@ -75,3 +76,10 @@ def test_outline_repair_prompt_is_course_generic() -> None:
     assert "CRC" not in prompt
     assert "停止等待" not in prompt
     assert "滑动窗口" not in prompt
+
+
+def test_planner_prompt_requires_a_material_learning_task_per_course() -> None:
+    prompt = PLANNER_PROMPT_PATH.read_text(encoding="utf-8")
+
+    assert "每门关联课程至少安排一项 `learn` 任务" in prompt
+    assert "已上传的资料" in prompt
