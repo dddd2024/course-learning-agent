@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[3]
 STATE_PATH = PROJECT_DIR / "docs" / "engineering" / "v7-execution-state.json"
 SCOPE_PATH = PROJECT_DIR / "docs" / "engineering" / "v7-5-2-scope.md"
+EVIDENCE_VERIFIER = PROJECT_DIR / "scripts" / "verify_real_llm_evidence.py"
 
 REQUIRED_RELEASE_GATES = {
     "backend_full_pytest",
@@ -49,10 +52,12 @@ def test_v7_5_2_records_honest_current_state() -> None:
         if is_r6:
             assert state["local_closure"] == "V7.5.2_R6_VERIFIED_LOCALLY"
             assert state["release_candidate"] is None
+            expected_blockers = [] if state["remote_ci"] == "success" else ["remote_ci_verification"]
+            assert state["audit_blockers"] == expected_blockers
         else:
             assert state["local_closure"] == "V7.5.2_RC_BLOCKERS_CLOSED_LOCALLY"
             assert state["release_candidate"] == "v1.0.0-rc3"
-            assert state["audit_blockers"] == (["remote_ci_verification"] if is_r6 else [])
+            assert state["audit_blockers"] == []
         assert state["current_task"] is None
 
 
@@ -104,9 +109,7 @@ def test_verified_locally_requires_every_release_gate() -> None:
     )
     if "AUDIT-R6-01" in state["tasks"]:
         assert state["release_candidate"] is None
-        assert state["remote_ci"] in {"pending", "success"}
-    else:
-        assert state["remote_ci"] in {"pending", "success"}
+    assert state["remote_ci"] in {"pending", "success"}
     assert state["closure_evidence"]["tested_code_sha"] == gate["commit_sha"]
     assert len(state["closure_evidence"]["real_llm_runs"]) == 2
 
@@ -118,12 +121,28 @@ def test_r6_verified_state_references_two_recomputable_compact_bundles() -> None
 
     evidence = state["closure_evidence"]
     assert evidence["real_llm_runs"] == ["r6-c1-a", "r6-c1-b"]
+    assert len(evidence["evidence_paths"]) == len(evidence["real_llm_runs"])
     for relative_path, run_id in zip(evidence["evidence_paths"], evidence["real_llm_runs"]):
         root = PROJECT_DIR / relative_path
         summary = json.loads((root / "real-llm-acceptance.json").read_text(encoding="utf-8"))
         assert summary["run_id"] == run_id
         assert summary["tested_code_sha"] == evidence["tested_code_sha"]
         assert summary["passed"] == 6 and summary["scenario_count"] == 6
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(EVIDENCE_VERIFIER),
+                "--artifact-dir",
+                str(root),
+                "--expected-sha",
+                evidence["tested_code_sha"],
+                "--compact",
+            ],
+            cwd=PROJECT_DIR,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_done_tasks_have_complete_evidence() -> None:
