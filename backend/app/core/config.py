@@ -1,6 +1,7 @@
 """Application configuration loaded from environment variables."""
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from uuid import uuid4
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -60,6 +61,16 @@ class Settings(BaseSettings):
     APP_GIT_COMMIT: str = ""
     APP_LAUNCH_ID: str = ""
 
+    # V7.5.2-04: explicit E2E mirrors.  Playwright must provide these
+    # variables in addition to the normal runtime names.  Requiring both
+    # prevents a typo or inherited shell variable from silently pointing
+    # the backend or parse worker at a developer database/storage tree.
+    E2E_MODE: bool = False
+    E2E_RUN_ID: str = ""
+    E2E_DATABASE_URL: str = ""
+    E2E_UPLOAD_DIR: str = ""
+    E2E_PARSED_DIR: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property
@@ -103,8 +114,60 @@ class Settings(BaseSettings):
                 "生产环境不能使用 CORS_ORIGINS='*' 或空来源，请设置实际前端域名。"
             )
 
+    def validate_e2e_isolation(self) -> None:
+        """Fail fast when an E2E process is not fully isolated.
+
+        Both the API process and the persistent parse worker import this
+        settings module.  Validation therefore protects the two processes
+        before either can open a database or write an uploaded/parsed file.
+        """
+        if not self.E2E_MODE:
+            return
+
+        run_id = self.E2E_RUN_ID.strip()
+        if not run_id or re.fullmatch(r"[A-Za-z0-9._-]+", run_id) is None:
+            raise ValueError("E2E_MODE requires a safe, non-empty E2E_RUN_ID")
+
+        required = {
+            "E2E_DATABASE_URL": self.E2E_DATABASE_URL,
+            "E2E_UPLOAD_DIR": self.E2E_UPLOAD_DIR,
+            "E2E_PARSED_DIR": self.E2E_PARSED_DIR,
+        }
+        missing = sorted(name for name, value in required.items() if not value.strip())
+        if missing:
+            raise ValueError(f"E2E isolation variables are missing: {', '.join(missing)}")
+
+        if self.DATABASE_URL != self.E2E_DATABASE_URL:
+            raise ValueError("DATABASE_URL must exactly match E2E_DATABASE_URL in E2E_MODE")
+        if Path(self.UPLOAD_DIR).resolve() != Path(self.E2E_UPLOAD_DIR).resolve():
+            raise ValueError("UPLOAD_DIR must exactly match E2E_UPLOAD_DIR in E2E_MODE")
+        if Path(self.PARSED_DIR).resolve() != Path(self.E2E_PARSED_DIR).resolve():
+            raise ValueError("PARSED_DIR must exactly match E2E_PARSED_DIR in E2E_MODE")
+
+        sqlite_prefix = "sqlite:///"
+        if not self.DATABASE_URL.startswith(sqlite_prefix):
+            raise ValueError("E2E_MODE currently requires a dedicated SQLite database")
+        database_path = Path(self.DATABASE_URL[len(sqlite_prefix):]).resolve()
+
+        def belongs_to_run(path: Path) -> bool:
+            parts = {part.lower() for part in path.resolve().parts}
+            return ".e2e-runs" in parts and run_id.lower() in parts
+
+        protected_paths = {
+            "database": database_path,
+            "uploads": Path(self.UPLOAD_DIR),
+            "parsed": Path(self.PARSED_DIR),
+        }
+        outside = [name for name, path in protected_paths.items() if not belongs_to_run(path)]
+        if outside:
+            raise ValueError(
+                "E2E paths must live under .e2e-runs/<E2E_RUN_ID>: "
+                + ", ".join(outside)
+            )
+
 
 settings = Settings()
+settings.validate_e2e_isolation()
 
 # Task D: process-wide launch metadata exposed via /health. ``started_at``
 # is captured once at import time so every /health response in this process
