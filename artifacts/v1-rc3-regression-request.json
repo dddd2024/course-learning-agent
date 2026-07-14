@@ -1,0 +1,14 @@
+{
+  "target": "v1.0.0-rc3",
+  "base_commit": "6b3d948564dd1eee6ce7d2cef78af195618f86b7",
+  "requested_gates": [
+    "backend_full_pytest",
+    "frontend_unit_tests",
+    "frontend_type_check",
+    "frontend_build",
+    "migration_dry_run_and_smoke",
+    "playwright_e2e",
+    "v7_acceptance_verification"
+  ],
+  "purpose": "Trigger a pull-request CI run against the latest release-candidate code and retain an auditable request marker."
+}
