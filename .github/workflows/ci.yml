@@ -167,11 +167,10 @@ jobs:
       LLM_PROVIDER: mock
       PYTHONPATH: ${{ github.workspace }}/backend
       E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
-      # The runner context is not available in a job-level env expression.
-      # Keep this CI-only state under the checked-out workspace instead.
-      E2E_DATABASE_URL: sqlite:///${{ github.workspace }}/.e2e/ci-${{ github.run_id }}-${{ github.run_attempt }}/e2e.db
-      E2E_UPLOAD_DIR: ${{ github.workspace }}/.e2e/ci-${{ github.run_id }}-${{ github.run_attempt }}/uploads
-      E2E_PARSED_DIR: ${{ github.workspace }}/.e2e/ci-${{ github.run_id }}-${{ github.run_attempt }}/parsed
+      # The E2E runtime enforces a unique system-temporary root.
+      E2E_DATABASE_URL: sqlite:////tmp/course-learning-agent-e2e/ci-${{ github.run_id }}-${{ github.run_attempt }}/e2e.db
+      E2E_UPLOAD_DIR: /tmp/course-learning-agent-e2e/ci-${{ github.run_id }}-${{ github.run_attempt }}/uploads
+      E2E_PARSED_DIR: /tmp/course-learning-agent-e2e/ci-${{ github.run_id }}-${{ github.run_attempt }}/parsed
     steps:
       - name: Checkout
         uses: actions/checkout@v4
