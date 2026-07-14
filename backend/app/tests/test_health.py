@@ -15,6 +15,19 @@ def test_health_returns_ok(client) -> None:
     assert body["version"]  # non-empty
 
 
+def test_release_version_is_consistent(client) -> None:
+    """Health and OpenAPI metadata must expose the same V1.0 RC version."""
+    from app.core.config import settings
+    from app.main import app
+
+    response = client.get("/api/v1/health")
+
+    assert response.status_code == 200
+    assert settings.APP_VERSION == "1.0.0-rc.3"
+    assert response.json()["version"] == settings.APP_VERSION
+    assert app.version == settings.APP_VERSION
+
+
 def test_health_response_contains_project_identifier_for_launcher(client) -> None:
     """The launcher reuses port 8000 only if /health identifies this project.
 
