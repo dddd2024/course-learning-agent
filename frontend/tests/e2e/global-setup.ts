@@ -30,4 +30,22 @@ export default async function globalSetup(): Promise<void> {
 
   mkdirSync(runtime.uploadDir, { recursive: true })
   mkdirSync(runtime.parsedDir, { recursive: true })
+
+  const [backendResponse, workerResponse] = await Promise.all([
+    fetch(`${runtime.apiBase}/health`),
+    fetch(`http://127.0.0.1:${runtime.workerPort}/`),
+  ])
+  if (!backendResponse.ok || !workerResponse.ok) {
+    throw new Error('E2E backend or worker health endpoint is unavailable')
+  }
+  const [backend, worker] = await Promise.all([backendResponse.json(), workerResponse.json()]) as Array<{ e2e?: Record<string, string> }>
+  const fields = ['run_id', 'database_fingerprint', 'upload_dir_fingerprint', 'parsed_dir_fingerprint']
+  for (const field of fields) {
+    if (!backend.e2e || backend.e2e[field] !== worker.e2e?.[field]) {
+      throw new Error(`E2E runtime mismatch for ${field}`)
+    }
+  }
+  if (backend.e2e?.run_id !== runtime.runId) {
+    throw new Error('E2E backend did not start with the allocated run ID')
+  }
 }

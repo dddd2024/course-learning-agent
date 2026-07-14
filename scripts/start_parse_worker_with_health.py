@@ -13,6 +13,7 @@ Usage::
 from __future__ import annotations
 
 import http.server
+import json
 import logging
 import os
 import signal
@@ -24,6 +25,7 @@ import threading
 sys.path.insert(0, "backend")
 
 from app.core.database import SessionLocal  # noqa: E402
+from app.core.config import e2e_runtime_info  # noqa: E402
 from app.workers.parse_worker import ParseWorker  # noqa: E402
 
 logging.basicConfig(
@@ -34,13 +36,21 @@ logger = logging.getLogger("parse_worker_health")
 
 
 class _HealthHandler(http.server.BaseHTTPRequestHandler):
-    """Always return 200 OK so Playwright detects readiness."""
+    """Return the worker's E2E identity as well as liveness."""
 
     def do_GET(self):  # noqa: N802 – http.server convention
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(b"OK")
+        self.wfile.write(json.dumps({"status": "ok", "e2e": e2e_runtime_info()}).encode("utf-8"))
+
+    def do_POST(self):  # noqa: N802 – http.server convention
+        if self.path != "/shutdown" or not os.getenv("E2E_MODE"):
+            self.send_error(404)
+            return
+        self.send_response(202)
+        self.end_headers()
+        threading.Timer(0.2, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
 
     def log_message(self, *args):  # noqa: D401 – silence access log
         pass

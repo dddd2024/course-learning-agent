@@ -37,6 +37,30 @@ export interface ParseResult {
   chunk_count: number
 }
 
+export interface MaterialReadiness {
+  material_id: number
+  status: MaterialStatus
+  active_version_id: number | null
+  version_status: string | null
+  file_type: string
+  parse_job_status: ParseJobStatus | null
+  parse_error: string | null
+  active_chunk_count: number
+  indexable_chunk_count: number
+  material_page_count: number
+  expected_page_numbers: number[]
+  ready_page_numbers: number[]
+  missing_page_numbers: number[]
+  fts_indexed_chunk_count: number
+  reader_mode: 'page' | 'structured_text'
+  usable: boolean
+  blocking_reasons: string[]
+}
+
+export function getMaterialReadiness(materialId: number): AxiosPromise<MaterialReadiness> {
+  return request.get(`/materials/${materialId}/readiness`)
+}
+
 export interface ChunkImage {
   id: number
   page_no: number

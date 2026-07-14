@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
 import { createServer } from 'net'
 import { dirname, relative, resolve, sep } from 'path'
 
@@ -22,6 +23,8 @@ export interface E2ERuntimeManifest {
   workerPort: number
   frontendPort: number
   apiBase: string
+  frontendBase: string
+  runtimeReportPath: string
   protectedPaths: string[]
   protectedSnapshot: ProtectedPathSnapshot[]
 }
@@ -116,24 +119,40 @@ function requireRunPath(path: string, runRoot: string, label: string): string {
 }
 
 export async function createE2ERuntime(repoRoot: string): Promise<E2ERuntimeManifest> {
+  // Playwright evaluates the config in a controller and in worker processes.
+  // The controller's manifest is authoritative; workers must consume it
+  // rather than allocating a second database for the same run ID.
+  if (process.env.E2E_RUNTIME_MANIFEST && existsSync(process.env.E2E_RUNTIME_MANIFEST)) {
+    return readRuntimeManifest()
+  }
   const runId = process.env.E2E_RUN_ID?.trim()
     || `${Date.now()}-${process.pid}-${randomBytes(4).toString('hex')}`
   if (!/^[A-Za-z0-9._-]+$/.test(runId)) {
     throw new Error('E2E_RUN_ID contains unsafe path characters')
   }
 
-  const runRoot = resolve(repoRoot, '.e2e-runs', runId)
+  // E2E data must never be created below the repository's normal storage
+  // tree.  CI may explicitly provide individual paths, but they still have
+  // to be descendants of this per-run system-temporary root.
+  const runRoot = resolve(tmpdir(), 'course-learning-agent-e2e', runId)
   mkdirSync(runRoot, { recursive: true })
+  writeFileSync(resolve(runRoot, '.course-learning-agent-e2e'), `${runId}\n`, 'utf-8')
 
   const generatedDatabasePath = resolve(runRoot, 'e2e.db')
   const databaseUrl = process.env.E2E_DATABASE_URL || `sqlite:///${generatedDatabasePath.split(sep).join('/')}`
   const databasePath = requireRunPath(sqlitePath(databaseUrl), runRoot, 'E2E database')
+  if (existsSync(databasePath)) {
+    throw new Error(`E2E database already exists for this run: ${databasePath}`)
+  }
   const uploadDir = requireRunPath(process.env.E2E_UPLOAD_DIR || resolve(runRoot, 'uploads'), runRoot, 'E2E upload directory')
   const parsedDir = requireRunPath(process.env.E2E_PARSED_DIR || resolve(runRoot, 'parsed'), runRoot, 'E2E parsed directory')
 
   const backendPort = await allocatePort('E2E_BACKEND_PORT', 8000)
-  const workerPort = await allocatePort('E2E_WORKER_PORT', 8001)
-  const frontendPort = await allocatePort('E2E_FRONTEND_PORT', 5173)
+  // Use disjoint search ranges.  A probe is released before the child
+  // process binds it, so independently probing adjacent ports can otherwise
+  // select the same free port three times.
+  const workerPort = await allocatePort('E2E_WORKER_PORT', 8100)
+  const frontendPort = await allocatePort('E2E_FRONTEND_PORT', 8200)
   if (new Set([backendPort, workerPort, frontendPort]).size !== 3) {
     throw new Error('E2E backend, worker, and frontend ports must be distinct')
   }
@@ -160,12 +179,16 @@ export async function createE2ERuntime(repoRoot: string): Promise<E2ERuntimeMani
     workerPort,
     frontendPort,
     apiBase: `http://127.0.0.1:${backendPort}/api/v1`,
+    frontendBase: `http://127.0.0.1:${frontendPort}`,
+    runtimeReportPath: resolve(repoRoot, 'frontend', 'test-results', 'e2e-runtime.json'),
     protectedPaths,
     protectedSnapshot: captureProtectedSnapshot(protectedPaths),
   }
 
   const manifestPath = resolve(runRoot, 'runtime.json')
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8')
+  mkdirSync(dirname(manifest.runtimeReportPath), { recursive: true })
+  writeFileSync(manifest.runtimeReportPath, JSON.stringify(manifest, null, 2), 'utf-8')
 
   process.env.E2E_RUN_ID = runId
   process.env.E2E_DATABASE_URL = databaseUrl
@@ -188,13 +211,26 @@ export function readRuntimeManifest(): E2ERuntimeManifest {
   return JSON.parse(readFileSync(manifestPath, 'utf-8')) as E2ERuntimeManifest
 }
 
-export function cleanupRuntime(manifest: E2ERuntimeManifest): void {
+export function cleanupRuntime(manifest: E2ERuntimeManifest): boolean {
+  let removed = true
   for (const suffix of ['', '-wal', '-shm', '-journal']) {
-    rmSync(`${manifest.databasePath}${suffix}`, { force: true })
+    try {
+      rmSync(`${manifest.databasePath}${suffix}`, { force: true, maxRetries: 5, retryDelay: 200 })
+    } catch {
+      // Playwright stops webServer children after global teardown on Windows.
+      // Keep the report honest and let the per-run temporary root be removed
+      // by the OS if a SQLite handle is still being released.
+      removed = false
+    }
   }
-  rmSync(manifest.runRoot, { recursive: true, force: true })
+  try {
+    rmSync(manifest.runRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  } catch {
+    removed = false
+  }
   const runsRoot = dirname(manifest.runRoot)
   if (existsSync(runsRoot) && readdirSync(runsRoot).length === 0) {
     rmSync(runsRoot, { recursive: true, force: true })
   }
+  return removed
 }

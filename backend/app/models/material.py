@@ -9,6 +9,10 @@ class Material(Base, TimestampMixin):
     """A learning material file uploaded by a user for a course."""
 
     __tablename__ = "materials"
+    # SQLite otherwise reuses a deleted highest ROWID.  A re-upload must have
+    # a distinct material identity so old URLs and evidence cannot silently
+    # resolve to new content after a delete/recreate cycle.
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)

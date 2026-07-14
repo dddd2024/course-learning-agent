@@ -730,7 +730,9 @@ def _mock_quiz_generate(prompt: str = "") -> dict[str, Any]:
 
     # Parse evidence chunks from the prompt.
     evidence_pattern = re.compile(
-        r"\[evidence_id=(\d+)[^\]]*\]\s*(.+?)(?=\n\[evidence_id=|\n\n|\Z)",
+        # Preserve paragraph breaks within an evidence item.  The prompt's
+        # next section starts with ``##`` and is the real boundary.
+        r"\[evidence_id=(\d+)[^\]]*\]\s*(.+?)(?=\n\[evidence_id=|\n## |\Z)",
         re.DOTALL,
     )
     chunks_raw = evidence_pattern.findall(prompt)

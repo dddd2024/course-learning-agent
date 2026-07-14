@@ -1,5 +1,6 @@
 """Application configuration loaded from environment variables."""
 from datetime import datetime, timezone
+import hashlib
 from pathlib import Path
 import re
 from uuid import uuid4
@@ -151,7 +152,13 @@ class Settings(BaseSettings):
 
         def belongs_to_run(path: Path) -> bool:
             parts = {part.lower() for part in path.resolve().parts}
-            return ".e2e-runs" in parts and run_id.lower() in parts
+            # The allocator defaults to a system temporary directory, while
+            # older CI callers may still use .e2e-runs.  In both cases the
+            # path must visibly belong to this exact run and never normal
+            # uploads/parsed storage.
+            return run_id.lower() in parts and (
+                ".e2e-runs" in parts or "course-learning-agent-e2e" in parts
+            )
 
         protected_paths = {
             "database": database_path,
@@ -161,7 +168,7 @@ class Settings(BaseSettings):
         outside = [name for name, path in protected_paths.items() if not belongs_to_run(path)]
         if outside:
             raise ValueError(
-                "E2E paths must live under .e2e-runs/<E2E_RUN_ID>: "
+                "E2E paths must live under .e2e-runs or a system isolated run root containing E2E_RUN_ID: "
                 + ", ".join(outside)
             )
 
@@ -189,4 +196,18 @@ def app_build_info() -> dict:
         "git_commit": settings.APP_GIT_COMMIT,
         "launch_id": _APP_LAUNCH_ID,
         "started_at": _APP_STARTED_AT,
+    }
+
+
+def e2e_runtime_info() -> dict | None:
+    """Return non-sensitive identity data for E2E API/worker handshake."""
+    if not settings.E2E_MODE:
+        return None
+    def fingerprint(value: str) -> str:
+        return hashlib.sha256(str(Path(value).resolve()).encode("utf-8")).hexdigest()
+    return {
+        "run_id": settings.E2E_RUN_ID,
+        "database_fingerprint": fingerprint(settings.DATABASE_URL),
+        "upload_dir_fingerprint": fingerprint(settings.UPLOAD_DIR),
+        "parsed_dir_fingerprint": fingerprint(settings.PARSED_DIR),
     }

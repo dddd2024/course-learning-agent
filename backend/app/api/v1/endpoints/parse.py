@@ -40,6 +40,7 @@ from app.models.material_page import MaterialPage
 from app.models.material_page_asset import MaterialPageAsset
 from app.services.material_delete_service import delete_material as delete_material_service
 from app.services.material_image_service import image_integrity, image_state, reextract_images
+from app.services.material_readiness_service import material_readiness
 
 router = APIRouter()
 
@@ -161,6 +162,16 @@ def parse_material(
     )
 
 
+@router.get("/{material_id}/readiness")
+def get_material_readiness(
+    material_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Return the complete reader-readiness contract for the active version."""
+    return material_readiness(db, _get_owned_material(db, material_id, current_user.id))
+
+
 @router.get("/{material_id}/image-integrity")
 def get_image_integrity(material_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
     return image_integrity(db, _get_owned_material(db, material_id, current_user.id))
@@ -275,6 +286,7 @@ def list_chunks(
     chunk_responses = []
     for c in items:
         chunk_dict = ChunkResponse.model_validate(c).model_dump()
+        chunk_dict["content"] = c.text
         attached = images_by_chunk.get(c.id, [])
         # Legacy page-only images are attached once, to the first visible
         # chunk on that page; never repeated across every chunk on a page.

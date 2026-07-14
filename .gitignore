@@ -36,6 +36,7 @@ htmlcov/
 playwright-report/
 playwright-results.json
 test-results/
+.e2e-runs/
 
 # IDE
 .vscode/

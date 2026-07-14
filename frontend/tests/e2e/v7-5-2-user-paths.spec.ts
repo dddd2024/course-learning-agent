@@ -6,14 +6,16 @@
  * and structured text mode activation for non-PDF materials.
  */
 import { expect, test, type Page, type TestInfo } from '@playwright/test'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import { execFileSync } from 'child_process'
-import { loginWithFreshUser, API_BASE, waitForMaterialProcessed, uploadMaterial } from './helpers'
+import { loginWithFreshUser, API_BASE, waitForMaterialReadyForReading, uploadMaterial } from './helpers'
 
 const projectRoot = resolve(process.cwd(), '..')
 const venvPython = resolve(projectRoot, 'backend', '.venv', 'Scripts', 'python.exe')
 const pythonExe = existsSync(venvPython) ? venvPython : 'python'
+
+test.setTimeout(120_000)
 
 function tag() {
   return `v752-${Date.now()}-${Math.floor(Math.random() * 100_000)}`
@@ -91,9 +93,8 @@ test('P1-T01: upload PDF → parse → preview original page → ask AI', async 
 
   // Switch to structured text mode and verify chunks
   const radioGroup = page.getByRole('radiogroup', { name: '资料展示模式' })
-  if (await radioGroup.isVisible()) {
-    await radioGroup.getByText('结构化文本').click()
-  }
+  await expect(radioGroup).toBeVisible()
+  await radioGroup.getByText('结构化文本').click()
   const chunks = page.locator('.chunk-card, .doc-chunk')
   await expect(chunks.first()).toBeVisible({ timeout: 30_000 })
   // Stronger: verify at least one chunk exists with non-empty text
@@ -103,19 +104,17 @@ test('P1-T01: upload PDF → parse → preview original page → ask AI', async 
 
   // Ask AI a question
   const chatInput = page.locator('textarea[placeholder*="问题"], textarea[placeholder*="提问"], input[placeholder*="问题"]')
-  if (await chatInput.first().isVisible()) {
-    await chatInput.first().fill('什么是概述？')
-    const sendBtn = page.getByRole('button', { name: /发送|提问|问/ })
-    if (await sendBtn.isVisible()) {
-      const aiResponse = page.waitForResponse(
-        (r) => r.url().includes('/api/v1/chat') && r.request().method() === 'POST',
-        { timeout: 30_000 },
-      )
-      await sendBtn.click()
-      const resp = await aiResponse
-      expect(resp.ok()).toBeTruthy()
-    }
-  }
+  await expect(chatInput.first()).toBeVisible()
+  await chatInput.first().fill('什么是概述？')
+  const sendBtn = page.getByRole('button', { name: /发送|提问|问/ })
+  await expect(sendBtn).toBeVisible()
+  const aiResponse = page.waitForResponse(
+    (r) => r.url().includes('/api/v1/chat') && r.request().method() === 'POST',
+    { timeout: 30_000 },
+  )
+  await sendBtn.click()
+  const resp = await aiResponse
+  expect(resp.ok()).toBeTruthy()
   await page.screenshot({ path: testInfo.outputPath('t01-qa.png'), fullPage: true })
 })
 
@@ -142,7 +141,8 @@ test('P1-T02: generate knowledge points → click KP → verify focus banner', a
   const materialId = (await matRes.json()).id
 
   // Wait for parse
-  await waitForMaterialProcessed(request, headers, courseId, materialId, 90_000)
+  expect((await request.post(`${API_BASE}/materials/${materialId}/parse`, { headers })).ok()).toBeTruthy()
+  await waitForMaterialReadyForReading(request, headers, materialId, 90_000)
 
   // Generate knowledge points
   const kpRes = await request.post(`${API_BASE}/courses/${courseId}/knowledge-points/generate`, { headers })
@@ -182,7 +182,8 @@ test('P1-T03: delete material → re-upload → verify new version works', async
   const fixture = testInfo.outputPath('delete-test.pdf')
   generateTextPdf(fixture, 2)
   const materialId = await uploadMaterial(request, headers, courseId, fixture, 'delete-test.pdf', 'application/pdf')
-  await waitForMaterialProcessed(request, headers, courseId, materialId, 90_000)
+  expect((await request.post(`${API_BASE}/materials/${materialId}/parse`, { headers })).ok()).toBeTruthy()
+  await waitForMaterialReadyForReading(request, headers, materialId, 90_000)
 
   // Verify page assets exist
   const integrityRes = await request.get(`${API_BASE}/materials/${materialId}/image-integrity`, { headers })
@@ -192,15 +193,16 @@ test('P1-T03: delete material → re-upload → verify new version works', async
 
   // Delete the material
   const delRes = await request.delete(`${API_BASE}/materials/${materialId}`, { headers })
-  expect(delRes.status()).toBe(200)
+  expect(delRes.status()).toBe(204)
 
   // Re-upload the same file
   const reMatRes = await request.post(`${API_BASE}/courses/${courseId}/materials`, {
     headers,
-    multipart: { file: { name: 'delete-test.pdf', mimeType: 'application/pdf', buffer: require('fs').readFileSync(fixture) } },
+    multipart: { file: { name: 'delete-test.pdf', mimeType: 'application/pdf', buffer: readFileSync(fixture) } },
   })
   const newMaterialId = (await reMatRes.json()).id
-  await waitForMaterialProcessed(request, headers, courseId, newMaterialId, 90_000)
+  expect((await request.post(`${API_BASE}/materials/${newMaterialId}/parse`, { headers })).ok()).toBeTruthy()
+  await waitForMaterialReadyForReading(request, headers, newMaterialId, 90_000)
 
   // Stronger: verify new material ID is DIFFERENT from old ID
   expect(newMaterialId).not.toBe(materialId)
@@ -222,7 +224,7 @@ test('P1-T03: delete material → re-upload → verify new version works', async
 })
 
 // ── P1-T04: Repair document preview ────────────────────────────────
-test('P1-T04: repair document preview via API', async ({ page, request }, testInfo) => {
+test('P1-T04: repair document preview through the LearnView', async ({ page, request }, testInfo) => {
   await loginWithFreshUser(page)
   const headers = {
     Authorization: `Bearer ${await page.evaluate(() => sessionStorage.getItem('token') || localStorage.getItem('token') || '')}`,
@@ -235,22 +237,43 @@ test('P1-T04: repair document preview via API', async ({ page, request }, testIn
   const fixture = testInfo.outputPath('repair-test.pdf')
   generateTextPdf(fixture, 2)
   const materialId = await uploadMaterial(request, headers, courseId, fixture, 'repair-test.pdf', 'application/pdf')
-  await waitForMaterialProcessed(request, headers, courseId, materialId, 90_000)
+  expect((await request.post(`${API_BASE}/materials/${materialId}/parse`, { headers })).ok()).toBeTruthy()
+  await waitForMaterialReadyForReading(request, headers, materialId, 90_000)
 
-  // Call rebuild endpoint
-  const rebuildRes = await request.post(`${API_BASE}/materials/${materialId}/page-assets/rebuild`, { headers })
-  expect(rebuildRes.ok()).toBeTruthy()
-  const rebuildBody = await rebuildRes.json()
-  // Stronger: exact page counts (not just > 0)
-  expect(rebuildBody.expected_pages).toBe(2)
-  expect(rebuildBody.ready_pages).toBe(2)
-  expect(rebuildBody.status).toBe('ready')
+  // Test setup deliberately removes one persisted page asset and its file;
+  // the repair itself must be initiated through the user-visible UI.
+  const removeAsset = [
+    'import os, sqlite3, sys',
+    "path = os.environ['E2E_DATABASE_URL'].removeprefix('sqlite:///')",
+    "upload = os.environ['E2E_UPLOAD_DIR']",
+    'db = sqlite3.connect(path)',
+    "row = db.execute('SELECT id, asset_path FROM material_page_assets WHERE material_id=? ORDER BY page_no DESC LIMIT 1', (int(sys.argv[1]),)).fetchone()",
+    "assert row, 'expected a page asset to remove'",
+    "db.execute('DELETE FROM material_page_assets WHERE id=?', (row[0],))",
+    'db.commit()',
+    "asset = os.path.join(upload, row[1])",
+    'os.remove(asset) if os.path.exists(asset) else None',
+  ].join('; ')
+  execFileSync(pythonExe, ['-c', removeAsset, String(materialId)], { env: process.env })
 
-  // Verify in learn view
   await page.goto(`/courses/${courseId}/learn`)
+  await expect(page.getByTestId('material-readiness-blocked')).toBeVisible({ timeout: 30_000 })
+  const rebuildResponse = page.waitForResponse(
+    (response) => response.url().includes(`/materials/${materialId}/page-assets/rebuild`) && response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: '修复文档预览' }).click()
+  expect((await rebuildResponse).ok()).toBeTruthy()
+  const readiness = await waitForMaterialReadyForReading(request, headers, materialId, 30_000)
+  expect(readiness.expected_page_numbers).toEqual([1, 2])
+  expect(readiness.ready_page_numbers).toEqual([1, 2])
+  expect(readiness.missing_page_numbers).toEqual([])
   await expect(page.locator('.page-canvas')).toBeVisible({ timeout: 30_000 })
-  // Stronger: verify actual page image element rendered (not just canvas container)
-  await expect(page.locator('img[alt*="原页图像"]').first()).toBeVisible({ timeout: 30_000 })
+  const images = page.locator('img[alt*="原页图像"]')
+  await expect(images).toHaveCount(2)
+  for (let index = 0; index < 2; index += 1) {
+    await expect(images.nth(index)).toBeVisible({ timeout: 30_000 })
+    expect(await images.nth(index).evaluate((image: HTMLImageElement) => image.naturalWidth > 0 && image.naturalHeight > 0)).toBeTruthy()
+  }
   await page.screenshot({ path: testInfo.outputPath('t04-repair.png'), fullPage: true })
 })
 
@@ -275,7 +298,8 @@ test('P1-T05: non-PDF material defaults to structured text mode', async ({ page,
     multipart: { file: { name: 'notes.md', mimeType: 'text/markdown', buffer: textContent } },
   })
   const materialId = (await matRes.json()).id
-  await waitForMaterialProcessed(request, headers, courseId, materialId, 90_000)
+  expect((await request.post(`${API_BASE}/materials/${materialId}/parse`, { headers })).ok()).toBeTruthy()
+  await waitForMaterialReadyForReading(request, headers, materialId, 90_000)
 
   // Navigate to learn view
   await page.goto(`/courses/${courseId}/learn`)
@@ -290,9 +314,8 @@ test('P1-T05: non-PDF material defaults to structured text mode', async ({ page,
 
   // If radio group visible, verify "结构化文本" option exists
   const radioGroup = page.getByRole('radiogroup', { name: '资料展示模式' })
-  if (await radioGroup.isVisible()) {
-    await expect(radioGroup.getByText('结构化文本')).toBeVisible()
-  }
+  await expect(radioGroup).toBeVisible()
+  await expect(radioGroup.getByText('结构化文本')).toBeVisible()
 
   await page.screenshot({ path: testInfo.outputPath('t05-non-pdf.png'), fullPage: true })
 })
@@ -312,7 +335,8 @@ test('P1-T06: scanned PDF shows original page preview without false alert', asyn
   generateScannedPdf(fixture)
 
   const materialId = await uploadMaterial(request, headers, courseId, fixture, 'scanned.pdf', 'application/pdf')
-  const finalStatus = await waitForMaterialProcessed(request, headers, courseId, materialId, 90_000)
+  expect((await request.post(`${API_BASE}/materials/${materialId}/parse`, { headers })).ok()).toBeTruthy()
+  await waitForMaterialReadyForReading(request, headers, materialId, 90_000)
 
   // Even if chunks are empty (scanned PDF), page assets should exist
   await page.goto(`/courses/${courseId}/learn`)

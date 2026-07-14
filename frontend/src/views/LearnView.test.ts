@@ -32,6 +32,15 @@ vi.mock('../api/material', () => ({
   listMaterials: vi.fn(),
   getChunks: vi.fn(),
   getMaterialPages: vi.fn(),
+  getMaterialReadiness: vi.fn().mockResolvedValue({
+    data: {
+      usable: true,
+      reader_mode: 'structured_text',
+      blocking_reasons: [],
+      file_type: 'txt',
+      missing_page_numbers: [],
+    },
+  }),
   getImageIntegrity: vi.fn().mockResolvedValue({
     data: { status: 'ready', total: 0, ready: 0, missing: 0, expected_pages: 0, ready_pages: 0, missing_pages: 0 },
   }),

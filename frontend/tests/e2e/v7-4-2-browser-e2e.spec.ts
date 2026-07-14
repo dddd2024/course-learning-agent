@@ -249,10 +249,11 @@ test.describe('V7.4.2 Functional Authenticity Closure', () => {
     const items = quizDetail.items || []
     expect(items.length).toBeGreaterThan(0)
 
-    // Submit with correct answers
-    const answers = items.map((item: { id: number; answer: string }) => ({
+    // Answers are withheld before submit.  Submit valid-shaped responses and
+    // then assert the server-side result contract.
+    const answers = items.map((item: { id: number; question_type: string }) => ({
       item_id: item.id,
-      user_answer: item.answer,
+      user_answer: item.question_type === 'true_false' ? 'false' : 'A',
     }))
 
     const submitRes = await request.post(`${API_BASE}/quizzes/${quizId}/submit`, {

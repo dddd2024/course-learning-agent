@@ -116,7 +116,7 @@ TLB 命中时无需访问内存中的页表，提升了地址转换速度。
       `${API_BASE}/courses/${courseId}/knowledge-points/generate`,
       { headers },
     )
-    expect(regenRes.ok()).toBeTruthy()
+    expect(regenRes.ok(), `${regenRes.status()}: ${await regenRes.text()}`).toBeTruthy()
 
     // Check generations again — should now have gen 1 (archived) and gen 2 (active)
     const genRes2 = await request.get(
@@ -162,7 +162,7 @@ TLB 命中时无需访问内存中的页表，提升了地址转换速度。
         question_count: 3,
       },
     })
-    expect(quizRes.ok()).toBeTruthy()
+    expect(quizRes.ok(), `${quizRes.status()}: ${await quizRes.text()}`).toBeTruthy()
     const quiz = await quizRes.json()
     expect(quiz.items.length).toBe(3)
     expect(quiz.status).toBe('draft')
@@ -171,7 +171,8 @@ TLB 命中时无需访问内存中的页表，提升了地址转换速度。
     for (const item of quiz.items) {
       expect(item.question_text.length).toBeGreaterThan(0)
       expect(item.question_type).toBeTruthy()
-      expect(item.answer).toBeTruthy()
+      // Correct answers are intentionally withheld until submission.
+      expect(item.source_evidence.length).toBeGreaterThan(0)
     }
   })
 
@@ -234,10 +235,13 @@ TLB 命中时无需访问内存中的页表，提升了地址转换速度。
     )
     expect(rescheduleRes.ok()).toBeTruthy()
     const reschedule = await rescheduleRes.json()
-    // V7.4-04: reschedule must return a diff
+    // Current scheduler contract returns a five-category, generation-aware
+    // diff rather than the retired added/removed pair.
     expect(reschedule.diff).toBeDefined()
-    expect(reschedule.diff.added).toBeDefined()
-    expect(reschedule.diff.removed).toBeDefined()
+    expect(reschedule.diff.kept).toBeDefined()
+    expect(reschedule.diff.moved).toBeDefined()
+    expect(reschedule.diff.created).toBeDefined()
+    expect(reschedule.diff.superseded).toBeDefined()
 
     // Delete
     const deleteRes = await request.delete(`${API_BASE}/plans/multi/${plan.multi_plan_id}`, { headers })
@@ -258,13 +262,13 @@ TLB 命中时无需访问内存中的页表，提升了地址转换速度。
     test.setTimeout(120_000)
     const { headers } = await registerUniqueUser(page, request, 'fe5')
 
-    // Create course
-    const courseRes = await request.post(`${API_BASE}/courses`, {
+    // Seed a real material and outline so the plan receives a runnable
+    // review target that can produce durable execution history.
+    const { courseId } = await setupCourseWithMaterialAndKPs(
+      request,
       headers,
-      data: { name: `FE5-Course-${Date.now()}` },
-    })
-    expect(courseRes.ok()).toBeTruthy()
-    const courseId = (await courseRes.json()).id
+      `FE5-Course-${Date.now()}`,
+    )
 
     // Create multi-plan
     const planRes = await request.post(`${API_BASE}/plans/multi`, {
@@ -291,23 +295,18 @@ TLB 命中时无需访问内存中的页表，提升了地址转换速度。
     const taskId = detail.tasks.find((t: { task_id: number }) => t.task_id)?.task_id
     expect(taskId).toBeTruthy()
 
-    // Mark task as in-progress (has execution history)
-    const patchRes = await request.patch(`${API_BASE}/plans/tasks/${taskId}`, {
-      headers,
-      data: { execution_status: 'in_progress' },
-    })
-    expect(patchRes.ok()).toBeTruthy()
+    // Record execution through the state-machine endpoint.  Direct PATCH
+    // mutation is deliberately no longer accepted as durable history.
+    const startRes = await request.post(`${API_BASE}/plans/tasks/${taskId}/start`, { headers })
+    expect(startRes.ok()).toBeTruthy()
 
     // Try to delete — should be rejected with 409
     const deleteRes = await request.delete(`${API_BASE}/plans/multi/${planId}`, { headers })
     expect(deleteRes.status()).toBe(409)
 
-    // Delete with force=true — should succeed
-    const forceDeleteRes = await request.delete(
-      `${API_BASE}/plans/multi/${planId}?force=true`,
-      { headers },
-    )
-    expect(forceDeleteRes.status()).toBe(204)
+    // Historical plans are retained through archive, never force-deleted.
+    const archiveRes = await request.post(`${API_BASE}/plans/multi/${planId}/archive`, { headers })
+    expect(archiveRes.ok()).toBeTruthy()
   })
 
   // --------------------------------------------------------------------

@@ -77,7 +77,13 @@ def run_job(job_id: int, parse_fn=None) -> None:
         job.attempt += 1
         db.commit()
         status, _ = (parse_fn or parse_with_retry)(db, material, job.user_id)
+        # A job is queued before a new parsed version exists.  Bind it after
+        # parsing succeeds so readiness can prove that its terminal state and
+        # the material's active version describe the same artifact.
+        db.refresh(material)
         db.refresh(job)
+        if status == "ready":
+            job.material_version_id = material.active_version_id
         if job.status != "cancelled" and status != "cancelled":
             job.status = "succeeded" if status == "ready" else "failed"
             job.finished_at, job.heartbeat_at = utc_now(), utc_now()

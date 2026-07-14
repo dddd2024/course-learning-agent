@@ -94,7 +94,9 @@ async function answerTaskQuiz(page: Page, pass: boolean) {
       } else if (await page.getByRole('radio', { name: '正确' }).count()) {
         await page.getByRole('radio', { name: '正确' }).check()
       } else {
-        await page.getByRole('radio', { name: /^[A-D]\. 核心概念：TCP\/IP/ }).check()
+        // Mock-backed choice questions place the evidence-supported answer
+        // first.  Do not couple this browser flow to one fixture sentence.
+        await radios.first().check()
       }
     } else {
       await quiz.locator('textarea').fill(pass ? '知识框架' : '错误答案')

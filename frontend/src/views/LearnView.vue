@@ -130,6 +130,22 @@
           <el-empty description="请选择一份资料开始学习" :image-size="100" />
         </div>
         <div v-else class="doc-content">
+          <div v-if="readiness && !readiness.usable" class="image-error-banner" data-testid="material-readiness-blocked">
+            <el-alert type="warning" :closable="false" show-icon>
+              <template #title>
+                <span>资料尚未完全可读：{{ readiness.blocking_reasons.join('、') }}</span>
+              </template>
+              <el-button
+                v-if="readiness.file_type === 'pdf' && readiness.missing_page_numbers.length > 0"
+                type="warning"
+                size="small"
+                :loading="reextractingImages"
+                @click="handleRepairDocument"
+              >
+                修复文档预览
+              </el-button>
+            </el-alert>
+          </div>
           <div class="image-filter-control">
             <el-switch
               v-model="showFilteredImages"
@@ -384,11 +400,11 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, ref, computed, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ChatDotRound, CopyDocument, InfoFilled, Loading, MagicStick, Aim, PictureRounded } from '@element-plus/icons-vue'
-import { listMaterials, getChunks, getMaterialPages, generateMaterialStudyGuide, reextractImages, getImageIntegrity, rebuildPageAssets, type Material, type Chunk, type MaterialPage, type ImageIntegrityResult } from '../api/material'
+import { listMaterials, getChunks, getMaterialPages, getMaterialReadiness, generateMaterialStudyGuide, reextractImages, getImageIntegrity, rebuildPageAssets, type Material, type Chunk, type MaterialPage, type MaterialReadiness, type ImageIntegrityResult } from '../api/material'
 import { listCourses, type Course } from '../api/course'
 import {
   createConversation,
@@ -460,6 +476,12 @@ const brokenImageIds = ref<Set<number>>(new Set())
 const reextractingImages = ref(false)
 const imageIntegrityStatus = ref<string>('')
 const imageIntegrityData = ref<ImageIntegrityResult | null>(null)
+const readiness = ref<MaterialReadiness | null>(null)
+
+function releaseImageUrls() {
+  Object.values(imageUrls.value).forEach((url) => URL.revokeObjectURL(url))
+  imageUrls.value = {}
+}
 
 // V6-14: derive a human-readable page title from the first heading block
 function derivePageTitle(page: MaterialPage): string {
@@ -725,8 +747,7 @@ async function getAllMaterialChunks(
 
 async function loadChunks() {
   if (!selectedMaterialId.value) return
-  Object.values(imageUrls.value).forEach((url) => URL.revokeObjectURL(url))
-  imageUrls.value = {}
+  releaseImageUrls()
   brokenImageIds.value.clear()
   docLoading.value = true
   chunks.value = []
@@ -767,29 +788,23 @@ async function loadChunks() {
       } catch {
         materialPages.value = []
       }
-      // V7.5.1-02: auto-select reader mode
-      const hasReadyPageAssets = materialPages.value.some(
-        (p) => p.page_asset?.status === 'ready' && p.page_asset?.file_url,
-      )
-      readerMode.value = hasReadyPageAssets ? 'page' : 'clean'
+      readiness.value = (await getMaterialReadiness(bestMaterialId)).data
+      readerMode.value = readiness.value.reader_mode === 'page' ? 'page' : 'clean'
     } else {
-      const materialChunks = await getAllMaterialChunks(selectedMaterialId.value)
+      const [readinessResponse, materialChunks] = await Promise.all([
+        getMaterialReadiness(selectedMaterialId.value),
+        getAllMaterialChunks(selectedMaterialId.value),
+      ])
+      readiness.value = readinessResponse.data
       rawChunks.value = materialChunks
       // The backend is the single source of truth for cleaned/displayable
       // content; do not hide a valid citation with a second UI heuristic.
       chunks.value = materialChunks
       materialPages.value = (await getMaterialPages(selectedMaterialId.value)).data.items
-      // V7.5.1-02: auto-select reader mode based on material capabilities.
-      // If ready page assets exist, use 'page' mode; otherwise fall back
-      // to 'clean' (structured text) for non-PDF or assets-less materials.
-      const hasReadyPageAssets = materialPages.value.some(
-        (p) => p.page_asset?.status === 'ready' && p.page_asset?.file_url,
-      )
-      if (hasReadyPageAssets) {
-        readerMode.value = 'page'
-      } else {
-        readerMode.value = 'clean'
-      }
+      // The server owns the capability contract.  A scanned PDF is page
+      // readable even when it has no text chunks; a text material must never
+      // select an empty page canvas merely because a stale asset exists.
+      readerMode.value = readiness.value.reader_mode === 'page' ? 'page' : 'clean'
     }
     await preloadImages(chunks.value)
     // V6-52: load image integrity status (best-effort, non-blocking)
@@ -822,6 +837,8 @@ async function loadChunks() {
     docLoading.value = false
   }
 }
+
+onBeforeUnmount(releaseImageUrls)
 
 function handleSelection() {
   const selection = window.getSelection()

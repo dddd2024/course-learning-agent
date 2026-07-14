@@ -94,6 +94,10 @@ class ChunkResponse(BaseModel):
     material_id: int
     chunk_index: int
     text: str
+    # ``content`` was the original public field name.  Keep it as an alias
+    # during the reader-contract transition so older API consumers do not
+    # silently receive an empty source body.
+    content: Optional[str] = None
     raw_text: Optional[str] = None
     cleaner_version: Optional[str] = None
     noise_score: Optional[float] = None
@@ -103,6 +107,7 @@ class ChunkResponse(BaseModel):
     token_count: Optional[int] = None
     char_count: Optional[int] = None
     estimated_token_count: Optional[int] = None
+    source_fragments_json: Optional[str] = None
     images: List[ImageResponse] = []
     quality_score: Optional[float] = None
     quality_reason: Optional[str] = None

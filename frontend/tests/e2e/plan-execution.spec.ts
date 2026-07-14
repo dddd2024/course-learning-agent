@@ -99,7 +99,10 @@ test.describe('Plan Execution (V6)', () => {
       expect(execRes.ok()).toBeTruthy()
       const execBody = await execRes.json()
       expect(execBody.execution_status).toBe('in_progress')
-      expect(execBody.verification_result.observed_events).toContain('target_loaded')
+      // The execution record is populated after the user confirms the
+      // reader action; it is intentionally null while the task is merely
+      // open, so assert the state-machine boundary here instead.
+      expect(execBody.started_at).toBeTruthy()
 
       // Click "完成本次学习" to verify and complete the task
       await completeBtn.click()

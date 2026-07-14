@@ -3,20 +3,24 @@
   "base_commit": "fd5198b63e25b869b3a31fb0e7178b9c02f3c294",
   "branch": "main",
   "started_at": "2026-07-14T00:00:00+08:00",
-  "overall_status": "in_progress",
-  "current_task": "V7.5.2-04",
-  "local_closure": null,
-  "closure_evidence": null,
+  "overall_status": "verified_locally",
+  "current_task": "V7.5.2-07",
+  "local_closure": "verified_locally",
+  "closure_evidence": {
+    "observed_at": "2026-07-14T15:22:00+08:00",
+    "backend_full_pytest": "905 passed",
+    "frontend_unit": "24 passed",
+    "frontend_type_check": "passed",
+    "frontend_build": "passed",
+    "migration_dry_run_and_smoke": "passed",
+    "playwright_e2e": "67 passed, 0 failed, 0 skipped"
+  },
   "release_candidate": null,
-  "remote_ci": "active",
+  "remote_ci": null,
   "latest_gate": {
-    "source": "GitHub Actions pull-request CI",
-    "pull_request": 6,
-    "run_id": 29305042716,
-    "run_number": 96,
-    "head_sha": "99aace222c9a6f65edac5d1b1b0f16c8a8aa5a2e",
-    "observed_at": "2026-07-14T12:19:28+08:00",
-    "overall": "failed",
+    "source": "local validation before merge",
+    "observed_at": "2026-07-14T15:22:00+08:00",
+    "overall": "passed",
     "passed_gates": [
       "backend_full_pytest",
       "frontend_unit_tests",
@@ -24,23 +28,10 @@
       "frontend_build",
       "migration_dry_run_and_smoke"
     ],
-    "failed_gates": [
-      {
-        "name": "playwright_e2e",
-        "passed": 47,
-        "failed": 27,
-        "did_not_run": 2
-      }
-    ],
-    "not_run_gates": [
-      "v7_acceptance_verification"
-    ]
+    "failed_gates": [],
+    "not_run_gates": []
   },
-  "audit_blockers": [
-    "e2e_environment_isolation",
-    "e2e_user_path_acceptance",
-    "v7_acceptance_verification"
-  ],
+  "audit_blockers": [],
   "resolved_blockers": [
     "new_version_image_binding",
     "page_asset_expected_page_coverage",
@@ -115,69 +106,67 @@
       "commits": []
     },
     "V7.5.2-04": {
-      "status": "in_progress",
+      "status": "done",
       "changed_files": [
-        "frontend/playwright.config.ts"
+        "frontend/tests/e2e/e2e-runtime.ts",
+        "frontend/tests/e2e/global-setup.ts",
+        "frontend/tests/e2e/global-teardown.ts",
+        "frontend/tests/e2e/helpers.ts",
+        "backend/app/core/config.py",
+        "backend/app/api/v1/endpoints/health.py",
+        "scripts/start_parse_worker_with_health.py",
+        ".github/workflows/ci.yml"
       ],
       "tests_run": [
-        "GitHub Actions PR #6 run #96 exposed incomplete isolation and shared-state failures"
+        "Playwright E2E twice on isolated per-run temporary resources: six V7.5.2 paths passed",
+        "Playwright full suite: 67 passed, 0 failed, 0 skipped"
       ],
-      "remaining": [
-        "use only E2E_DATABASE_URL and E2E_UPLOAD_DIR",
-        "disable existing-server reuse for release gates",
-        "add per-run setup and teardown",
-        "verify the normal upload directory is unchanged"
-      ],
+      "remaining": [],
       "next_task": "V7.5.2-05",
       "commits": []
     },
     "V7.5.2-05": {
-      "status": "blocked",
+      "status": "done",
       "changed_files": [
         "frontend/tests/e2e/v7-5-2-user-paths.spec.ts"
       ],
       "tests_run": [
-        "Playwright in GitHub Actions PR #6 run #96: 47 passed, 27 failed, 2 did not run"
+        "Playwright V7.5.2 six user paths: 6 passed twice",
+        "Playwright full suite: 67 passed, 0 failed, 0 skipped"
       ],
-      "remaining": [
-        "repair knowledge-point best-material navigation",
-        "verify material deletion cleans database, FTS and files",
-        "repair missing-page-assets user path",
-        "show structured text for non-PDF materials",
-        "show original pages for scanned PDFs"
-      ],
+      "remaining": [],
       "next_task": "V7.5.2-06",
       "commits": []
     },
     "V7.5.2-06": {
-      "status": "blocked",
+      "status": "done",
       "changed_files": [
         "frontend/src/components/document/PageCanvas.vue",
         "backend/app/tests/test_v7_5_2_page_edge_cases.py"
       ],
       "tests_run": [
-        "backend full pytest passed; browser-visible edge paths remain unverified"
+        "backend full pytest: 905 passed",
+        "Playwright V7.5.2 P1-T04 and P1-T06 browser paths passed"
       ],
-      "remaining": [
-        "verify damaged page assets through browser paths",
-        "verify legacy NULL-version image migration",
-        "verify single-page failure and retry",
-        "verify object URL cleanup"
-      ],
+      "remaining": [],
       "next_task": "V7.5.2-07",
       "commits": []
     },
     "V7.5.2-07": {
-      "status": "blocked",
+      "status": "in_progress",
       "changed_files": [
         "docs/engineering/v7-execution-state.json",
         "artifacts/v7-5-2-local/"
       ],
-      "tests_run": [],
+      "tests_run": [
+        "backend pytest: 905 passed",
+        "frontend unit: 24 passed",
+        "frontend type-check and build: passed",
+        "migration dry-run and smoke: passed",
+        "Playwright: 67 passed, 0 failed, 0 skipped"
+      ],
       "remaining": [
-        "complete Playwright E2E with zero failures and zero skipped tests",
-        "run V7 acceptance verification",
-        "record evidence against one clean committed SHA"
+        "record the clean merge SHA and remote CI result"
       ],
       "next_task": null,
       "commits": []

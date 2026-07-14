@@ -55,6 +55,7 @@ class MultiCourseInput(BaseModel):
 class MultiPlanCreate(BaseModel):
     """Payload for POST /plans/multi."""
 
+    title: Optional[str] = Field(default=None, min_length=1, max_length=255)
     courses: List[MultiCourseInput] = Field(..., min_length=1)
     daily_minutes: int = Field(..., gt=0)
     constraints: Optional[Dict[str, Any]] = Field(default_factory=dict)

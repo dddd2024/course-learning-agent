@@ -1,18 +1,41 @@
 import { expect, type Page, type APIRequestContext } from '@playwright/test'
 
-export const API_BASE = 'http://127.0.0.1:8000/api/v1'
+export const API_BASE = process.env.E2E_API_BASE || 'http://127.0.0.1:8000/api/v1'
 
 export const TEST_USER = { username: 'test', password: 'test1234', email: 'test@example.com' }
 
+export async function waitForMaterialReadyForReading(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  materialId: number,
+  timeout = 90_000,
+): Promise<Record<string, unknown>> {
+  let last: Record<string, unknown> = {}
+  try {
+    await expect.poll(async () => {
+      const response = await request.get(`${API_BASE}/materials/${materialId}/readiness`, { headers })
+      if (!response.ok()) return `HTTP ${response.status()}`
+      last = await response.json() as Record<string, unknown>
+      if (last.status === 'failed' || last.parse_job_status === 'failed') {
+        throw new Error(`Material ${materialId} failed: ${JSON.stringify(last)}`)
+      }
+      return last.usable
+    }, { timeout, intervals: [500, 1_000, 2_000] }).toBe(true)
+  } catch (error) {
+    throw new Error(`Material ${materialId} never became reader-ready; last=${JSON.stringify(last)}`, { cause: error })
+  }
+  return last
+}
+
 /** Register against the actual backend when CI starts with an empty database. */
 export async function loginWithFreshUser(page: Page) {
-  const registration = await page.request.post('http://127.0.0.1:8000/api/v1/auth/register', { data: TEST_USER })
-  // 201 means this run created the isolated user; 400/409 means a prior spec
-  // already created it. Any other response is a real setup failure.
-  expect([201, 400, 409]).toContain(registration.status())
+  const suffix = `${Date.now()}-${Math.floor(Math.random() * 100_000)}`
+  const user = { username: `e2e-${suffix}`, password: TEST_USER.password, email: `e2e-${suffix}@example.com` }
+  const registration = await page.request.post(`${API_BASE}/auth/register`, { data: user })
+  expect(registration.status()).toBe(201)
   await page.goto('/login')
-  await page.fill('input[placeholder="请输入用户名"]', TEST_USER.username)
-  await page.fill('input[placeholder="请输入密码"]', TEST_USER.password)
+  await page.fill('input[placeholder="请输入用户名"]', user.username)
+  await page.fill('input[placeholder="请输入密码"]', user.password)
   await page.click('button:has-text("登录")')
   await page.waitForURL('**/dashboard', { timeout: 15_000 })
 }
@@ -123,11 +146,15 @@ export async function uploadMaterial(
 }
 
 /** Rich text content used as a fallback when PDF parsing fails. */
-const TEXT_FALLBACK = `操作系统课程笔记
+const TEXT_FALLBACK = `虚拟内存地址转换
 
 快表 TLB 是页表的高速缓存，用于加速虚拟地址到物理地址的转换。
 页表存储虚拟页到物理页的映射关系。
 TLB 命中时无需访问内存中的页表，提升了地址转换速度。
+
+页面置换算法决定发生缺页时应当淘汰哪个页面。
+LRU 依据最近最少使用原则近似保留后续更可能访问的页面。
+进程调度器按照优先级和时间片在就绪进程之间分配处理器。
 `
 
 /**

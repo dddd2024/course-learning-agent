@@ -423,9 +423,15 @@ test.describe('V7 Acceptance E2E', () => {
           const quizRes = await request.get(`${API_BASE}/quizzes/${quizId}`, { headers })
           if (quizRes.ok()) {
             const quiz = await quizRes.json()
-            const answers = quiz.items.map((item: { id: number }) => ({
+            const answers = quiz.items.map((item: { id: number; question_type: string }) => ({
               item_id: item.id,
-              user_answer: 'A',
+              user_answer: item.question_type === 'true_false'
+                ? 'true'
+                : item.question_type === 'multiple_choice'
+                  ? ['A', 'B']
+                  : item.question_type === 'short_answer'
+                    ? '知识框架'
+                    : 'A',
             }))
             const submitRes = await request.post(
               `${API_BASE}/quizzes/${quizId}/submit`,
@@ -569,6 +575,10 @@ ARP协议将IP地址解析为MAC地址。
     test.setTimeout(60_000)
 
     const { headers: headersA } = await registerUniqueUser(page, request, 'v7e11a')
+    await page.evaluate(() => {
+      sessionStorage.clear()
+      localStorage.clear()
+    })
     const { headers: headersB } = await registerUniqueUser(page, request, 'v7e11b')
 
     const courseRes = await request.post(`${API_BASE}/courses`, {

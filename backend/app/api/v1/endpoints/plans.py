@@ -867,7 +867,7 @@ def create_multi_plan(
 
     parent = MultiCoursePlan(
         user_id=current_user.id,
-        title="多课程学习计划",
+        title=payload.title or "多课程学习计划",
         deadline=max(item.deadline for item in payload.courses),
         daily_minutes=payload.daily_minutes,
         status="active",

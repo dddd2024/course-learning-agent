@@ -19,7 +19,7 @@ from app.core.timezone import utc_now
 from app.models.course import Course
 from app.models.material import Material
 from app.models.user import User
-from app.schemas.material import MaterialListResponse, MaterialResponse
+from app.schemas.material import ChunkListResponse, MaterialListResponse, MaterialResponse
 from app.services.error_logger import log_error
 from app.services.material_delete_service import delete_material
 
@@ -272,6 +272,33 @@ def list_materials(
         items=[_material_response(m) for m in items],
         total=len(items),
     )
+
+
+@router.get("/{course_id}/materials/{material_id}/chunks", response_model=ChunkListResponse)
+def list_course_material_chunks(
+    course_id: int,
+    material_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    include_decorative: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ChunkListResponse:
+    """Compatibility route retaining the course-scoped chunk URL.
+
+    The reader's canonical endpoint is ``/materials/{id}/chunks``; both
+    surfaces apply the same ownership and active-version filter.
+    """
+    _get_owned_course(db, course_id, current_user.id)
+    material = db.query(Material).filter(
+        Material.id == material_id,
+        Material.course_id == course_id,
+        Material.user_id == current_user.id,
+    ).first()
+    if material is None:
+        raise NotFoundException(message="资料不存在")
+    from app.api.v1.endpoints.parse import list_chunks
+    return list_chunks(material_id, page, page_size, include_decorative, db, current_user)
 
 
 @router.delete("/materials/{material_id}", status_code=204)

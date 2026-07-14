@@ -1,7 +1,11 @@
 """Health check endpoint."""
-from fastapi import APIRouter
+import os
+import signal
+from threading import Timer
 
-from app.core.config import app_build_info, settings
+from fastapi import APIRouter, HTTPException
+
+from app.core.config import app_build_info, e2e_runtime_info, settings
 
 router = APIRouter()
 
@@ -25,4 +29,14 @@ def health_check() -> dict:
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "build": app_build_info(),
+        "e2e": e2e_runtime_info(),
     }
+
+
+@router.post("/e2e/shutdown")
+def e2e_shutdown() -> dict:
+    """Stop an isolated test server after its browser suite has finished."""
+    if not settings.E2E_MODE:
+        raise HTTPException(status_code=404, detail="not an E2E server")
+    Timer(0.2, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
+    return {"status": "stopping", "run_id": settings.E2E_RUN_ID}
