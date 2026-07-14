@@ -35,6 +35,10 @@ process.env.E2E_FRONTEND_PORT = String(frontendPort)
 process.env.E2E_DATABASE_URL = e2eDatabaseUrl
 process.env.E2E_UPLOAD_DIR = e2eUploadDir
 process.env.E2E_RUN_ROOT = e2eRunRoot
+// Expose the exact same isolated values to test helpers and child processes.
+process.env.DATABASE_URL = e2eDatabaseUrl
+process.env.UPLOAD_DIR = e2eUploadDir
+process.env.ENVIRONMENT = 'e2e'
 
 mkdirSync(e2eRunRoot, { recursive: true })
 mkdirSync(e2eUploadDir, { recursive: true })
@@ -74,10 +78,12 @@ export function snapshotDirectory(root: string): SnapshotEntry[] {
 export function assertIsolatedPath(candidate: string): void {
   const normalizedRoot = resolve(e2eRunRoot)
   const normalized = resolve(candidate)
-  if (normalized !== normalizedRoot && !normalized.startsWith(`${normalizedRoot}${process.platform === 'win32' ? '\\' : '/'}`)) {
+  const separator = process.platform === 'win32' ? '\\' : '/'
+  if (normalized !== normalizedRoot && !normalized.startsWith(`${normalizedRoot}${separator}`)) {
     throw new Error(`E2E path escapes the isolated run root: ${candidate}`)
   }
-  if (normalized === resolve(normalUploadDir) || normalized.startsWith(`${resolve(normalUploadDir)}${process.platform === 'win32' ? '\\' : '/'}`)) {
+  const normalRoot = resolve(normalUploadDir)
+  if (normalized === normalRoot || normalized.startsWith(`${normalRoot}${separator}`)) {
     throw new Error(`E2E path points at normal uploads: ${candidate}`)
   }
 }
