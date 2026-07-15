@@ -85,6 +85,24 @@ const providerTagType: Record<string, 'success' | 'warning' | 'info'> = {
   mock: 'info',
 }
 
+// A process exit can leave an immutable audit row in `running`. Preserve the
+// raw value for filtering while making obviously stale rows honest in the UI.
+const STALE_RUNNING_MS = 30 * 60 * 1000
+
+function isStaleRunning(row: AgentRun): boolean {
+  if (row.status !== 'running' || row.finished_at || !row.started_at) return false
+  const startedAt = new Date(row.started_at).getTime()
+  return Number.isFinite(startedAt) && Date.now() - startedAt > STALE_RUNNING_MS
+}
+
+function runStatusLabel(row: AgentRun): string {
+  return isStaleRunning(row) ? '疑似中断' : (statusLabel[row.status] || row.status)
+}
+
+function runStatusTagType(row: AgentRun): 'success' | 'danger' | 'warning' | 'info' | '' {
+  return isStaleRunning(row) ? 'danger' : (statusTagType[row.status] || 'info')
+}
+
 interface RetrievedChunk {
   chunk_id?: number
   score?: number
@@ -284,16 +302,16 @@ onMounted(() => {
         <el-table-column prop="run_type" label="运行类型" width="120" />
         <el-table-column label="状态" width="120" align="center">
           <template #default="{ row }">
-            <el-tag :type="statusTagType[row.status] || 'info'" size="small">
-              {{ statusLabel[row.status] || row.status }}
+            <el-tag :type="runStatusTagType(row)" size="small">
+              {{ runStatusLabel(row) }}
             </el-tag>
             <el-tag
-              v-if="row.fallback_used"
+              v-if="row.fallback_used && row.status !== 'degraded'"
               type="warning"
               size="small"
               style="margin-left: 4px"
             >
-              降级
+              使用备用模型
             </el-tag>
           </template>
         </el-table-column>
@@ -324,9 +342,9 @@ onMounted(() => {
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column prop="prompt_version" label="Prompt 版本" width="130" align="center">
+        <el-table-column prop="prompt_version" label="Prompt 版本" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">
-            {{ row.prompt_version || '-' }}
+            <span class="prompt-version">{{ row.prompt_version || '-' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="90" align="center">
@@ -360,8 +378,8 @@ onMounted(() => {
         <template v-if="detail">
           <div class="detail-header">
             <span class="detail-id">#{{ detail.id }}</span>
-            <el-tag :type="statusTagType[detail.status] || 'info'" size="small">
-              {{ statusLabel[detail.status] || detail.status }}
+            <el-tag :type="runStatusTagType(detail)" size="small">
+              {{ runStatusLabel(detail) }}
             </el-tag>
             <el-tag type="info" size="small">{{ detail.run_type }}</el-tag>
           </div>
@@ -371,6 +389,15 @@ onMounted(() => {
             class="detail-alert"
             :title="detail.error_message"
             type="error"
+            :closable="false"
+            show-icon
+          />
+
+          <el-alert
+            v-else-if="isStaleRunning(detail)"
+            class="detail-alert"
+            title="该运行记录长时间未结束，可能因服务重启或执行异常而中断；其原始审计状态仍为 running。"
+            type="warning"
             :closable="false"
             show-icon
           />
@@ -612,6 +639,10 @@ onMounted(() => {
 .pagination-bar {
   margin-top: 16px;
   justify-content: flex-end;
+}
+
+.prompt-version {
+  white-space: nowrap;
 }
 
 .drawer-body {

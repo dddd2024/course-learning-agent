@@ -42,22 +42,22 @@
         />
       </el-select>
       <el-radio-group v-model="readerMode" size="small" aria-label="资料展示模式">
-        <el-radio-button label="page">原页</el-radio-button>
-        <el-radio-button label="clean">结构化文本</el-radio-button>
-        <el-radio-button label="raw">原文</el-radio-button>
+        <el-radio-button value="page" :disabled="!modeAvailable('page')" :title="modeAvailable('page') ? '' : '原页尚未生成，可点击修复文档预览'">原页</el-radio-button>
+        <el-radio-button value="clean" :disabled="!modeAvailable('clean')">结构化文本</el-radio-button>
+        <el-radio-button value="raw" :disabled="!modeAvailable('raw')">原文</el-radio-button>
       </el-radio-group>
     </div>
 
     <!-- Reading progress bar -->
     <el-progress
-      v-if="chunks.length > 0"
+      v-if="chunks.length > 0 || materialPages.length > 0"
       :percentage="readProgress"
       :show-text="false"
       :stroke-width="3"
       class="read-progress"
     />
 
-    <div v-if="chunks.length > 0" class="mobile-pane-switch" role="tablist" aria-label="学习视图">
+    <div v-if="chunks.length > 0 || materialPages.length > 0" class="mobile-pane-switch" role="tablist" aria-label="学习视图">
       <button
         type="button"
         role="tab"
@@ -90,14 +90,14 @@
     <!-- Main content: TOC + document reader + AI assistant -->
     <div class="learn-body">
       <!-- Left: Table of Contents -->
-      <div v-if="chunks.length > 0" class="doc-toc" :class="{ 'mobile-hidden': mobilePane !== 'toc' }">
+      <div v-if="materialPages.length > 0" class="doc-toc" :class="{ 'mobile-hidden': mobilePane !== 'toc' }">
         <div class="toc-label">目录</div>
         <div class="toc-list">
           <div
-            v-for="(page, idx) in materialPages"
+            v-for="page in materialPages"
             :key="page.catalog_key"
             class="toc-item"
-            :class="{ active: activeChunkIndex === idx }"
+            :class="{ active: activePageNo === page.page_no }"
             role="button"
             tabindex="0"
             @click="scrollToPage(page.page_no)"
@@ -130,10 +130,10 @@
           <el-empty description="请选择一份资料开始学习" :image-size="100" />
         </div>
         <div v-else class="doc-content">
-          <div v-if="readiness && !readiness.usable" class="image-error-banner" data-testid="material-readiness-blocked">
+          <div v-if="readiness && !readerCapability.usable" class="image-error-banner" data-testid="material-readiness-blocked">
             <el-alert type="warning" :closable="false" show-icon>
               <template #title>
-                <span>资料尚未完全可读：{{ readiness.blocking_reasons.join('、') }}</span>
+                <span>资料暂时无法阅读：{{ readerCapability.blocking_reasons.map(readinessReasonLabel).join('、') }}</span>
               </template>
               <el-button
                 v-if="readiness.file_type === 'pdf' && readiness.missing_page_numbers.length > 0"
@@ -144,6 +144,18 @@
               >
                 修复文档预览
               </el-button>
+            </el-alert>
+          </div>
+          <div
+            v-if="readiness?.repair?.actions?.includes('rebuild_page_assets') && readerCapability.usable"
+            class="image-info-banner"
+            data-testid="material-page-repair-needed"
+          >
+            <el-alert type="info" :closable="false" show-icon>
+              <template #title>
+                <span>原页预览尚未完整，当前已自动使用可用文本阅读；可修复原页预览。</span>
+              </template>
+              <el-button type="primary" size="small" :loading="reextractingImages" @click="handleRepairDocument">修复文档预览</el-button>
             </el-alert>
           </div>
           <div v-if="readiness?.page_catalog_synthetic_numbers?.length" class="image-info-banner" data-testid="legacy-page-catalog-repair">
@@ -163,40 +175,6 @@
               active-text="显示已过滤图片"
               @change="loadChunks"
             />
-          </div>
-
-          <!-- V7.5.1-03: non-blocking hint when page fallback is ready -->
-          <div v-if="brokenImageIds.size > 0 && imageIntegrityData?.status === 'page_fallback_ready'" class="image-info-banner">
-            <el-alert type="info" :closable="false" show-icon>
-              <template #title>
-                <span>独立图片不可拆分，已使用原页预览（{{ imageIntegrityData?.ready_pages || 0 }}/{{ imageIntegrityData?.expected_pages || 0 }} 页可读）</span>
-              </template>
-              <el-button
-                type="primary"
-                size="small"
-                :loading="reextractingImages"
-                @click="handleRepairDocument"
-              >
-                修复文档预览
-              </el-button>
-            </el-alert>
-          </div>
-
-          <!-- V6-14: image error banner with re-extract button (only when NOT page_fallback_ready) -->
-          <div v-else-if="brokenImageIds.size > 0 && imageIntegrityData?.status !== 'page_fallback_ready'" class="image-error-banner">
-            <el-alert type="warning" :closable="false" show-icon>
-              <template #title>
-                <span>检测到 {{ brokenImageIds.size }} 张图片缺失，页图也不可用，文档可能无法完整阅读</span>
-              </template>
-              <el-button
-                type="warning"
-                size="small"
-                :loading="reextractingImages"
-                @click="handleRepairDocument"
-              >
-                修复文档预览
-              </el-button>
-            </el-alert>
           </div>
 
           <!-- AI Study Guide -->
@@ -243,12 +221,20 @@
             </div>
           </div>
 
-          <PageCanvas v-if="readerMode === 'page'" :pages="materialPages" />
-          <PageTextPanel v-else-if="readerMode === 'raw'" :pages="materialPages" mode="raw" @select="handleSelection" />
+          <PageCanvas v-if="readerMode === 'page'" :pages="materialPages" :material-id="selectedMaterialId" @selection="handleSelection" />
+          <PageTextPanel v-else-if="readerMode === 'raw'" :pages="materialPages" :material-id="selectedMaterialId" mode="raw" @select="handleSelection" />
           <!-- Clean mode renders semantic chunks once; do not duplicate page.clean_text. -->
-          <div v-else class="doc-chunks" @mouseup="handleSelection">
+          <div v-else class="doc-chunks">
+            <article
+              v-for="group in chunksByPage"
+              :id="`page-${group.pageNo}`"
+              :key="group.pageNo"
+              class="chunk-page"
+              :data-page-no="group.pageNo"
+              @mouseup="handleTextSelection(group.pageNo)"
+            >
             <div
-              v-for="(chunk, idx) in chunks"
+              v-for="(chunk, idx) in group.chunks"
               :key="chunk.id"
               class="doc-chunk"
               :id="`chunk-${chunk.id}`"
@@ -286,15 +272,22 @@
                   v-for="img in chunk.images"
                   :key="img.id"
                   class="doc-chunk-image-item"
+                  :data-image-id="img.id"
                 >
                   <div v-if="img.is_decorative" class="image-decorative-tag">
                     <el-tag type="info" size="small" effect="plain">
                       已过滤：{{ img.decorative_reason || '装饰性图片' }}
                     </el-tag>
                   </div>
+                  <div v-if="brokenImageIds.has(img.id)" class="image-error image-missing">
+                    <el-icon><PictureRounded /></el-icon>
+                    <span>图片缺失</span>
+                    <el-button v-if="chunk.page_no && modeAvailable('page')" link type="primary" @click="viewOriginalPage(chunk.page_no)">查看原页</el-button>
+                  </div>
                   <el-image
-                    :src="imageUrls[img.id] || ''"
-                    :preview-src-list="imageUrls[img.id] ? [imageUrls[img.id]] : []"
+                    v-else-if="imageUrls[img.id]"
+                    :src="imageUrls[img.id]"
+                    :preview-src-list="[imageUrls[img.id]]"
                     :alt="`${materials.find((m) => m.id === selectedMaterialId)?.filename || '课程资料'}第 ${chunk.page_no || '?'} 页插图`"
                     fit="contain"
                     style="max-width: 100%; max-height: 400px; border-radius: 6px;"
@@ -308,12 +301,15 @@
                       <div class="image-error image-missing">
                         <el-icon><PictureRounded /></el-icon>
                         <span>图片缺失</span>
+                        <el-button v-if="chunk.page_no && modeAvailable('page')" link type="primary" @click="viewOriginalPage(chunk.page_no)">查看原页</el-button>
                       </div>
                     </template>
                   </el-image>
+                  <div v-else class="image-placeholder" role="status">图片滚动到附近时加载...</div>
                 </div>
               </div>
             </div>
+            </article>
           </div>
         </div>
       </div>
@@ -324,10 +320,19 @@
           <el-icon color="#409eff"><ChatDotRound /></el-icon>
           <span>AI 学习助手</span>
         </div>
+        <el-alert
+          v-if="assistantCapability.degraded"
+          class="assistant-degraded"
+          type="info"
+          show-icon
+          closable
+          title="全文索引未完整，当前使用关键词回退；阅读不受影响"
+        />
 
         <!-- Selected text preview -->
         <div v-if="selectedText" class="selected-text-box">
           <div class="selected-text-label">已选中内容：</div>
+          <div v-if="selectionContext" class="selected-text-source">{{ selectedMaterial?.filename }} · 第 {{ selectionContext.page_no }} 页</div>
           <div class="selected-text-content">{{ selectedText }}</div>
           <el-button
             type="primary"
@@ -414,18 +419,20 @@ import { nextTick, onBeforeUnmount, onMounted, ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ChatDotRound, CopyDocument, InfoFilled, Loading, MagicStick, Aim, PictureRounded } from '@element-plus/icons-vue'
-import { listMaterials, getChunks, getMaterialPages, getMaterialReadiness, generateMaterialStudyGuide, reextractImages, getImageIntegrity, rebuildPageAssets, type Material, type Chunk, type MaterialPage, type MaterialReadiness, type ImageIntegrityResult } from '../api/material'
+import { listMaterials, getChunks, getMaterialPages, getMaterialReadiness, generateMaterialStudyGuide, reextractImages, getImageIntegrity, rebuildPageAssets, type Material, type Chunk, type ChunkImage, type MaterialPage, type MaterialReadiness, type ImageIntegrityResult, type ReaderCapability, type AssistantCapability } from '../api/material'
 import { listCourses, type Course } from '../api/course'
 import {
   createConversation,
   sendMessage,
   type ChatResult,
   type Citation,
+  type SelectionContext,
 } from '../api/chat'
 import { listKnowledgePoints } from '../api/knowledge'
 import { parseApiError } from '../utils/error'
 import { renderMarkdown } from '../utils/markdown'
 import request from '../api'
+import { normalizeApiAssetUrl } from '../utils/assetUrl'
 import { recordTaskEvent, verifyTask } from '../api/plan'
 import PageCanvas from '../components/document/PageCanvas.vue'
 import PageTextPanel from '../components/document/PageTextPanel.vue'
@@ -449,12 +456,15 @@ const materialPages = ref<MaterialPage[]>([])
 const readerMode = ref<'clean' | 'raw' | 'page'>('page')
 const selectedMaterial = computed(() => materials.value.find((item) => item.id === selectedMaterialId.value) || null)
 const imageUrls = ref<Record<number, string>>({})
+const inlineImageLoads = new Map<number, Promise<void>>()
+let inlineImageObserver: IntersectionObserver | null = null
 const showFilteredImages = ref(false)
 const docLoading = ref(false)
 const mobilePane = ref<'toc' | 'content' | 'assistant'>('content')
 
 // AI assistant state
 const selectedText = ref('')
+const selectionContext = ref<SelectionContext | null>(null)
 const inputQuestion = ref('')
 const aiMessages = ref<Array<{
   role: 'user' | 'assistant'
@@ -478,8 +488,10 @@ const kpSourceChunkIds = ref<Set<number>>(new Set())
 const kpFilterActive = ref(false)
 
 // TOC + progress state
-const activeChunkIndex = ref(0)
+const activePageNo = ref<number | null>(null)
 const readProgress = ref(0)
+let loadGeneration = 0
+const modeByMaterial = new Map<number, 'clean' | 'raw' | 'page'>()
 
 // V6-14: image error isolation + re-extraction
 const brokenImageIds = ref<Set<number>>(new Set())
@@ -488,7 +500,56 @@ const imageIntegrityStatus = ref<string>('')
 const imageIntegrityData = ref<ImageIntegrityResult | null>(null)
 const readiness = ref<MaterialReadiness | null>(null)
 
+const readerCapability = computed<ReaderCapability>(() => readiness.value?.reader || {
+  usable: readiness.value?.usable ?? false,
+  preferred_mode: readiness.value?.reader_mode === 'page' ? 'page' : 'structured_text',
+  available_modes: readiness.value?.reader_mode === 'page' ? ['page', 'structured_text', 'raw'] : ['structured_text', 'raw'],
+  blocking_reasons: readiness.value?.blocking_reasons || [],
+})
+const assistantCapability = computed<AssistantCapability>(() => readiness.value?.assistant || {
+  usable: true,
+  degraded: false,
+  retrieval_mode: 'fts_bm25',
+  reasons: [],
+})
+const chunksByPage = computed(() => {
+  const grouped = new Map<number, Chunk[]>()
+  const fallbackPage = materialPages.value[0]?.page_no || 1
+  for (const chunk of chunks.value) {
+    const pageNo = chunk.page_no && chunk.page_no > 0 ? chunk.page_no : fallbackPage
+    const items = grouped.get(pageNo) || []
+    items.push(chunk)
+    grouped.set(pageNo, items)
+  }
+  return Array.from(grouped.entries())
+    .sort(([left], [right]) => left - right)
+    .map(([pageNo, pageChunks]) => ({ pageNo, chunks: pageChunks }))
+})
+
+function modeAvailable(mode: 'clean' | 'raw' | 'page') {
+  const contractMode = mode === 'clean' ? 'structured_text' : mode
+  return readerCapability.value.available_modes.includes(contractMode)
+}
+
+function chooseReaderMode(materialId: number, capability: ReaderCapability): 'clean' | 'raw' | 'page' {
+  const remembered = modeByMaterial.get(materialId)
+  if (remembered && capability.available_modes.includes(remembered === 'clean' ? 'structured_text' : remembered)) return remembered
+  if (capability.preferred_mode === 'structured_text') return 'clean'
+  return capability.preferred_mode || 'clean'
+}
+
+function readinessReasonLabel(reason: string): string {
+  if (reason === 'active_version_missing') return '尚无可用解析版本'
+  if (reason === 'page_assets_incomplete') return '原页预览尚未生成'
+  if (reason === 'reader_content_missing') return '没有可显示的页面或文本'
+  if (reason.startsWith('material_status:')) return '资料仍在处理中'
+  if (reason.startsWith('version_status:')) return '解析版本尚未就绪'
+  return '阅读数据尚未就绪'
+}
+
 function releaseImageUrls() {
+  inlineImageObserver?.disconnect()
+  inlineImageObserver = null
   Object.values(imageUrls.value).forEach((url) => URL.revokeObjectURL(url))
   imageUrls.value = {}
 }
@@ -652,13 +713,20 @@ function handleDocScroll() {
   const scrollHeight = reader.scrollHeight - reader.clientHeight
   readProgress.value = scrollHeight > 0 ? Math.round((scrollTop / scrollHeight) * 100) : 0
 
-  for (let i = chunks.value.length - 1; i >= 0; i--) {
-    const el = document.getElementById(`chunk-${chunks.value[i].id}`)
-    if (el && el.offsetTop - reader.offsetTop <= scrollTop + 60) {
-      activeChunkIndex.value = i
-      break
+  const readerRect = reader.getBoundingClientRect()
+  let bestPage: number | null = null
+  let bestVisible = -1
+  reader.querySelectorAll<HTMLElement>('[data-page-no]').forEach((element) => {
+    const rect = element.getBoundingClientRect()
+    const visible = Math.max(0, Math.min(rect.bottom, readerRect.bottom) - Math.max(rect.top, readerRect.top))
+    if (visible > bestVisible) {
+      bestVisible = visible
+      bestPage = Number(element.dataset.pageNo)
     }
-  }
+  })
+  if (bestPage) activePageNo.value = bestPage
+  const activeItem = document.querySelector('.toc-item.active') as HTMLElement | null
+  activeItem?.scrollIntoView({ block: 'nearest' })
 }
 
 // --- Lifecycle ---
@@ -772,11 +840,22 @@ async function handleMaterialChange() {
 
 async function loadChunks() {
   if (!selectedMaterialId.value) return
+  const materialId = selectedMaterialId.value
+  const generation = ++loadGeneration
   releaseImageUrls()
   brokenImageIds.value.clear()
   docLoading.value = true
   chunks.value = []
+  rawChunks.value = []
+  materialPages.value = []
+  readiness.value = null
+  activePageNo.value = null
+  readProgress.value = 0
+  selectedText.value = ''
+  selectionContext.value = null
   studyGuide.value = ''
+  const reader = document.querySelector('.doc-reader') as HTMLElement | null
+  if (reader) reader.scrollTop = 0
   try {
     if (kpFilterActive.value && kpSourceChunkIds.value.size > 0) {
       // Knowledge point filter active: load chunks from ALL materials
@@ -800,40 +879,43 @@ async function loadChunks() {
           // skip materials that fail to load
         }
       }
-      selectedMaterialId.value = bestMaterialId
-      rawChunks.value = allChunks
       const filtered = allChunks.filter((c: Chunk) =>
         kpSourceChunkIds.value.has(c.id),
       )
-      chunks.value = filtered
-      // V7.5.1-04: load materialPages for the best-matching material so
-      // the default page mode has data to render.
-      try {
-        materialPages.value = (await getMaterialPages(bestMaterialId)).data.items
-      } catch {
-        materialPages.value = []
-      }
-      readiness.value = (await getMaterialReadiness(bestMaterialId)).data
-      readerMode.value = readiness.value.reader_mode === 'page' ? 'page' : 'clean'
-    } else {
-      const [readinessResponse, materialChunks] = await Promise.all([
-        getMaterialReadiness(selectedMaterialId.value),
-        getAllMaterialChunks(selectedMaterialId.value),
+      const [pageResponse, readinessResponse] = await Promise.all([
+        getMaterialPages(bestMaterialId),
+        getMaterialReadiness(bestMaterialId),
       ])
+      if (generation !== loadGeneration) return
+      selectedMaterialId.value = bestMaterialId
+      rawChunks.value = allChunks
+      chunks.value = filtered
+      materialPages.value = pageResponse.data.items
+      readiness.value = readinessResponse.data
+      readerMode.value = chooseReaderMode(bestMaterialId, readerCapability.value)
+    } else {
+      const [readinessResponse, materialChunks, pageResponse] = await Promise.all([
+        getMaterialReadiness(materialId),
+        getAllMaterialChunks(materialId),
+        getMaterialPages(materialId),
+      ])
+      if (generation !== loadGeneration) return
       readiness.value = readinessResponse.data
       rawChunks.value = materialChunks
       // The backend is the single source of truth for cleaned/displayable
       // content; do not hide a valid citation with a second UI heuristic.
       chunks.value = materialChunks
-      materialPages.value = (await getMaterialPages(selectedMaterialId.value)).data.items
+      materialPages.value = pageResponse.data.items
       // The server owns the capability contract.  A scanned PDF is page
       // readable even when it has no text chunks; a text material must never
       // select an empty page canvas merely because a stale asset exists.
-      readerMode.value = readiness.value.reader_mode === 'page' ? 'page' : 'clean'
+      readerMode.value = chooseReaderMode(materialId, readerCapability.value)
     }
-    await preloadImages(chunks.value)
+    if (generation !== loadGeneration) return
+    activePageNo.value = materialPages.value[0]?.page_no || chunksByPage.value[0]?.pageNo || null
+    await nextTick()
     // V6-52: load image integrity status (best-effort, non-blocking)
-    loadImageIntegrity()
+    loadImageIntegrity(selectedMaterialId.value, generation)
     // V7: task start only creates the in-progress state.  Evidence is sent
     // after the target material and its rendered reader data have loaded.
     // Route URLs use the immutable public identity, while task-event
@@ -863,16 +945,35 @@ async function loadChunks() {
   } catch (err) {
     ElMessage.error(parseApiError(err, '获取资料内容失败'))
   } finally {
-    docLoading.value = false
+    if (generation === loadGeneration) {
+      docLoading.value = false
+      await nextTick()
+      observeInlineImages(generation)
+    }
   }
 }
 
-onBeforeUnmount(releaseImageUrls)
+onBeforeUnmount(() => {
+  releaseImageUrls()
+  inlineImageLoads.clear()
+})
 
-function handleSelection() {
-  const selection = window.getSelection()
-  if (selection && selection.toString().trim().length > 5) {
-    selectedText.value = selection.toString().trim().substring(0, 500)
+function handleSelection(payload: { text: string; pageNo: number; blockIds: string[]; materialId: number }) {
+  if (payload.materialId !== selectedMaterialId.value || !payload.text.trim()) return
+  selectedText.value = payload.text.trim().substring(0, 2000)
+  selectionContext.value = {
+    material_id: payload.materialId,
+    page_no: payload.pageNo,
+    selected_text: selectedText.value,
+    source_block_ids: payload.blockIds,
+  }
+  if (window.matchMedia('(max-width: 900px)').matches) mobilePane.value = 'assistant'
+}
+
+function handleTextSelection(pageNo: number) {
+  const text = window.getSelection()?.toString().trim() || ''
+  if (text && selectedMaterialId.value) {
+    handleSelection({ text, pageNo, blockIds: [], materialId: selectedMaterialId.value })
   }
 }
 
@@ -882,18 +983,74 @@ function askAboutSelection() {
   askQuestion()
 }
 
-async function preloadImages(source: Chunk[]) {
-  const images = source.flatMap((chunk) => chunk.images || [])
-  await Promise.allSettled(images.map(async (image) => {
-    if (!image.file_url || imageUrls.value[image.id]) return
+function findInlineImage(imageId: number): ChunkImage | null {
+  for (const chunk of chunks.value) {
+    const image = chunk.images?.find((candidate) => candidate.id === imageId)
+    if (image) return image
+  }
+  return null
+}
+
+function loadInlineImage(image: ChunkImage, generation = loadGeneration): Promise<void> {
+  const fileUrl = image.file_url
+  if (!fileUrl || imageUrls.value[image.id] || brokenImageIds.value.has(image.id)) {
+    return Promise.resolve()
+  }
+  if (image.status && image.status !== 'ready') {
+    brokenImageIds.value.add(image.id)
+    return Promise.resolve()
+  }
+  const existing = inlineImageLoads.get(image.id)
+  if (existing) return existing
+
+  const load = (async () => {
     try {
-      const { data } = await request.get(image.file_url, { responseType: 'blob' })
-      imageUrls.value[image.id] = URL.createObjectURL(data)
+      const { data } = await request.get(normalizeApiAssetUrl(fileUrl), { responseType: 'blob' })
+      if (!data || data.size <= 0 || !String(data.type || '').startsWith('image/')) {
+        if (generation === loadGeneration) brokenImageIds.value.add(image.id)
+        return
+      }
+      const url = URL.createObjectURL(data)
+      if (generation !== loadGeneration) {
+        URL.revokeObjectURL(url)
+        return
+      }
+      imageUrls.value[image.id] = url
       brokenImageIds.value.delete(image.id)
     } catch {
-      brokenImageIds.value.add(image.id)
+      if (generation === loadGeneration) brokenImageIds.value.add(image.id)
+    } finally {
+      inlineImageLoads.delete(image.id)
     }
-  }))
+  })()
+  inlineImageLoads.set(image.id, load)
+  return load
+}
+
+function observeInlineImages(generation = loadGeneration) {
+  inlineImageObserver?.disconnect()
+  inlineImageObserver = null
+  const elements = Array.from(document.querySelectorAll<HTMLElement>('.doc-chunk-image-item[data-image-id]'))
+  if (elements.length === 0) return
+
+  if (typeof IntersectionObserver === 'undefined') {
+    elements.slice(0, 2).forEach((element) => {
+      const image = findInlineImage(Number(element.dataset.imageId))
+      if (image) void loadInlineImage(image, generation)
+    })
+    return
+  }
+
+  const root = document.querySelector('.doc-reader')
+  inlineImageObserver = new IntersectionObserver((entries, observer) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return
+      observer.unobserve(entry.target)
+      const image = findInlineImage(Number((entry.target as HTMLElement).dataset.imageId))
+      if (image) void loadInlineImage(image, generation)
+    })
+  }, { root, rootMargin: '480px 0px' })
+  elements.forEach((element) => inlineImageObserver?.observe(element))
 }
 
 // V6-14: handle individual image load errors from el-image
@@ -902,13 +1059,15 @@ function handleImageError(imgId: number) {
 }
 
 // V6-52: load image integrity status for the selected material
-async function loadImageIntegrity() {
-  if (!selectedMaterialId.value) return
+async function loadImageIntegrity(materialId = selectedMaterialId.value, generation = loadGeneration) {
+  if (!materialId) return
   try {
-    const { data } = await getImageIntegrity(selectedMaterialId.value)
+    const { data } = await getImageIntegrity(materialId)
+    if (generation !== loadGeneration || materialId !== selectedMaterialId.value) return
     imageIntegrityStatus.value = data.status
     imageIntegrityData.value = data
   } catch {
+    if (generation !== loadGeneration || materialId !== selectedMaterialId.value) return
     imageIntegrityStatus.value = ''
     imageIntegrityData.value = null
   }
@@ -959,7 +1118,10 @@ async function handleRepairDocument() {
     const current = readiness.value
     const effective = current?.effective_page_count ?? 0
     const expected = current?.expected_page_count ?? 0
-    if (current?.usable && effective === expected && expected > 0 && current.page_catalog_synthetic_numbers.length === 0) {
+    const pageAssetsReady = current?.assets?.page_status === 'ready' || current?.page_assets_complete === true
+    if (current?.reader?.usable !== false && pageAssetsReady && effective === expected && expected > 0 && current.page_catalog_synthetic_numbers.length === 0) {
+      readerMode.value = 'page'
+      if (selectedMaterialId.value) modeByMaterial.set(selectedMaterialId.value, 'page')
       if (imageReextractState === 'failed') {
         ElMessage.warning('原页已修复，但独立图片提取失败。')
       } else if (imageReextractState === 'skipped') {
@@ -978,15 +1140,20 @@ async function handleRepairDocument() {
 }
 
 // V6-14: preserve scroll position when switching reader modes
-watch(readerMode, async () => {
-  const reader = document.querySelector('.doc-reader') as HTMLElement | null
-  if (!reader) return
-  const savedScrollTop = reader.scrollTop
+watch(readerMode, async (mode) => {
+  if (selectedMaterialId.value && modeAvailable(mode)) modeByMaterial.set(selectedMaterialId.value, mode)
+  const pageNo = activePageNo.value
   await nextTick()
-  reader.scrollTop = savedScrollTop
+  if (pageNo) document.getElementById(`page-${pageNo}`)?.scrollIntoView({ block: 'start' })
 })
 function scrollToPage(pageNo: number) {
+  activePageNo.value = pageNo
   document.getElementById(`page-${pageNo}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+async function viewOriginalPage(pageNo: number) {
+  readerMode.value = 'page'
+  await nextTick()
+  scrollToPage(pageNo)
 }
 
 function askAboutKnowledgePoint() {
@@ -1000,9 +1167,11 @@ async function askQuestion() {
   const question = inputQuestion.value.trim()
   if (!question || aiLoading.value) return
 
+  const requestSelection = selectionContext.value
   aiMessages.value.push({ role: 'user', content: question })
   inputQuestion.value = ''
   selectedText.value = ''
+  selectionContext.value = null
   aiLoading.value = true
 
   abortController.value = new AbortController()
@@ -1019,6 +1188,7 @@ async function askQuestion() {
         course_id: courseId.value,
         conversation_id: convId,
         question,
+        ...(requestSelection ? { selection_context: requestSelection } : {}),
       },
       { signal: abortController.value.signal },
     )
@@ -1119,6 +1289,9 @@ async function confirmTaskLearning() {
   min-height: 620px;
   overflow: hidden;
 }
+.chunk-page { display: grid; gap: 16px; scroll-margin-top: 12px; }
+.assistant-degraded { margin: 8px 12px 0; width: auto; }
+.selected-text-source { margin: 2px 0 8px; color: #606266; font-size: 12px; }
 
 .learn-header {
   display: flex;

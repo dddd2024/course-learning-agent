@@ -17,6 +17,9 @@ const page = (key: string, url: string) => ({
   page_no: 1,
   is_synthetic: true,
   page_asset: { file_url: url, status: 'ready' },
+  source_width: 100,
+  source_height: 200,
+  text_layer: [{ block_id: 'block-1', text: '可选择的正文', bbox: [10, 20, 90, 40] as [number, number, number, number], reading_order: 0, font_size: 10 }],
 })
 
 describe('PageCanvas', () => {
@@ -50,5 +53,28 @@ describe('PageCanvas', () => {
     expect(wrapper.html()).not.toContain('blob:old')
     createObjectURL.mockRestore()
     revokeObjectURL.mockRestore()
+  })
+
+  it('emits selected text with page, material, and block ids', async () => {
+    requestGet.mockResolvedValue({ data: new Blob(['page'], { type: 'image/png' }) })
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:page')
+    const wrapper = mount(PageCanvas, {
+      props: { pages: [page('page-7', '/materials/page-assets/7/file')], materialId: 12 },
+      global: { stubs: { 'el-icon': true } },
+    })
+    await flushPromises()
+    const block = wrapper.find('[data-block-id="block-1"]')
+    vi.spyOn(window, 'getSelection').mockReturnValue({
+      toString: () => '可选择的正文',
+      anchorNode: block.element.firstChild,
+      containsNode: () => true,
+    } as unknown as Selection)
+
+    await wrapper.find('.text-layer').trigger('mouseup')
+
+    expect(wrapper.emitted('selection')?.[0]?.[0]).toEqual({
+      text: '可选择的正文', pageNo: 1, blockIds: ['block-1'], materialId: 12,
+    })
+    vi.restoreAllMocks()
   })
 })

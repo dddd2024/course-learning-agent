@@ -159,6 +159,7 @@ const categoryLabel: Record<ErrorLogCategory, string> = {
   frontend: '前端',
   network: '网络',
   api: '接口',
+  timeout: '超时',
 }
 
 const categoryTagType: Record<ErrorLogCategory, 'info' | 'warning' | 'danger' | 'success' | ''> = {
@@ -170,6 +171,7 @@ const categoryTagType: Record<ErrorLogCategory, 'info' | 'warning' | 'danger' | 
   frontend: 'info',
   network: 'warning',
   api: 'danger',
+  timeout: 'warning',
 }
 
 const levelTagType: Record<ErrorLogLevel, 'warning' | 'danger'> = {

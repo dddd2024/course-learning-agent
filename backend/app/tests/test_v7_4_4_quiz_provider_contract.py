@@ -139,9 +139,8 @@ def test_provider_deficit_is_completed_on_the_next_service_round(
         nonlocal calls
         calls += 1
         result = original(prompt)
-        # generate_quiz performs one internal retry. Keep that retry deficient
-        # too, so QuizCreationService itself must request the remaining vector.
-        if calls <= 2:
+        # The agent performs one call; the service alone requests the deficit.
+        if calls == 1:
             return {**result, "questions": result["questions"][:1]}
         return result
 
@@ -152,7 +151,7 @@ def test_provider_deficit_is_completed_on_the_next_service_round(
         db_session, quiz_fixture, ["multiple_choice"],
         {"easy": 1, "medium": 1, "hard": 0},
     )
-    assert calls >= 3
+    assert calls == 2
     assert len(quiz.items) == 2
     assert {item.question_type for item in quiz.items} == {"multiple_choice"}
 

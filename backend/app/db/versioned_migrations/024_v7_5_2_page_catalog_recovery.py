@@ -348,6 +348,19 @@ def dry_run(db, engine: Engine) -> dict:
 def up(db, engine: Engine) -> None:
     _rebuild_materials_for_autoincrement(engine)
     _ensure_public_ids(engine)
+    # This recovery migration can be invoked directly against a legacy DB by
+    # maintenance tooling/tests.  The current MaterialPage ORM already knows
+    # about reader geometry, so make its nullable columns available before
+    # the ORM performs catalogue backfill. Migration 025 remains the ordered,
+    # idempotent schema marker for normal upgrade runs.
+    with engine.begin() as conn:
+        tables = {row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))}
+        if "material_pages" in tables:
+            columns = {row[1] for row in conn.execute(text("PRAGMA table_info(material_pages)"))}
+            if "source_width" not in columns:
+                conn.execute(text("ALTER TABLE material_pages ADD COLUMN source_width FLOAT"))
+            if "source_height" not in columns:
+                conn.execute(text("ALTER TABLE material_pages ADD COLUMN source_height FLOAT"))
     session = Session(bind=engine)
     try:
         for material in _legacy_pdf_materials(session):

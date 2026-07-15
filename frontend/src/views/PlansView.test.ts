@@ -2,7 +2,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createTestingPinia, mockRoute, mockRouter } from '../test/setup'
 import PlansView from './PlansView.vue'
-import { startTask as mockStartTaskFn } from '../api/plan'
+import { startTask as mockStartTaskFn, createTaskQuizGenerationJob } from '../api/plan'
 import type { PlanResult, PlanSummary, PlanTask } from '../api/plan'
 import type { Course } from '../api/course'
 
@@ -38,8 +38,14 @@ vi.mock('../api/plan', () => ({
   updateTask: vi.fn(),
   updateTodo: vi.fn(),
   startTask: vi.fn(),
+  createTaskQuizGenerationJob: vi.fn(),
+  bindTaskTarget: vi.fn(),
   verifyTask: vi.fn(),
   overrideTask: vi.fn(),
+}))
+
+vi.mock('../api/quiz', () => ({
+  getQuizGenerationJob: vi.fn(),
 }))
 
 vi.mock('../constants/pagination', () => ({
@@ -111,22 +117,29 @@ describe('PlansView', () => {
     mockRouter.push.mockClear()
   })
 
-  it('task start button navigates to quiz page when quiz_id is returned', async () => {
+  it('quiz generation job success navigates to the created quiz', async () => {
+    vi.useFakeTimers()
     const tasks = [makeTask({ id: 10, task_type: 'quiz', execution_status: 'pending' })]
     const planResult = makePlanResult(tasks)
 
     const { listPlans, getPlan } = await import('../api/plan')
+    const { getQuizGenerationJob } = await import('../api/quiz')
     vi.mocked(listPlans).mockResolvedValue({ data: { items: [planSummary], total: 1 } } as any)
     vi.mocked(getPlan).mockResolvedValue({ data: planResult } as any)
-    vi.mocked(mockStartTaskFn).mockResolvedValue({
+    vi.mocked(createTaskQuizGenerationJob).mockResolvedValue({
+      data: { id: 7, course_id: 1, task_id: 10, status: 'queued', progress_stage: 'preparing', provider_calls: 0, quiz_id: null, error_code: null, error_message: null },
+    } as any)
+    vi.mocked(getQuizGenerationJob).mockResolvedValue({
       data: {
-        route: '',
-        params: {},
-        target_id: 42,
+        id: 7,
+        course_id: 1,
+        task_id: 10,
+        status: 'succeeded',
+        progress_stage: 'completed',
+        provider_calls: 1,
         quiz_id: 42,
-        target_type: 'quiz',
-        execution_status: 'in_progress',
-        started_at: '2024-01-01T00:00:00Z',
+        error_code: null,
+        error_message: null,
       },
     } as any)
 
@@ -143,6 +156,8 @@ describe('PlansView', () => {
     expect(startBtn).toBeTruthy()
     await startBtn!.trigger('click')
     await flushPromises()
+    await vi.advanceTimersByTimeAsync(250)
+    await flushPromises()
 
     // router.push should have been called with the quiz route
     expect(mockRouter.push).toHaveBeenCalledWith({
@@ -153,6 +168,7 @@ describe('PlansView', () => {
         quiz_id: '42',
       },
     })
+    vi.useRealTimers()
   })
 
   it('task status buttons change based on execution_status', async () => {

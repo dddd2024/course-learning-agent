@@ -12,6 +12,16 @@ class ChatRequest(BaseModel):
     course_id: int
     conversation_id: int
     question: str = Field(..., min_length=1, max_length=4000)
+    selection_context: Optional["SelectionContext"] = None
+
+
+class SelectionContext(BaseModel):
+    """Source-bound text selected from a material page."""
+
+    material_id: int = Field(..., gt=0)
+    page_no: int = Field(..., gt=0)
+    selected_text: str = Field(..., min_length=1, max_length=2000)
+    source_block_ids: List[str] = Field(default_factory=list, max_length=100)
 
 
 class CitationItem(BaseModel):

@@ -257,7 +257,8 @@ test('P1-T04: repair document preview through the LearnView', async ({ page, req
   execFileSync(pythonExe, ['-c', removeAsset, String(materialId)], { env: process.env })
 
   await page.goto(`/courses/${courseId}/learn`)
-  await expect(page.getByTestId('material-readiness-blocked')).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByTestId('material-readiness-blocked')).toHaveCount(0)
+  await expect(page.getByTestId('material-page-repair-needed')).toBeVisible({ timeout: 30_000 })
   const rebuildResponse = page.waitForResponse(
     (response) => response.url().includes(`/materials/${materialId}/page-assets/rebuild`) && response.request().method() === 'POST',
   )

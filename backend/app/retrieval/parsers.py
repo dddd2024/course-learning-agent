@@ -60,6 +60,7 @@ class ParsedPage:
     parser_version: str = "layout-v5"
     # V6: image anchors and page geometry carried for IR conversion.
     images: list = field(default_factory=list)
+    page_width: float = 0.0
     page_height: float = 0.0
 
     @property
@@ -458,6 +459,7 @@ def parse_pdf(file_path: str) -> List[ParsedPage]:
                 source_kind=page_type,
                 parser_version="layout-v5",
                 images=imgs,
+                page_width=pw,
                 page_height=ph,
             )
         )
@@ -469,15 +471,18 @@ def _parse_pdf_pypdf_fallback(file_path: str) -> List[ParsedPage]:
     """Fallback when PyMuPDF is not installed (uses pypdf)."""
     from pypdf import PdfReader
 
-    return [
-        ParsedPage(
+    pages = []
+    for index, page in enumerate(PdfReader(file_path).pages):
+        box = page.mediabox
+        pages.append(ParsedPage(
             index + 1,
             [TextBlock(page.extract_text() or "", source_kind="pypdf")],
             "pdf",
             "pypdf-legacy",
-        )
-        for index, page in enumerate(PdfReader(file_path).pages)
-    ]
+            page_width=float(box.width),
+            page_height=float(box.height),
+        ))
+    return pages
 
 
 # ---------------------------------------------------------------------------

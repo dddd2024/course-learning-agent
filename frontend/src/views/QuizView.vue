@@ -6,7 +6,8 @@ import { listCourses, type Course } from '../api/course'
 import { MAX_PAGE_SIZE } from '../constants/pagination'
 import { listKnowledgePoints, type KnowledgePoint } from '../api/knowledge'
 import {
-  createQuiz,
+  createQuizGenerationJob,
+  getQuizGenerationJob,
   deleteQuiz,
   getQuizzes,
   getQuiz,
@@ -19,6 +20,7 @@ import {
   type QuizStatus,
   type QuestionType,
   type WeakPoint,
+  type QuizGenerationJob,
 } from '../api/quiz'
 import { parseApiError } from '../utils/error'
 import EmptyState from '../components/common/EmptyState.vue'
@@ -38,6 +40,8 @@ const weakPointsLoading = ref(false)
 
 const dialogVisible = ref(false)
 const dialogLoading = ref(false)
+const generationJob = ref<QuizGenerationJob | null>(null)
+let generationPollTimer: ReturnType<typeof setTimeout> | null = null
 const knowledgePoints = ref<KnowledgePoint[]>([])
 const knowledgePointsLoading = ref(false)
 const genForm = reactive({
@@ -48,6 +52,17 @@ const genForm = reactive({
   difficulty_medium: 5,
   difficulty_hard: 0,
   pass_score: 60,
+})
+
+const generationValidationMessage = computed(() => {
+  if (knowledgePointsLoading.value) return '正在读取课程知识点'
+  if (knowledgePoints.value.length === 0) return '该课程暂无可用知识点，请先上传并解析课程资料'
+  if (genForm.question_types.length === 0) return '请至少选择一种题型'
+  const difficultyTotal = genForm.difficulty_easy + genForm.difficulty_medium + genForm.difficulty_hard
+  if (difficultyTotal !== genForm.question_count) {
+    return `难度分布总数应等于题目数量（当前 ${difficultyTotal}/${genForm.question_count}）`
+  }
+  return ''
 })
 
 const activeQuiz = ref<Quiz | null>(null)
@@ -256,6 +271,7 @@ function handleCourseChange() {
   activeQuiz.value = null
   quizResult.value = null
   answers.value = {}
+  knowledgePoints.value = []
   fetchQuizzes()
   fetchWeakPoints()
 }
@@ -278,9 +294,13 @@ function openGenerateDialog() {
 
 async function handleGenerate() {
   if (selectedCourseId.value === undefined) return
+  if (generationValidationMessage.value) {
+    ElMessage.warning(generationValidationMessage.value)
+    return
+  }
   dialogLoading.value = true
   try {
-      const { data } = await createQuiz(
+      const { data } = await createQuizGenerationJob(
         selectedCourseId.value,
         genForm.knowledge_point_ids.length > 0 ? genForm.knowledge_point_ids : undefined,
         genForm.question_count,
@@ -294,15 +314,60 @@ async function handleGenerate() {
           pass_score: genForm.pass_score,
         },
       )
+    generationJob.value = data
     dialogVisible.value = false
-    ElMessage.success('测验已生成')
-    fetchQuizzes()
-    openQuiz(data)
+    pollGenerationJob(data.id)
   } catch (err) {
     ElMessage.error(parseApiError(err, '生成测验失败'))
   } finally {
     dialogLoading.value = false
   }
+}
+
+const generationStatusText = computed(() => {
+  const stage = generationJob.value?.progress_stage
+  const labels: Record<string, string> = {
+    preparing: '正在准备课程资料',
+    generating: '正在生成并校验证据',
+    saving: '正在保存测验',
+    completed: '测验已生成',
+    failed: '测验生成失败',
+  }
+  return labels[stage ?? ''] ?? '正在生成测验'
+})
+
+function stopGenerationPolling() {
+  if (generationPollTimer) clearTimeout(generationPollTimer)
+  generationPollTimer = null
+}
+
+function pollGenerationJob(jobId: number) {
+  stopGenerationPolling()
+  const poll = async () => {
+    try {
+      const { data: job } = await getQuizGenerationJob(jobId)
+      generationJob.value = job
+      if (job.status === 'succeeded' && job.quiz_id) {
+        stopGenerationPolling()
+        await fetchQuizzes()
+        const { data: quiz } = await getQuiz(job.quiz_id)
+        ElMessage.success('测验已生成')
+        await openQuiz(quiz)
+        return
+      }
+      if (job.status === 'failed') {
+        stopGenerationPolling()
+        ElMessage.error(job.error_message || '测验生成失败')
+        return
+      }
+      generationPollTimer = setTimeout(poll, 1000)
+    } catch (err) {
+      stopGenerationPolling()
+      generationJob.value = null
+      ElMessage.error(parseApiError(err, '查询测验生成状态失败'))
+    }
+  }
+  generationPollTimer = setTimeout(poll, 250)
 }
 
 async function openQuiz(quiz: Quiz) {
@@ -531,6 +596,7 @@ watch(quizInProgress, (val) => {
 })
 
 onUnmounted(() => {
+  stopGenerationPolling()
   window.removeEventListener('beforeunload', handleBeforeUnload)
   window.removeEventListener('keydown', handleKeydown)
 })
@@ -565,6 +631,17 @@ onUnmounted(() => {
         </el-button>
       </div>
     </div>
+
+    <el-alert
+      v-if="generationJob && generationJob.status !== 'succeeded'"
+      :type="generationJob.status === 'failed' ? 'error' : 'info'"
+      :title="generationStatusText"
+      :description="generationJob.status === 'failed' ? (generationJob.error_message || '请稍后重试') : `模型调用 ${generationJob.provider_calls} 次，页面可继续使用`"
+      :closable="generationJob.status === 'failed'"
+      show-icon
+      style="margin-bottom: 16px;"
+      @close="generationJob = null"
+    />
 
     <div v-if="activeQuiz" v-loading="activeQuizLoading" class="quiz-active">
       <div class="quiz-active-header">
@@ -966,6 +1043,14 @@ onUnmounted(() => {
       title="生成测验"
       width="min(520px, calc(100vw - 32px))"
     >
+      <el-alert
+        v-if="!knowledgePointsLoading && generationValidationMessage"
+        :title="generationValidationMessage"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 16px"
+      />
       <el-form label-position="top" v-loading="knowledgePointsLoading">
         <el-form-item label="题目数量">
           <el-input-number
@@ -1048,7 +1133,12 @@ onUnmounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="dialogLoading" @click="handleGenerate">
+        <el-button
+          type="primary"
+          :loading="dialogLoading"
+          :disabled="Boolean(generationValidationMessage)"
+          @click="handleGenerate"
+        >
           生成
         </el-button>
       </template>

@@ -464,6 +464,7 @@ def generate_quiz(
     difficulty_distribution: dict[str, int] | None = None,
     user_config: dict | None = None,
     question_offset: int = 0,
+    provider_timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Generate a quiz for a course's knowledge points.
 
@@ -542,11 +543,13 @@ def generate_quiz(
 
     generate_started = time.monotonic()
     try:
-        output, meta = call_llm_with_meta(
-            prompt,
-            agent_type="quiz_generate",
-            user_config=user_config,
-        )
+        call_kwargs = {
+            "agent_type": "quiz_generate",
+            "user_config": user_config,
+        }
+        if provider_timeout_seconds is not None:
+            call_kwargs["timeout_seconds"] = provider_timeout_seconds
+        output, meta = call_llm_with_meta(prompt, **call_kwargs)
         # Update audit run with actual provider/model_name from meta
         AgentAudit.update_run_meta(
             db, run_id,
@@ -577,43 +580,6 @@ def generate_quiz(
 
     # V6-31: process the LLM output into validated items.
     items = _process_llm_output(output, db, course_id, knowledge_points)
-
-    # V6-31: if fewer than requested items survive validation, retry once
-    # with a stronger prompt before settling for a partial result.  A real
-    # provider can return structurally invalid output on one call and a
-    # grounded result on the next, including when zero items first survive.
-    retried = False
-    if len(items) < question_count:
-        retry_prompt = (
-            prompt
-            + f"\n\n重要提示：上次只生成了 {len(items)} 道符合条件的题目，"
-            f"请务必生成 {question_count} 道题目。每道题必须包含有效的 "
-            f"source_evidence（chunk_id 和 quote_text）和正确的 "
-            f"knowledge_point_ids。"
-        )
-        try:
-            retry_output, retry_meta = call_llm_with_meta(
-                retry_prompt,
-                agent_type="quiz_generate",
-                user_config=user_config,
-            )
-            _validate_schema(retry_output)
-            retry_items = _process_llm_output(
-                retry_output, db, course_id, knowledge_points
-            )
-            if len(retry_items) > len(items):
-                items = retry_items
-            retried = True
-            _safe_add_step(
-                db,
-                run_id=run_id,
-                step_name="retry_generate",
-                step_index=1,
-                input_data={"reason": "insufficient_questions"},
-                output_data={"question_count": len(items)},
-            )
-        except Exception as exc:
-            logger.warning("Retry quiz generation failed: %s", exc)
 
     # V6-31: truncate to the requested question_count if the LLM returned
     # more than asked.
@@ -646,7 +612,7 @@ def generate_quiz(
         evidence_status="insufficient" if not items else None,
         output_summary={
             "item_count": len(items),
-            "retried": retried,
+            "retried": False,
             "meta_observed": meta.get("meta_observed") is True,
         },
         started_at=run_started_at,

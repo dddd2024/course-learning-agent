@@ -24,7 +24,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.agents.quiz import generate_quiz
-from app.core.exceptions import BusinessException, NotFoundException
+from app.core.exceptions import BusinessException, NotFoundException, TaskTargetSelectionRequiredException
 from app.models.course import Course
 from app.models.knowledge_point import KnowledgePoint
 from app.models.material import Material
@@ -32,7 +32,7 @@ from app.models.plan import StudyGoal, StudyTask, TaskExecutionEvent
 from app.models.quiz import Quiz, QuizItem
 from app.services.llm_config_service import build_user_config, get_active_config
 from app.services.quiz_creation_service import QuizCreationService
-from app.services.task_target_resolver import ensure_target_spec
+from app.services.task_target_resolver import ensure_target_spec, resolve_target
 from app.services.task_state_machine import transition_task
 
 logger = logging.getLogger(__name__)
@@ -119,12 +119,12 @@ def _build_route_info(task: StudyTask, quiz_id: int | None, target_spec: dict[st
         route = "/quizzes"
         params = {"quiz_id": quiz_id}
     elif task.task_type == "learn":
-        route = "/courses/:courseId/learn"
+        route = "/courses/:id/learn"
         public_id = (target_spec or {}).get("material_public_id")
-        params = {"course_id": task.course_id, "material": public_id} if public_id else {"course_id": task.course_id, "material_id": task.target_id}
+        params = {"material": public_id} if public_id else {"material_id": task.target_id}
     elif task.task_type == "review":
-        route = "/courses/:courseId/outline"
-        params = {"course_id": task.course_id, "knowledge_point_id": task.target_id, "task_id": task.id, "plan_id": task.goal_id}
+        route = "/courses/:id/outline"
+        params = {"knowledge_point_id": task.target_id}
 
     return {"route": route, "params": params}
 
@@ -203,8 +203,24 @@ def start_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
         else:
             quiz_id = task.target_id
     elif task.task_type == "learn":
-        if task.target_type != "material" or task.target_id is None:
-            raise BusinessException(message=spec.get("remediation", "学习任务缺少可用资料"), status_code=422)
+        material = db.query(Material).filter(
+            Material.id == task.target_id,
+            Material.course_id == task.course_id,
+            Material.user_id == user_id,
+            Material.status == "ready",
+        ).first() if task.target_id is not None else None
+        if task.target_type != "material" or material is None:
+            target_type, target_id, rebound_spec = resolve_target(
+                db, task.course_id, "learn", task.title
+            )
+            if target_id is None:
+                raise TaskTargetSelectionRequiredException(
+                    rebound_spec.get("candidates", []),
+                    rebound_spec.get("remediation"),
+                )
+            task.target_type, task.target_id = target_type, target_id
+            task.target_spec_json = json.dumps(rebound_spec, ensure_ascii=False)
+            spec = rebound_spec
     elif task.task_type == "review":
         effective_target_id = _rebind_archived_review_target(db, task, user_id, spec)
         if task.target_type != "knowledge_point" or task.target_id is None:
@@ -238,6 +254,37 @@ def start_task(db: Session, task_id: int, user_id: int) -> dict[str, Any]:
     if task.task_type == "review":
         result.update(_review_target_metadata(spec, effective_target_id))
     return result
+
+
+def bind_task_target(
+    db: Session, task_id: int, user_id: int, target_type: str, target_id: int
+) -> dict[str, Any]:
+    """Safely bind an unresolved learn task to an explicitly selected material."""
+    task = _get_owned_task(db, task_id, user_id)
+    if task.task_type != "learn" or target_type != "material":
+        raise BusinessException(message="该任务不支持绑定此目标类型", status_code=422)
+    material = db.query(Material).filter(
+        Material.id == target_id,
+        Material.user_id == user_id,
+        Material.course_id == task.course_id,
+    ).first()
+    if material is None:
+        raise NotFoundException(message="学习资料不存在")
+    if material.status != "ready" or material.active_version_id is None:
+        raise BusinessException(message="学习资料尚未完成解析，不能绑定", status_code=422)
+    spec = {
+        "material_id": material.id,
+        "material_public_id": material.public_id,
+        "material_version_id": material.active_version_id,
+        "chunk_range": [],
+        "resolution_status": "resolved",
+        "resolution_method": "manual_selection",
+        "completion_mode": "loaded_and_confirmed",
+    }
+    task.target_type, task.target_id = "material", material.id
+    task.target_spec_json = json.dumps(spec, ensure_ascii=False)
+    db.commit()
+    return {"task_id": task.id, "target_type": "material", "target_id": material.id, "target_spec": spec}
 
 
 def record_task_event(

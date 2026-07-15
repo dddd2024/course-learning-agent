@@ -1,5 +1,6 @@
 import request from './index'
 import type { AxiosPromise } from 'axios'
+import type { QuizGenerationJob } from './quiz'
 
 export type TodoStatus = 'pending' | 'completed' | 'postponed'
 
@@ -48,6 +49,15 @@ export interface TaskStartResult {
   target_type: string | null
   execution_status?: string
   started_at?: string | null
+}
+
+export interface TaskMaterialCandidate {
+  material_id: number
+  material_public_id: string
+  material_version_id: number
+  filename: string
+  score: number
+  reasons: string[]
 }
 
 export interface TaskVerifyResult {
@@ -341,6 +351,20 @@ export function deletePlan(id: number): AxiosPromise<void> {
 
 export function startTask(taskId: number): AxiosPromise<TaskStartResult> {
   return request.post(`/plans/tasks/${taskId}/start`)
+}
+
+export function bindTaskTarget(
+  taskId: number,
+  materialId: number,
+): AxiosPromise<{ task_id: number; target_id: number }> {
+  return request.post(`/plans/tasks/${taskId}/target`, {
+    target_type: 'material',
+    target_id: materialId,
+  })
+}
+
+export function createTaskQuizGenerationJob(taskId: number): AxiosPromise<QuizGenerationJob> {
+  return request.post(`/plans/tasks/${taskId}/quiz-generation-job`)
 }
 
 export function verifyTask(taskId: number, confirmation?: boolean): AxiosPromise<TaskVerifyResult> {

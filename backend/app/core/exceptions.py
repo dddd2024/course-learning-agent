@@ -72,6 +72,24 @@ class QuizConstraintException(BusinessException):
         }
 
 
+class TaskTargetSelectionRequiredException(BusinessException):
+    """A learn task has several usable materials but no safe automatic match."""
+
+    code = "TASK_TARGET_SELECTION_REQUIRED"
+    status_code = 422
+    default_message = "无法自动确定学习资料，请选择本任务要使用的资料"
+
+    def __init__(self, candidates: list[dict[str, Any]], message: str | None = None):
+        super().__init__(message or self.default_message, status_code=422)
+        self.data = {"candidates": candidates}
+
+
+class QuizGenerationTimeoutException(BusinessException):
+    code = "QUIZ_GENERATION_TIMEOUT"
+    status_code = 504
+    default_message = "测验生成超过时间预算，请缩小题目范围后重试"
+
+
 class UsernameExistsException(BusinessException):
     code = "USERNAME_EXISTS"
     default_message = "用户名已存在"

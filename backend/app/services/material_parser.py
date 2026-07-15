@@ -222,7 +222,19 @@ def parse_with_retry(
             # Preserve page/block provenance before semantic chunks are built.
             for page, cleaned in zip(pages, clean_results):
                 raw = page.text
-                db.add(MaterialPage(material_id=material_id, material_version_id=version_row.id, page_no=page.page_no, page_type=page.page_type, parser_version=page.parser_version, raw_text=raw, clean_text=cleaned.text, blocks_json=json.dumps([block.to_dict() for block in page.blocks], ensure_ascii=False), decisions_json=json.dumps(cleaned.decisions, ensure_ascii=False)))
+                db.add(MaterialPage(
+                    material_id=material_id,
+                    material_version_id=version_row.id,
+                    page_no=page.page_no,
+                    page_type=page.page_type,
+                    parser_version=page.parser_version,
+                    raw_text=raw,
+                    clean_text=cleaned.text,
+                    blocks_json=json.dumps([block.to_dict() for block in page.blocks], ensure_ascii=False),
+                    decisions_json=json.dumps(cleaned.decisions, ensure_ascii=False),
+                    source_width=page.page_width or None,
+                    source_height=page.page_height or None,
+                ))
             if material.file_type.lower() == "pdf":
                 # A rendered page is the visual source of truth.  It is staged
                 # with the version and never exposed until activation succeeds.
@@ -230,7 +242,9 @@ def parse_with_retry(
                 page_root = (Path(settings.UPLOAD_DIR) / material.file_path).parent / "pages"
                 staged_page_asset_dir = page_root / f".v7-staging-{material_id}-{next_version}-{uuid4().hex}"
                 try:
+                    rendered_page_numbers: set[int] = set()
                     for rendered in render_pdf_pages(file_path, staged_page_asset_dir):
+                        rendered_page_numbers.add(rendered.page_no)
                         db.add(MaterialPageAsset(
                             material_id=material_id,
                             material_version_id=version_row.id,
@@ -242,6 +256,20 @@ def parse_with_retry(
                             sha256=rendered.sha256,
                             render_status="ready",
                         ))
+                    for page in pages:
+                        if page.page_no not in rendered_page_numbers:
+                            db.add(MaterialPageAsset(
+                                material_id=material_id,
+                                material_version_id=version_row.id,
+                                page_no=page.page_no,
+                                render_status="failed",
+                                error_code="PAGE_RENDER_INCOMPLETE",
+                            ))
+                    if len(rendered_page_numbers) != len(pages):
+                        logger.warning(
+                            "Page rendering incomplete for material %s: %s/%s",
+                            material_id, len(rendered_page_numbers), len(pages),
+                        )
                 except Exception as render_exc:
                     _remove_staged_images(staged_page_asset_dir)
                     staged_page_asset_dir = None

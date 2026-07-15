@@ -136,6 +136,23 @@ class QuizListResponse(BaseModel):
     total: int
 
 
+class QuizGenerationJobOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    course_id: int
+    task_id: Optional[int] = None
+    status: str
+    progress_stage: str
+    provider_calls: int = 0
+    quiz_id: Optional[int] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+
 class QuizSubmitAnswer(BaseModel):
     """A single answer in a submit payload."""
 

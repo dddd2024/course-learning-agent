@@ -72,6 +72,62 @@ def validate_chat_request(
     _get_owned_conversation(db, conversation_id, course_id, current_user.id)
 
 
+def validate_selection_context(
+    db: Session,
+    current_user: User,
+    course_id: int,
+    selection_context: dict | None,
+) -> Material | None:
+    """Validate selection ownership before retrieval or any LLM work."""
+    if not selection_context:
+        return None
+    material = (
+        db.query(Material)
+        .filter(
+            Material.id == int(selection_context["material_id"]),
+            Material.user_id == current_user.id,
+            Material.course_id == course_id,
+            Material.status == "ready",
+        )
+        .first()
+    )
+    if material is None:
+        raise NotFoundException(message="选中文本对应的资料不存在")
+    return material
+
+
+def _selection_chunks(
+    db: Session,
+    material: Material,
+    selection_context: dict,
+) -> list[dict]:
+    """Return same-page then adjacent-page evidence for a selection."""
+    page_no = int(selection_context["page_no"])
+    rows = (
+        db.query(MaterialChunk)
+        .filter(
+            MaterialChunk.material_id == material.id,
+            MaterialChunk.material_version_id == material.active_version_id,
+            MaterialChunk.is_active == 1,
+            MaterialChunk.is_indexable == 1,
+            MaterialChunk.page_no.in_([page_no, page_no - 1, page_no + 1]),
+        )
+        .all()
+    )
+    rows.sort(key=lambda row: (0 if row.page_no == page_no else 1, abs((row.page_no or 0) - page_no), row.chunk_index))
+    return [{
+        "chunk_id": row.id,
+        "text": row.text or "",
+        "title": row.title,
+        "page_no": row.page_no,
+        "material_id": row.material_id,
+        "filename": material.filename,
+        "score": 2.0 if row.page_no == page_no else 1.5,
+        "retrieval_mode": "selection_context",
+        "snippet": (row.text or "")[:150],
+    } for row in rows]
+
+
 def _summarise(text: str, limit: int = 200) -> str:
     if text is None:
         return ""
@@ -280,6 +336,7 @@ def run_chat_pipeline(
     course_id: int,
     conversation_id: int,
     question: str,
+    selection_context: dict | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Run the chat pipeline, yielding SSE-compatible event dicts.
 
@@ -291,6 +348,9 @@ def run_chat_pipeline(
     """
     conversation = _get_owned_conversation(
         db, conversation_id, course_id, current_user.id
+    )
+    selection_material = validate_selection_context(
+        db, current_user, course_id, selection_context
     )
 
     active_config = get_active_config(db, current_user.id)
@@ -445,6 +505,10 @@ def run_chat_pipeline(
         # the evidence chain.
         retrieval_query = resolved_query
         candidates = keyword_search(db, course_id, retrieval_query, top_k=12)
+        if selection_context and selection_material is not None:
+            selected = _selection_chunks(db, selection_material, selection_context)
+            seen = {item["chunk_id"] for item in selected}
+            candidates = selected + [item for item in candidates if item.get("chunk_id") not in seen]
         ranked = rerank(retrieval_query, candidates, top_k=6)
     except Exception as exc:
         _log_error(db, current_user.id, conversation_id, "retrieve",

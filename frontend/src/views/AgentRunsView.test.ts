@@ -139,4 +139,30 @@ describe('AgentRunsView', () => {
     // The fallback reason should be visible
     expect(html).toContain('rate_limit_exceeded')
   })
+
+  it('marks an old unfinished run as possibly interrupted without changing audit data', async () => {
+    const { getAgentRuns, getAgentRun } = await import('../api/audit')
+    const staleRun = makeRun({
+      id: 9,
+      status: 'running',
+      started_at: '2024-01-01T00:00:00Z',
+      finished_at: null,
+      duration_ms: null,
+    })
+    vi.mocked(getAgentRuns).mockResolvedValue({ data: { items: [staleRun], total: 1 } } as any)
+    vi.mocked(getAgentRun).mockResolvedValue({ data: { ...staleRun, steps: [] } } as any)
+
+    const wrapper = mount(AgentRunsView, {
+      global: { plugins: [createTestingPinia()] },
+    })
+    await flushPromises()
+    expect(wrapper.html()).toContain('疑似中断')
+
+    const table = wrapper.findComponent({ name: 'ElTable' })
+    table.vm.$emit('row-click', staleRun)
+    await flushPromises()
+
+    expect(wrapper.html()).toContain('服务重启或执行异常')
+    expect(staleRun.status).toBe('running')
+  })
 })

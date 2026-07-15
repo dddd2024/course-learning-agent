@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
@@ -20,7 +21,8 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.agents.quiz import generate_quiz
-from app.core.exceptions import BusinessException, QuizConstraintException
+from app.core.config import settings
+from app.core.exceptions import BusinessException, QuizConstraintException, QuizGenerationTimeoutException
 from app.models.quiz import Quiz, QuizItem
 from app.services.llm_config_service import build_user_config, get_active_config
 
@@ -105,6 +107,7 @@ class QuizCreationService:
         question_types: list[str] | None = None,
         difficulty_distribution: dict[str, int] | None = None,
         user_config: dict | None = None,
+        telemetry: dict[str, Any] | None = None,
     ) -> Quiz:
         """Create a quiz with strict contract enforcement.
 
@@ -195,15 +198,30 @@ class QuizCreationService:
         remaining = dict(contract.difficulty_distribution)
         reasons: list[str] = []
         quiz_output: dict = {}
-        for attempt in range(QuizCreationService.MAX_RETRIES + 1):
+        started_at = time.monotonic()
+        max_calls = max(1, int(settings.QUIZ_GENERATION_MAX_PROVIDER_CALLS))
+        total_budget = max(1.0, float(settings.QUIZ_GENERATION_TOTAL_BUDGET_SECONDS))
+        provider_timeout = max(1.0, float(settings.LLM_QUIZ_TIMEOUT_SECONDS))
+        if telemetry is not None:
+            telemetry.update({"provider_calls": 0, "budget_seconds": total_budget})
+        for attempt in range(max_calls):
             requested_count = sum(remaining.values())
             if not requested_count:
                 break
+            elapsed = time.monotonic() - started_at
+            budget_left = total_budget - elapsed
+            if budget_left <= 0:
+                raise QuizGenerationTimeoutException()
+            call_timeout = min(provider_timeout, budget_left)
+            if telemetry is not None:
+                telemetry["provider_calls"] = attempt + 1
+                telemetry["elapsed_seconds"] = elapsed
             quiz_output = generate_quiz(
                 db=db, user_id=user_id, course_id=course_id, knowledge_points=knowledge_points,
                 course_name=course_name, question_count=requested_count,
                 question_types=question_types, difficulty_distribution=remaining, user_config=user_config,
                 question_offset=len(items),
+                provider_timeout_seconds=call_timeout,
             )
             reasons.extend(quiz_output.get("drop_reasons") or [])
             accepted = 0
@@ -216,7 +234,12 @@ class QuizCreationService:
                     items.append(candidate)
                     accepted += 1
             logger.info("quiz contract retry attempt=%d deficit=%s retained=%d accepted=%d", attempt, remaining, len(items), accepted)
+        elapsed = time.monotonic() - started_at
+        if telemetry is not None:
+            telemetry["elapsed_seconds"] = elapsed
         if sum(remaining.values()):
+            if elapsed >= total_budget:
+                raise QuizGenerationTimeoutException()
             raise QuizConstraintException(
                 requested_count=question_count, valid_count=len(items),
                 drop_reasons=list(dict.fromkeys(reasons or ["contract_deficit_after_retries"])),

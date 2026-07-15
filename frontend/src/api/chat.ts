@@ -55,6 +55,14 @@ export interface ChatPayload {
   course_id: number
   conversation_id: number
   question: string
+  selection_context?: SelectionContext
+}
+
+export interface SelectionContext {
+  material_id: number
+  page_no: number
+  selected_text: string
+  source_block_ids: string[]
 }
 
 export interface ChatResult {

@@ -100,14 +100,17 @@ test('P0-L02C: page repair success reports independent image reextract failure',
   await expect(page.locator('img[alt*="原页图像"]')).toHaveCount(2)
 })
 
-test('P1-L03: text PDF with removed chunks is not classified as scanned', async ({ page, request }, info) => {
+test('P1-L03: text PDF with removed chunks keeps complete original pages readable', async ({ page, request }, info) => {
   await loginWithFreshUser(page); const courseId = await course(page); const file = info.outputPath('text.pdf'); makePdf(file, 2)
   const { auth, materialId } = await uploadReady(page, request, courseId, file)
   sql('DELETE FROM material_chunks WHERE material_id=?', String(materialId))
   const response = await request.get(`${API_BASE}/materials/${materialId}/readiness`, { headers: auth })
   const readiness = await response.json()
   expect(readiness.document_mode).toBe('unexpected_empty_text_pdf')
-  expect(readiness.blocking_reasons).toContain('unexpected_empty_text_extraction')
+  expect(readiness.reader.usable).toBe(true)
+  expect(readiness.reader.available_modes).toContain('page')
+  expect(readiness.assistant.usable).toBe(false)
+  expect(readiness.blocking_reasons).not.toContain('unexpected_empty_text_extraction')
 })
 
 test('P2-L04: changing to a distinct large document revokes prior page Blob URLs', async ({ page, request }, info) => {

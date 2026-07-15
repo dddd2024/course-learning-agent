@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { listCourses, type Course } from '../api/course'
@@ -11,6 +11,8 @@ import {
   updateGoal,
   updateTodo,
   startTask,
+  bindTaskTarget,
+  createTaskQuizGenerationJob,
   retryTask,
   overrideTask,
   type PlanGoal,
@@ -19,10 +21,12 @@ import {
   type PlanSummary,
   type PlanTask,
   type Todo,
+  type TaskMaterialCandidate,
 } from '../api/plan'
 import { MAX_PAGE_SIZE } from '../constants/pagination'
 import { formatLocalDateTime } from '../utils/datetime'
 import { parseApiError } from '../utils/error'
+import { getQuizGenerationJob } from '../api/quiz'
 
 const route = useRoute()
 const router = useRouter()
@@ -78,6 +82,13 @@ const overrideDialogVisible = ref(false)
 const overrideReason = ref('')
 const overrideTaskId = ref<number | null>(null)
 const overrideLoading = ref(false)
+const targetDialogVisible = ref(false)
+const targetCandidates = ref<TaskMaterialCandidate[]>([])
+const selectedTargetId = ref<number | null>(null)
+const targetTask = ref<PlanTask | null>(null)
+const targetBinding = ref(false)
+const taskGenerationStage = ref('')
+let taskGenerationTimer: ReturnType<typeof setTimeout> | null = null
 
 const calendarDate = ref<Date>(new Date())
 
@@ -386,10 +397,7 @@ async function handleSubmit() {
 }
 
 // PLAN-V3-02/03: Task execution handlers
-async function handleStartTask(task: PlanTask) {
-  taskStarting.value = task.id
-  try {
-    const { data } = await startTask(task.id)
+async function navigateStartedTask(task: PlanTask, data: Awaited<ReturnType<typeof startTask>>['data']) {
     if (!data.route_name && data.quiz_id) {
       await router.push({ path: '/quizzes', query: { course_id: task.course_id, task_id: String(task.id), quiz_id: String(data.quiz_id) } })
       return
@@ -397,10 +405,91 @@ async function handleStartTask(task: PlanTask) {
     const query = { ...data.route_params, task_id: String(task.id), plan_id: String(task.goal_id) } as Record<string, string>
     if (data.route_name === 'quizzes') query.course_id = String(task.course_id)
     await router.push({ name: data.route_name, params: data.route_name === 'quizzes' ? {} : { id: String(task.course_id) }, query })
+}
+
+async function handleStartTask(task: PlanTask) {
+  taskStarting.value = task.id
+  try {
+    if (task.task_type === 'quiz' && !task.target_id) {
+      const { data: job } = await createTaskQuizGenerationJob(task.id)
+      taskGenerationStage.value = '正在准备资料'
+      pollTaskGeneration(task, job.id)
+      return
+    }
+    const { data } = await startTask(task.id)
+    await navigateStartedTask(task, data)
   } catch (err) {
+    const response = (err as { response?: { data?: { code?: string; candidates?: TaskMaterialCandidate[] } } }).response
+    if (response?.data?.code === 'TASK_TARGET_SELECTION_REQUIRED') {
+      targetTask.value = task
+      targetCandidates.value = response.data.candidates ?? []
+      selectedTargetId.value = null
+      targetDialogVisible.value = true
+      return
+    }
     ElMessage.error(parseApiError(err, '启动任务失败'))
   } finally {
-    taskStarting.value = null
+    if (!taskGenerationTimer) taskStarting.value = null
+  }
+}
+
+function stopTaskGenerationPolling() {
+  if (taskGenerationTimer) clearTimeout(taskGenerationTimer)
+  taskGenerationTimer = null
+}
+
+function pollTaskGeneration(task: PlanTask, jobId: number) {
+  stopTaskGenerationPolling()
+  const poll = async () => {
+    try {
+      const { data: job } = await getQuizGenerationJob(jobId)
+      const labels: Record<string, string> = {
+        preparing: '正在准备资料',
+        generating: '正在生成并校验题目',
+        saving: '正在保存测验',
+      }
+      taskGenerationStage.value = labels[job.progress_stage] ?? '正在生成测验'
+      if (job.status === 'succeeded' && job.quiz_id) {
+        stopTaskGenerationPolling()
+        taskStarting.value = null
+        taskGenerationStage.value = ''
+        await router.push({
+          path: '/quizzes',
+          query: { course_id: task.course_id, task_id: String(task.id), quiz_id: String(job.quiz_id) },
+        })
+        return
+      }
+      if (job.status === 'failed') {
+        stopTaskGenerationPolling()
+        taskStarting.value = null
+        taskGenerationStage.value = ''
+        ElMessage.error(job.error_message || '测验生成失败')
+        return
+      }
+      taskGenerationTimer = setTimeout(poll, 1000)
+    } catch (err) {
+      stopTaskGenerationPolling()
+      taskStarting.value = null
+      taskGenerationStage.value = ''
+      ElMessage.error(parseApiError(err, '查询测验生成状态失败'))
+    }
+  }
+  taskGenerationTimer = setTimeout(poll, 250)
+}
+
+async function bindAndStartTask() {
+  if (!targetTask.value || !selectedTargetId.value) return
+  targetBinding.value = true
+  try {
+    await bindTaskTarget(targetTask.value.id, selectedTargetId.value)
+    const task = targetTask.value
+    const { data } = await startTask(task.id)
+    targetDialogVisible.value = false
+    await navigateStartedTask(task, data)
+  } catch (err) {
+    ElMessage.error(parseApiError(err, '绑定学习资料失败'))
+  } finally {
+    targetBinding.value = false
   }
 }
 
@@ -519,6 +608,8 @@ onMounted(async () => {
   await restorePlans()
   if (Number.isInteger(Number(route.query.course_id))) startNewPlan()
 })
+
+onUnmounted(stopTaskGenerationPolling)
 </script>
 
 <template>
@@ -809,6 +900,9 @@ onMounted(async () => {
               <div v-if="hasInsufficientEvidence(row)" class="insufficient-tip">
                 证据不足，建议先学习相关知识点再生成测验
               </div>
+              <div v-if="taskStarting === row.id && taskGenerationStage" class="insufficient-tip">
+                {{ taskGenerationStage }}
+              </div>
             </template>
           </el-table-column>
         </el-table>
@@ -925,6 +1019,38 @@ onMounted(async () => {
     </el-dialog>
 
     <el-dialog
+      v-model="targetDialogVisible"
+      title="选择本任务学习资料"
+      width="min(620px, calc(100vw - 32px))"
+    >
+      <el-alert
+        type="info"
+        :closable="false"
+        title="系统无法可靠区分多份资料。请选择后将绑定到此任务并立即开始学习。"
+        style="margin-bottom: 16px;"
+      />
+      <el-radio-group v-model="selectedTargetId" class="target-candidate-list">
+        <el-radio
+          v-for="candidate in targetCandidates"
+          :key="candidate.material_id"
+          :value="candidate.material_id"
+          border
+          class="target-candidate"
+        >
+          <span>{{ candidate.filename }}</span>
+          <small>匹配分 {{ candidate.score }} · {{ candidate.reasons.join('；') }}</small>
+        </el-radio>
+      </el-radio-group>
+      <el-empty v-if="targetCandidates.length === 0" description="当前没有已解析完成的可用资料" />
+      <template #footer>
+        <el-button @click="targetDialogVisible = false">取消</el-button>
+        <el-button type="primary" :disabled="!selectedTargetId" :loading="targetBinding" @click="bindAndStartTask">
+          绑定并开始学习
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
       v-model="overrideDialogVisible"
       title="手动完成任务"
       width="min(480px, calc(100vw - 32px))"
@@ -979,6 +1105,28 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.target-candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.target-candidate {
+  width: 100%;
+  height: auto;
+  min-height: 54px;
+  margin: 0;
+  padding: 10px 14px;
+}
+
+.target-candidate small {
+  display: block;
+  margin-top: 4px;
+  color: var(--el-text-color-secondary);
+  white-space: normal;
 }
 
 .title {

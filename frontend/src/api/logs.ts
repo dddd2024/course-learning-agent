@@ -12,6 +12,7 @@ export type ErrorLogCategory =
   | 'frontend'
   | 'network'
   | 'api'
+  | 'timeout'
 export type ErrorLogLevel = 'warning' | 'error'
 export type ErrorLogStatus = 'open' | 'resolved' | 'ignored'
 
