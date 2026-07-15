@@ -155,6 +155,48 @@ def test_rebuild_preserves_preexisting_unrelated_foreign_key_violations(tmp_path
     assert after == before
 
 
+@pytest.mark.parametrize(("orphan_column", "orphan_value"), [("user_id", 999), ("course_id", 999)])
+def test_rebuild_preserves_preexisting_materials_foreign_key_violations(tmp_path, orphan_column, orphan_value):
+    """A legacy materials orphan survives even when SQLite renumbers its FK id."""
+    engine = _legacy_engine(tmp_path, include_active_version_foreign_key=False)
+    migration = _migration()
+    values = {"user_id": 1, "course_id": 1, orphan_column: orphan_value}
+
+    with engine.connect() as conn:
+        conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        conn.execute(text(
+            "INSERT INTO materials(id, user_id, course_id, filename, file_type, file_path, parse_attempts) "
+            "VALUES (9, :user_id, :course_id, 'legacy-orphan.pdf', 'pdf', 'uploads/orphan.pdf', 0)"
+        ), values)
+        conn.commit()
+        conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+        before = {tuple(row) for row in conn.execute(text("PRAGMA foreign_key_check")).fetchall()}
+        before_semantic = migration._foreign_key_violation_identities(conn)
+
+    migration.up(None, engine)
+
+    with engine.connect() as conn:
+        after = {tuple(row) for row in conn.execute(text("PRAGMA foreign_key_check")).fetchall()}
+        after_semantic = migration._foreign_key_violation_identities(conn)
+        foreign_keys = {tuple(row[2:]) for row in conn.execute(text("PRAGMA foreign_key_list(materials)")).fetchall()}
+    assert len(before) == len(after) == 1
+    assert {entry[:3] for entry in after} == {entry[:3] for entry in before}
+    assert before != after  # SQLite may reassign foreign_key_check.fkid during rebuild.
+    assert after_semantic == before_semantic
+    assert ("material_versions", "active_version_id", "id", "NO ACTION", "NO ACTION", "NONE") in foreign_keys
+
+
+def test_rebuild_rejects_active_version_violation_introduced_by_new_foreign_key(tmp_path):
+    """The semantic comparison still rejects a violation added by migration 024."""
+    engine = _legacy_engine(tmp_path, include_active_version_foreign_key=False)
+    migration = _migration()
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE materials SET active_version_id=999 WHERE id=7"))
+
+    with pytest.raises(RuntimeError, match="introduced foreign-key violations"):
+        migration.up(None, engine)
+
+
 def test_schema_repair_does_not_create_database_backup_files(tmp_path):
     """The production migration function only repairs the supplied database."""
     engine = _legacy_engine(tmp_path, include_active_version_foreign_key=False)
