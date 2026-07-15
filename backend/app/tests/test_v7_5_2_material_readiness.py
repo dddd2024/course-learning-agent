@@ -97,7 +97,7 @@ def test_old_version_chunks_do_not_make_current_version_readable(db_session, sam
     assert "active_chunks_missing" in readiness["blocking_reasons"]
 
 
-def test_failed_parse_job_is_explicitly_blocking(db_session, sample_course, sample_user):
+def test_failed_parse_job_is_telemetry_only_when_reader_has_content(db_session, sample_course, sample_user):
     material, version = _material(db_session, sample_course, sample_user)
     _chunk(db_session, material, version, sample_course)
     job = db_session.query(ParseJob).filter(ParseJob.material_id == material.id).one()
@@ -108,10 +108,12 @@ def test_failed_parse_job_is_explicitly_blocking(db_session, sample_course, samp
 
     assert readiness["parse_job_status"] == "failed"
     assert readiness["parse_error"] == "parse crashed"
-    assert "parse_job_status:failed" in readiness["blocking_reasons"]
+    assert readiness["reader"]["usable"] is True
+    assert "parse_job_status:failed" in readiness["telemetry_warnings"]
+    assert "parse_job_status:failed" not in readiness["blocking_reasons"]
 
 
-def test_pdf_missing_page_asset_is_not_usable(db_session, sample_course, sample_user, monkeypatch):
+def test_pdf_missing_page_asset_falls_back_to_structured_text(db_session, sample_course, sample_user, monkeypatch):
     material, version = _material(db_session, sample_course, sample_user, "pdf")
     chunk = _chunk(db_session, material, version, sample_course)
     _index(db_session, chunk.id, sample_course.id)
@@ -122,9 +124,12 @@ def test_pdf_missing_page_asset_is_not_usable(db_session, sample_course, sample_
 
     readiness = material_readiness(db_session, material)
 
-    assert readiness["reader_mode"] == "page"
+    assert readiness["reader_mode"] == "structured_text"
     assert readiness["missing_page_numbers"] == [2]
-    assert "page_assets_incomplete" in readiness["blocking_reasons"]
+    assert readiness["reader"]["usable"] is True
+    assert readiness["reader"]["available_modes"] == ["structured_text"]
+    assert readiness["assets"]["page_status"] == "partial"
+    assert "rebuild_page_assets" in readiness["repair"]["actions"]
 
 
 def test_scanned_pdf_with_complete_pages_is_usable_without_chunks(db_session, sample_course, sample_user, monkeypatch):
@@ -138,3 +143,30 @@ def test_scanned_pdf_with_complete_pages_is_usable_without_chunks(db_session, sa
 
     assert readiness["usable"] is True
     assert readiness["reader_mode"] == "page"
+
+
+def test_ready_pdf_keeps_reader_usable_when_job_missing_and_fts_incomplete(
+    db_session, sample_course, sample_user, monkeypatch
+):
+    material, version = _material(db_session, sample_course, sample_user, "pdf")
+    _chunk(db_session, material, version, sample_course)
+    db_session.execute(__import__("sqlalchemy").text(
+        "CREATE VIRTUAL TABLE material_chunks_fts USING fts5(chunk_id UNINDEXED, course_id UNINDEXED, body, title)"
+    ))
+    db_session.query(ParseJob).filter(ParseJob.material_id == material.id).delete()
+    db_session.commit()
+    monkeypatch.setattr(
+        "app.services.material_readiness_service.evaluate_page_asset_coverage",
+        lambda *_: {"expected_pages": 1, "missing_page_numbers": [], "status": "ready"},
+    )
+
+    readiness = material_readiness(db_session, material)
+
+    assert readiness["reader"]["usable"] is True
+    assert readiness["reader"]["preferred_mode"] == "page"
+    assert readiness["assistant"]["usable"] is True
+    assert readiness["assistant"]["degraded"] is True
+    assert readiness["assistant"]["retrieval_mode"] == "keyword_fallback"
+    assert "fts_index_incomplete" in readiness["assistant"]["reasons"]
+    assert "parse_job_missing" in readiness["telemetry_warnings"]
+    assert readiness["blocking_reasons"] == []

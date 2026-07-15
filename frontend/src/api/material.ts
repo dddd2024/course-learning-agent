@@ -3,6 +3,21 @@ import type { AxiosPromise, AxiosProgressEvent } from 'axios'
 
 export type MaterialStatus = 'uploaded' | 'processing' | 'ready' | 'failed'
 export type MaterialIdentifier = number | string
+export type ReaderMode = 'page' | 'structured_text' | 'raw'
+
+export interface ReaderCapability {
+  usable: boolean
+  preferred_mode: ReaderMode | null
+  available_modes: ReaderMode[]
+  blocking_reasons: string[]
+}
+
+export interface AssistantCapability {
+  usable: boolean
+  degraded: boolean
+  retrieval_mode: 'fts_bm25' | 'keyword_fallback'
+  reasons: string[]
+}
 
 export interface Material {
   id: number
@@ -69,10 +84,31 @@ export interface MaterialReadiness {
   warnings: string[]
   usable: boolean
   blocking_reasons: string[]
+  reader: ReaderCapability
+  assistant: AssistantCapability
+  assets: {
+    page_status: 'ready' | 'partial' | 'missing' | 'not_applicable'
+    expected_pages: number
+    ready_pages: number
+    standalone_image_status: string
+    document_readable: boolean
+  }
+  telemetry_warnings: string[]
+  repair: { needed: boolean; actions: string[] }
 }
 
 export function getMaterialReadiness(materialId: MaterialIdentifier): AxiosPromise<MaterialReadiness> {
   return request.get(`/materials/${materialId}/readiness`)
+}
+
+export function rebuildMaterialFts(materialId: MaterialIdentifier): AxiosPromise<{
+  material_id: number
+  before_count: number
+  indexed_count: number
+  indexable_chunk_count: number
+  changed: boolean
+}> {
+  return request.post(`/materials/${materialId}/fts/rebuild`)
 }
 
 export interface ChunkImage {
@@ -100,6 +136,15 @@ export interface MaterialPage {
   clean_text: string
   removed_lines: string
   blocks: string
+  source_width?: number | null
+  source_height?: number | null
+  text_layer: Array<{
+    block_id: string
+    text: string
+    bbox: [number, number, number, number]
+    reading_order: number
+    font_size?: number | null
+  }>
   is_synthetic: boolean
   page_asset?: {
     id: number

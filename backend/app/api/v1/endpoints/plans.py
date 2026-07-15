@@ -23,7 +23,7 @@ import time
 import re
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.agents.planner import generate as planner_generate
@@ -62,6 +62,7 @@ from app.schemas.plan import (
     PlanSummaryResponse,
     TaskOverrideRequest,
     TaskEventRequest,
+    TaskTargetBindRequest,
     TaskResponse,
     TaskUpdate,
     TaskVerifyRequest,
@@ -77,6 +78,7 @@ from app.services.multi_scheduler import schedule_multi_courses
 from app.services.scheduler import schedule_tasks_with_conflicts
 from app.services.task_execution_service import (
     get_execution_info,
+    bind_task_target as bind_task_target_service,
     override_task as override_task_service,
     start_task as start_task_service,
     retry_task as retry_task_service,
@@ -84,6 +86,8 @@ from app.services.task_execution_service import (
     verify_task as verify_task_service,
 )
 from app.services.task_target_resolver import resolve_target
+from app.schemas.quiz import QuizGenerationJobOut
+from app.services.quiz_generation_job_service import create_task_generation_job, run_generation_job
 from app.services.plan_state_service import todo_update_allowed
 from app.services.multi_plan_history_service import has_execution_history
 
@@ -523,6 +527,37 @@ def start_task(
     to the created resource.
     """
     return start_task_service(db, task_id, current_user.id)
+
+
+@router.post(
+    "/tasks/{task_id}/quiz-generation-job",
+    response_model=QuizGenerationJobOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def create_plan_quiz_generation_job(
+    task_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> QuizGenerationJobOut:
+    """Generate first, then atomically bind/start the plan task on success."""
+    job = create_task_generation_job(db, task_id, current_user.id)
+    response = QuizGenerationJobOut.model_validate(job)
+    background_tasks.add_task(run_generation_job, job.id)
+    return response
+
+
+@router.post("/tasks/{task_id}/target")
+def bind_task_target(
+    task_id: int,
+    payload: TaskTargetBindRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Bind an unresolved learning task to an owned, ready course material."""
+    return bind_task_target_service(
+        db, task_id, current_user.id, payload.target_type, payload.target_id
+    )
 
 
 @router.post("/tasks/{task_id}/verify")

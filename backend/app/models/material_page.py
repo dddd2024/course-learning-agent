@@ -1,5 +1,5 @@
 """Page-level parsed material state retained alongside retrieval chunks."""
-from sqlalchemy import Column, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from app.models.base import Base, TimestampMixin
 
 
@@ -18,3 +18,5 @@ class MaterialPage(Base, TimestampMixin):
     clean_text = Column(Text, nullable=True)
     blocks_json = Column(Text, nullable=True)
     decisions_json = Column(Text, nullable=True)
+    source_width = Column(Float, nullable=True)
+    source_height = Column(Float, nullable=True)

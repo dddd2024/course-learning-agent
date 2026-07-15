@@ -27,7 +27,7 @@ import logging
 import re
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.agents.audit import AgentAudit
@@ -45,6 +45,7 @@ from app.schemas.quiz import (
     QuizCreate,
     QuizItemOut,
     QuizListResponse,
+    QuizGenerationJobOut,
     QuizOut,
     QuizResultItemOut,
     QuizResultOut,
@@ -57,6 +58,12 @@ from app.services.llm_config_service import (
     get_active_config,
 )
 from app.services.task_execution_service import verify_task as verify_task_service
+from app.services.quiz_generation_job_service import (
+    create_generation_job,
+    get_owned_job,
+    recover_stale_job,
+    run_generation_job,
+)
 from app.services.weak_point_progress import apply_mastery_decay
 
 logger = logging.getLogger(__name__)
@@ -406,6 +413,48 @@ def create_quiz(
     db.commit()
     db.refresh(quiz)
     return _quiz_to_response(quiz, partial_generation=False, insufficient_evidence=False)
+
+
+@router.post(
+    "/generation-jobs",
+    response_model=QuizGenerationJobOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def create_quiz_generation_job(
+    payload: QuizCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> QuizGenerationJobOut:
+    """Persist a bounded quiz job and return before any model call starts."""
+    job = create_generation_job(
+        db,
+        user_id=current_user.id,
+        course_id=payload.course_id,
+        knowledge_point_ids=payload.knowledge_point_ids,
+        question_count=payload.question_count,
+        pass_score=payload.pass_score,
+        question_types=payload.question_types,
+        difficulty_distribution=payload.difficulty_distribution,
+    )
+    response = QuizGenerationJobOut.model_validate(job)
+    background_tasks.add_task(run_generation_job, job.id)
+    return response
+
+
+@router.get("/generation-jobs/{job_id}", response_model=QuizGenerationJobOut)
+def get_quiz_generation_job(
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> QuizGenerationJobOut:
+    job = get_owned_job(db, job_id, current_user.id)
+    recover_stale_job(db, job)
+    db.refresh(job)
+    if job.status == "queued":
+        background_tasks.add_task(run_generation_job, job.id)
+    return QuizGenerationJobOut.model_validate(job)
 
 
 @router.get("", response_model=QuizListResponse)

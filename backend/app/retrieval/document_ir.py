@@ -183,6 +183,8 @@ class DocumentPage:
     images: List[DocumentImageAnchor] = field(default_factory=list)
     parser_version: str = "layout-v6"
     layout_uncertain: bool = False
+    page_width: float = 0.0
+    page_height: float = 0.0
 
     @property
     def text(self) -> str:
@@ -198,6 +200,8 @@ class DocumentPage:
             "images": [a.to_dict() for a in self.images],
             "parser_version": self.parser_version,
             "layout_uncertain": self.layout_uncertain,
+            "page_width": self.page_width,
+            "page_height": self.page_height,
         }
 
     @classmethod
@@ -210,6 +214,8 @@ class DocumentPage:
             images=[DocumentImageAnchor.from_dict(a) for a in d.get("images", [])],
             parser_version=d.get("parser_version", "layout-v6"),
             layout_uncertain=bool(d.get("layout_uncertain", False)),
+            page_width=float(d.get("page_width", 0.0) or 0.0),
+            page_height=float(d.get("page_height", 0.0) or 0.0),
         )
 
 
@@ -289,6 +295,8 @@ def to_document_page(parsed_page: Any) -> DocumentPage:
         blocks=doc_blocks,
         images=images,
         parser_version="layout-v6",
+        page_width=float(getattr(parsed_page, "page_width", 0.0) or 0.0),
+        page_height=float(getattr(parsed_page, "page_height", 0.0) or 0.0),
     )
 
 

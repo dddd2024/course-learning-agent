@@ -25,6 +25,7 @@ from app.models.material_page_asset import MaterialPageAsset
 from app.models.parse_job import ParseJob
 from app.models.plan import MultiCoursePlan, MultiCoursePlanTask, StudyGoal, StudyTask, TaskExecutionEvent, Todo
 from app.models.quiz import Quiz, QuizItem, WeakPoint
+from app.models.quiz_generation_job import QuizGenerationJob
 from app.models.security_finding import MaterialSecurityFinding
 from app.models.user import User
 
@@ -60,6 +61,7 @@ __all__ = [
     "Quiz",
     "QuizItem",
     "WeakPoint",
+    "QuizGenerationJob",
     "User",
     "UserLLMConfig",
 ]

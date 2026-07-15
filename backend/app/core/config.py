@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     # Task 9: concept compare can take longer than the default 60s
     # timeout on first call, so give it a dedicated, longer window.
     LLM_CONCEPT_COMPARE_TIMEOUT_SECONDS: int = 120
+    # Quiz generation is asynchronous but still strictly bounded.  One model
+    # call cannot consume the whole job budget, and the service is the only
+    # component allowed to request a deficit refill.
+    LLM_QUIZ_TIMEOUT_SECONDS: int = 35
+    QUIZ_GENERATION_MAX_PROVIDER_CALLS: int = 3
+    QUIZ_GENERATION_TOTAL_BUDGET_SECONDS: int = 100
     LLM_TEMPERATURE: float = 0.2
     LLM_MAX_TOKENS: int = 2000
     LLM_CONFIG_SECRET_KEY: str = _DEFAULT_LLM_CONFIG_SECRET

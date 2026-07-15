@@ -1,6 +1,6 @@
 <template>
-  <div class="page-text-panel" @mouseup="$emit('select')">
-    <article v-for="page in pages" :id="`page-${page.page_no}`" :key="page.catalog_key" class="text-page">
+  <div class="page-text-panel">
+    <article v-for="page in pages" :id="`page-${page.page_no}`" :key="page.catalog_key" class="text-page" :data-page-no="page.page_no" @mouseup="emitSelection(page.page_no)">
       <div class="text-page-meta">第 {{ page.page_no }} 页</div>
       <div class="text-page-content">{{ mode === 'raw' ? page.raw_text : page.clean_text }}</div>
     </article>
@@ -8,8 +8,12 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{ pages: Array<{ catalog_key: string; id: number | null; page_no: number; raw_text: string; clean_text: string }>; mode: 'raw' | 'clean' }>()
-defineEmits<{ select: [] }>()
+const props = defineProps<{ pages: Array<{ catalog_key: string; id: number | null; page_no: number; raw_text: string; clean_text: string }>; mode: 'raw' | 'clean'; materialId?: number | null }>()
+const emit = defineEmits<{ select: [payload: { text: string; pageNo: number; blockIds: string[]; materialId: number }] }>()
+function emitSelection(pageNo: number) {
+  const text = window.getSelection()?.toString().trim().slice(0, 2000) || ''
+  if (text && props.materialId) emit('select', { text, pageNo, blockIds: [], materialId: props.materialId })
+}
 </script>
 
 <style scoped>

@@ -8,6 +8,7 @@ the API, readiness calculation and repair workflow.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+import json
 from pathlib import Path
 
 import fitz
@@ -141,6 +142,9 @@ def build_material_page_catalog(db: Session, material: Material) -> dict:
             "clean_text": (page.clean_text or "") if page is not None else "",
             "removed_lines": (page.decisions_json or "[]") if page is not None else "[]",
             "blocks": (page.blocks_json or "[]") if page is not None else "[]",
+            "source_width": page.source_width if page is not None else None,
+            "source_height": page.source_height if page is not None else None,
+            "text_layer": _text_layer(page),
             "is_synthetic": is_synthetic,
             "page_asset": asset_payload,
         })
@@ -156,3 +160,30 @@ def build_material_page_catalog(db: Session, material: Material) -> dict:
         "synthetic_page_numbers": synthetic,
         "items": items,
     }
+
+
+def _text_layer(page: MaterialPage | None) -> list[dict]:
+    """Expose only the geometry needed by the selectable page overlay."""
+    if page is None or not page.blocks_json:
+        return []
+    try:
+        blocks = json.loads(page.blocks_json)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(blocks, list):
+        return []
+    result = []
+    for block in blocks:
+        if not isinstance(block, dict) or not str(block.get("text") or "").strip():
+            continue
+        bbox = block.get("bbox")
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        result.append({
+            "block_id": str(block.get("block_id") or ""),
+            "text": str(block.get("text") or ""),
+            "bbox": [float(value) for value in bbox],
+            "reading_order": int(block.get("reading_order") or 0),
+            "font_size": block.get("font_size"),
+        })
+    return result

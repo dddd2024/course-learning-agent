@@ -51,7 +51,7 @@ class ErrorLogResolveRequest(BaseModel):
 # ``Literal`` makes Pydantic reject unknown categories with 422.
 _FrontendErrorCategory = Literal[
     "upload", "parse", "agent", "search", "system",
-    "frontend", "network", "api",
+    "frontend", "network", "api", "timeout",
 ]
 _FrontendErrorLevel = Literal["warning", "error"]
 

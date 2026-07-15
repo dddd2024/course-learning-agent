@@ -2,6 +2,7 @@ import axios from 'axios'
 import router from '../router'
 import { useAuthStore } from '../stores/auth'
 import { API_BASE_URL } from '../config/api'
+import { classifyApiFailure } from '../utils/error'
 
 const request = axios.create({
   // One-click-launch fix: use the unified address (default 127.0.0.1) so
@@ -67,16 +68,26 @@ request.interceptors.response.use(
       const url = error.config?.url || ''
       const requestPath = url ? `/api/v1${url}` : null
       const hasResponse = !!error.response
-      const category = hasResponse ? 'api' : 'network'
+      const errorCode = String(error.code || '')
+      const category = classifyApiFailure(error)
+      const isTimeout = category === 'timeout'
       const statusCode = error.response?.status ?? null
       const serverMessage = error.response?.data?.message
-      const technicalDetail = hasResponse
-        ? `HTTP ${statusCode}`
-        : (error.message || 'Network Error')
+      const configuredTimeout = error.config?.timeout ?? null
+      const technicalDetail = [
+        `code=${errorCode || 'none'}`,
+        `timeout=${configuredTimeout ?? 'default'}ms`,
+        `method=${method}`,
+        `route=${router.currentRoute.value.path}`,
+        `request_path=${requestPath ?? 'unknown'}`,
+        `status=${statusCode ?? 'none'}`,
+      ].join(' ')
       const message = serverMessage
         ? `${method} ${url} 请求失败：${serverMessage}`
         : hasResponse
           ? `${method} ${url} 请求失败：服务返回 ${statusCode}`
+          : isTimeout
+            ? `${method} ${url} 请求超时：后端已连接，但业务处理超过等待时限`
           : `${method} ${url} 请求失败：无法连接后端（已保存到本地待上报日志，后端恢复并登录后补发）`
       const frontendRoute = router.currentRoute.value.path
 
@@ -86,7 +97,7 @@ request.interceptors.response.use(
           reportFrontendError({
             category,
             level: 'error',
-            title: '前端接口请求失败',
+            title: isTimeout ? '请求超时' : hasResponse ? '接口请求失败' : '无法连接后端',
             message,
             technical_detail: technicalDetail,
             request_path: requestPath,

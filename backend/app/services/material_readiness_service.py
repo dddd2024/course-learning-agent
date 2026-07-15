@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.material import Material, MaterialVersion
 from app.models.material_chunk import MaterialChunk
 from app.models.material_page import MaterialPage
+from app.models.material_image import MaterialImage
 from app.models.parse_job import ParseJob
 from app.services.material_page_asset_service import evaluate_page_asset_coverage
 from app.services.material_page_catalog_service import build_material_page_catalog
@@ -73,17 +74,13 @@ def material_readiness(db: Session, material: Material) -> dict:
     file_type = (material.file_type or "").lower()
     reader_mode = "page" if file_type == "pdf" else "structured_text"
 
-    blocking_reasons: list[str] = []
+    base_reader_reasons: list[str] = []
     if material.status != "ready":
-        blocking_reasons.append(f"material_status:{material.status}")
+        base_reader_reasons.append(f"material_status:{material.status}")
     if version is None:
-        blocking_reasons.append("active_version_missing")
+        base_reader_reasons.append("active_version_missing")
     elif version.status != "ready":
-        blocking_reasons.append(f"version_status:{version.status}")
-    if job is None:
-        blocking_reasons.append("parse_job_missing")
-    elif job.status != "succeeded":
-        blocking_reasons.append(f"parse_job_status:{job.status}")
+        base_reader_reasons.append(f"version_status:{version.status}")
 
     active_pages = []
     if version is not None:
@@ -126,25 +123,66 @@ def material_readiness(db: Session, material: Material) -> dict:
             and not catalog["duplicate_asset_page_numbers"]
             and not catalog["extra_page_numbers"]
         )
-        if not page_catalog_consistent:
-            blocking_reasons.append("page_catalog_incomplete")
-        if not page_assets_complete:
-            blocking_reasons.append("page_assets_incomplete")
-        if document_mode == "unexpected_empty_text_pdf":
-            blocking_reasons.append("unexpected_empty_text_extraction")
-        elif document_mode == "text_pdf":
-            if not nonempty_chunks:
-                blocking_reasons.append("active_chunks_missing")
-            elif fts_error:
-                blocking_reasons.append(fts_error)
-            elif fts_count != len(indexable_chunks):
-                blocking_reasons.append("fts_index_incomplete")
-    elif not nonempty_chunks:
-        blocking_reasons.append("active_chunks_missing")
-    elif fts_error:
-        blocking_reasons.append(fts_error)
-    elif fts_count != len(indexable_chunks):
-        blocking_reasons.append("fts_index_incomplete")
+    available_modes: list[str] = []
+    if file_type == "pdf" and page_assets_complete and page_catalog_consistent:
+        available_modes.append("page")
+    if nonempty_chunks:
+        available_modes.append("structured_text")
+    if raw_text_chars > 0:
+        available_modes.append("raw")
+
+    reader_blocking_reasons = list(base_reader_reasons)
+    if not available_modes:
+        if file_type == "pdf" and not page_assets_complete:
+            reader_blocking_reasons.append("page_assets_incomplete")
+        if not nonempty_chunks and raw_text_chars <= 0:
+            reader_blocking_reasons.append("active_chunks_missing")
+            reader_blocking_reasons.append("reader_content_missing")
+    preferred_mode = (
+        "page" if "page" in available_modes
+        else "structured_text" if "structured_text" in available_modes
+        else "raw" if "raw" in available_modes
+        else None
+    )
+    reader_mode = preferred_mode or reader_mode
+
+    assistant_reasons: list[str] = []
+    assistant_usable = bool(nonempty_chunks) and not base_reader_reasons
+    if not nonempty_chunks:
+        assistant_reasons.append("active_chunks_missing")
+    if assistant_usable:
+        if fts_error:
+            assistant_reasons.append(fts_error)
+        elif fts_count != len(indexable_chunks):
+            assistant_reasons.append("fts_index_incomplete")
+    assistant_degraded = assistant_usable and bool(assistant_reasons)
+
+    telemetry_warnings: list[str] = []
+    if job is None:
+        telemetry_warnings.append("parse_job_missing")
+    elif job.status != "succeeded":
+        telemetry_warnings.append(f"parse_job_status:{job.status}")
+
+    page_status = "not_applicable"
+    if file_type == "pdf":
+        page_status = "ready" if page_assets_complete else (
+            "partial" if ready_page_numbers else "missing"
+        )
+    image_query = db.query(MaterialImage).filter(MaterialImage.material_id == material.id)
+    if version is not None:
+        image_query = image_query.filter(
+            (MaterialImage.material_version_id == version.id)
+            | (MaterialImage.material_version_id.is_(None))
+        )
+    image_rows = image_query.all()
+    standalone_image_status = "not_applicable" if not image_rows else (
+        "ready" if all(row.render_status == "ready" for row in image_rows) else "missing"
+    )
+    repair_actions: list[str] = []
+    if file_type == "pdf" and not page_assets_complete:
+        repair_actions.append("rebuild_page_assets")
+    if assistant_degraded:
+        repair_actions.append("rebuild_fts")
 
     return {
         "material_id": material.id,
@@ -175,6 +213,49 @@ def material_readiness(db: Session, material: Material) -> dict:
         "page_catalog_consistent": page_catalog_consistent,
         "page_assets_complete": page_assets_complete,
         "warnings": warnings,
-        "usable": not blocking_reasons,
-        "blocking_reasons": blocking_reasons,
+        "capabilities": {
+            "reader": {
+                "usable": not reader_blocking_reasons,
+                "preferred_mode": preferred_mode,
+                "available_modes": available_modes,
+                "blocking_reasons": reader_blocking_reasons,
+            },
+            "assistant": {
+                "usable": assistant_usable,
+                "degraded": assistant_degraded,
+                "retrieval_mode": "keyword_fallback" if assistant_degraded else "fts_bm25",
+                "reasons": assistant_reasons,
+            },
+            "assets": {
+                "page_status": page_status,
+                "expected_pages": catalog["expected_pages"],
+                "ready_pages": len(ready_page_numbers),
+                "standalone_image_status": standalone_image_status,
+                "document_readable": not reader_blocking_reasons,
+            },
+        },
+        "reader": {
+            "usable": not reader_blocking_reasons,
+            "preferred_mode": preferred_mode,
+            "available_modes": available_modes,
+            "blocking_reasons": reader_blocking_reasons,
+        },
+        "assistant": {
+            "usable": assistant_usable,
+            "degraded": assistant_degraded,
+            "retrieval_mode": "keyword_fallback" if assistant_degraded else "fts_bm25",
+            "reasons": assistant_reasons,
+        },
+        "assets": {
+            "page_status": page_status,
+            "expected_pages": catalog["expected_pages"],
+            "ready_pages": len(ready_page_numbers),
+            "standalone_image_status": standalone_image_status,
+            "document_readable": not reader_blocking_reasons,
+        },
+        "telemetry_warnings": telemetry_warnings,
+        "repair": {"needed": bool(repair_actions), "actions": repair_actions},
+        # Compatibility fields stay reader-scoped during the transition.
+        "usable": not reader_blocking_reasons,
+        "blocking_reasons": reader_blocking_reasons,
     }

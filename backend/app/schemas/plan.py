@@ -201,6 +201,12 @@ class TaskEventRequest(BaseModel):
     note: Optional[str] = Field(default=None, max_length=1000)
 
 
+class TaskTargetBindRequest(BaseModel):
+    target_type: str = Field(..., pattern="^material$")
+    target_id: int = Field(..., gt=0)
+    model_config = ConfigDict(extra="forbid")
+
+
 class TaskOverrideRequest(BaseModel):
     """Payload for POST /plans/tasks/{task_id}/override."""
 

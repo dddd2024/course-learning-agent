@@ -171,6 +171,19 @@ def get_material_readiness(
     return material_readiness(db, _get_owned_material(db, material_id, current_user.id))
 
 
+@router.post("/{material_id}/fts/rebuild")
+def rebuild_material_fts_endpoint(
+    material_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Repair the active chunk FTS rows without affecting reader access."""
+    from app.retrieval.search import rebuild_material_fts
+
+    material = _get_owned_material(db, material_id, current_user.id)
+    return rebuild_material_fts(db, material.id)
+
+
 @router.get("/{material_id}/image-integrity")
 def get_image_integrity(material_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
     return image_integrity(db, _get_owned_material(db, material_id, current_user.id))

@@ -17,6 +17,7 @@ from unittest.mock import patch
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.core.config import settings
 from app.main import app
 from app.models.audit import AgentRun
 from app.tests.conftest import (
@@ -407,9 +408,9 @@ def test_quizzes_uses_user_config(
         )
 
     assert resp.status_code == 422, resp.text
-    # Invalid zero-item output receives one constrained retry; each real
-    # provider call has the configured three-attempt transport budget.
-    assert mock_real.call_count == 6
+    # QuizCreationService is the sole deficit-retry owner.  The agent no
+    # longer doubles each service round, so the configured cap is exact.
+    assert mock_real.call_count == settings.QUIZ_GENERATION_MAX_PROVIDER_CALLS
     user_config = _extract_user_config(mock_real.call_args)
     assert user_config is not None
     assert user_config["base_url"] == LLM_CONFIG_PAYLOAD["base_url"]

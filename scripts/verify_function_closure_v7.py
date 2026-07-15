@@ -212,6 +212,12 @@ def check_page_backfill_failure_contract():
     return _run_pytest(str(BACKEND_DIR / "app" / "tests" / "test_v7_5_2_page_backfill_failure.py"))
 
 
+@register_check("document_reader_four_fixes", "backend")
+def check_document_reader_four_fixes():
+    """Capability split, idempotent FTS, geometry, and selection evidence."""
+    return _run_pytest(str(BACKEND_DIR / "app" / "tests" / "test_document_reader_four_fixes.py"))
+
+
 # ---------------------------------------------------------------------------
 # Frontend checks
 # ---------------------------------------------------------------------------

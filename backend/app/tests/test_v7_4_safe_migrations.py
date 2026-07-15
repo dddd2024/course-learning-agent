@@ -54,7 +54,14 @@ def _make_engine(tmp_path, with_unique=True):
                     FOREIGN KEY(material_version_id) REFERENCES material_versions(id)
                 )
             """))
-            conn.execute(text("INSERT INTO material_pages SELECT * FROM _mp_old"))
+            conn.execute(text("""
+                INSERT INTO material_pages
+                (id, material_id, material_version_id, page_no, page_type, parser_version,
+                 raw_text, clean_text, blocks_json, decisions_json, created_at, updated_at)
+                SELECT id, material_id, material_version_id, page_no, page_type, parser_version,
+                       raw_text, clean_text, blocks_json, decisions_json, created_at, updated_at
+                FROM _mp_old
+            """))
             conn.execute(text("DROP TABLE _mp_old"))
     return engine
 

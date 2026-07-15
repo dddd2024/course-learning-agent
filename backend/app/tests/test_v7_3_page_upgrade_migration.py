@@ -71,7 +71,14 @@ def test_upgraded_db_gets_page_version_unique_constraint():
                         FOREIGN KEY(material_version_id) REFERENCES material_versions(id)
                     )
                 """))
-                conn.execute(text("INSERT INTO material_pages SELECT * FROM material_pages_old"))
+                conn.execute(text("""
+                    INSERT INTO material_pages
+                    (id, material_id, material_version_id, page_no, page_type, parser_version,
+                     raw_text, clean_text, blocks_json, decisions_json, created_at, updated_at)
+                    SELECT id, material_id, material_version_id, page_no, page_type, parser_version,
+                           raw_text, clean_text, blocks_json, decisions_json, created_at, updated_at
+                    FROM material_pages_old
+                """))
                 conn.execute(text("DROP TABLE material_pages_old"))
 
             insp = inspect(engine)
@@ -135,7 +142,14 @@ def test_migration_detects_duplicate_pages_before_constraint():
                         FOREIGN KEY(material_version_id) REFERENCES material_versions(id)
                     )
                 """))
-                conn.execute(text("INSERT INTO material_pages SELECT * FROM material_pages_old"))
+                conn.execute(text("""
+                    INSERT INTO material_pages
+                    (id, material_id, material_version_id, page_no, page_type, parser_version,
+                     raw_text, clean_text, blocks_json, decisions_json, created_at, updated_at)
+                    SELECT id, material_id, material_version_id, page_no, page_type, parser_version,
+                           raw_text, clean_text, blocks_json, decisions_json, created_at, updated_at
+                    FROM material_pages_old
+                """))
                 conn.execute(text("DROP TABLE material_pages_old"))
 
             Session = sessionmaker(bind=engine)
@@ -152,18 +166,16 @@ def test_migration_detects_duplicate_pages_before_constraint():
             )
             session.add(version)
             session.flush()
-            for _ in range(2):
-                session.add(MaterialPage(
-                    material_id=material.id,
-                    material_version_id=version.id,
-                    page_no=1,
-                    page_type="text",
-                    parser_version="test",
-                    raw_text="test",
-                    clean_text="test",
-                ))
+            material_id, version_id = material.id, version.id
             session.commit()
             session.close()
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    INSERT INTO material_pages
+                    (material_id, material_version_id, page_no, page_type, parser_version, raw_text, clean_text)
+                    VALUES (:material_id, :version_id, 1, 'text', 'test', 'test', 'test'),
+                           (:material_id, :version_id, 1, 'text', 'test', 'test', 'test')
+                """), {"material_id": material_id, "version_id": version_id})
 
             # V7.4-01: Migration must ABORT on duplicates, not delete them
             import pytest as _pytest
@@ -211,7 +223,14 @@ def test_fresh_and_upgraded_schema_are_equivalent():
                         FOREIGN KEY(material_version_id) REFERENCES material_versions(id)
                     )
                 """))
-                conn.execute(text("INSERT INTO material_pages SELECT * FROM material_pages_old"))
+                conn.execute(text("""
+                    INSERT INTO material_pages
+                    (id, material_id, material_version_id, page_no, page_type, parser_version,
+                     raw_text, clean_text, blocks_json, decisions_json, created_at, updated_at)
+                    SELECT id, material_id, material_version_id, page_no, page_type, parser_version,
+                           raw_text, clean_text, blocks_json, decisions_json, created_at, updated_at
+                    FROM material_pages_old
+                """))
                 conn.execute(text("DROP TABLE material_pages_old"))
             run_schema_migrations(upgrade_engine)
 

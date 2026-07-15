@@ -181,4 +181,6 @@ def test_clean_reader_mode_does_not_render_page_clean_text_twice():
 
     assert "<PageCanvas v-if=\"readerMode === 'page'\"" in source
     assert "<PageTextPanel v-else-if=\"readerMode === 'raw'\"" in source
-    assert "v-else class=\"doc-chunks\" @mouseup=\"handleSelection\"" in source
+    assert "v-else class=\"doc-chunks\"" in source
+    assert ":data-page-no=\"group.pageNo\"" in source
+    assert "@mouseup=\"handleTextSelection(group.pageNo)\"" in source

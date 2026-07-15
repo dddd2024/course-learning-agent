@@ -31,6 +31,8 @@ vi.mock('../api/course', () => ({
 vi.mock('../api/quiz', () => ({
   getQuizzes: vi.fn(),
   createQuiz: vi.fn(),
+  createQuizGenerationJob: vi.fn(),
+  getQuizGenerationJob: vi.fn(),
   deleteQuiz: vi.fn(),
   getQuiz: vi.fn(),
   getQuizResult: vi.fn(),
@@ -202,5 +204,62 @@ describe('QuizView', () => {
     // The chunk ID and quote text should be shown
     expect(html).toContain('片段 #55')
     expect(html).toContain('进程调度是操作系统的核心功能')
+  })
+
+  it('generation job is polled and opens the completed quiz', async () => {
+    vi.useFakeTimers()
+    mockRoute.query = {}
+    const {
+      getQuizzes, getQuiz, getWeakPoints,
+      createQuizGenerationJob, getQuizGenerationJob,
+    } = await import('../api/quiz')
+    const { listKnowledgePoints } = await import('../api/knowledge')
+    const draftQuiz = { ...mockQuiz, status: 'draft', score: null }
+    vi.mocked(getQuizzes).mockResolvedValue({ data: { items: [], total: 0 } } as any)
+    vi.mocked(getWeakPoints).mockResolvedValue({ data: { items: [] } } as any)
+    vi.mocked(listKnowledgePoints).mockResolvedValue({ data: { items: [{ id: 11, title: '进程调度' }] } } as any)
+    vi.mocked(createQuizGenerationJob).mockResolvedValue({
+      data: { id: 8, course_id: 1, task_id: null, status: 'queued', progress_stage: 'preparing', provider_calls: 0, quiz_id: null, error_code: null, error_message: null },
+    } as any)
+    vi.mocked(getQuizGenerationJob).mockResolvedValue({
+      data: { id: 8, course_id: 1, task_id: null, status: 'succeeded', progress_stage: 'completed', provider_calls: 1, quiz_id: 1, error_code: null, error_message: null },
+    } as any)
+    vi.mocked(getQuiz).mockResolvedValue({ data: draftQuiz } as any)
+
+    const wrapper = mount(QuizView, { global: { plugins: [createTestingPinia()] } })
+    await flushPromises()
+    const openButton = wrapper.findAll('button').find((button) => button.text().includes('生成测验'))
+    await openButton!.trigger('click')
+    await flushPromises()
+    const submitButton = wrapper.findAll('button').find((button) => button.text().trim() === '生成')
+    await submitButton!.trigger('click')
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(250)
+    await flushPromises()
+
+    expect(getQuizGenerationJob).toHaveBeenCalledWith(8)
+    expect(wrapper.text()).toContain('操作系统基础测验')
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('blocks generation with a useful explanation when the course has no knowledge points', async () => {
+    mockRoute.query = {}
+    const { getQuizzes, getWeakPoints, createQuizGenerationJob } = await import('../api/quiz')
+    const { listKnowledgePoints } = await import('../api/knowledge')
+    vi.mocked(getQuizzes).mockResolvedValue({ data: { items: [], total: 0 } } as any)
+    vi.mocked(getWeakPoints).mockResolvedValue({ data: { items: [] } } as any)
+    vi.mocked(listKnowledgePoints).mockResolvedValue({ data: { items: [] } } as any)
+
+    const wrapper = mount(QuizView, { global: { plugins: [createTestingPinia()] } })
+    await flushPromises()
+    const openButton = wrapper.findAll('button').find((button) => button.text().includes('生成测验'))
+    await openButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('该课程暂无可用知识点，请先上传并解析课程资料')
+    const submitButton = wrapper.findAll('button').find((button) => button.text().trim() === '生成')
+    expect(submitButton?.attributes('disabled')).toBeDefined()
+    expect(createQuizGenerationJob).not.toHaveBeenCalled()
   })
 })

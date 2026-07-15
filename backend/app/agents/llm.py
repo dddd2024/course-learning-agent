@@ -59,6 +59,7 @@ def call_llm_with_meta(
     agent_type: str,
     schema: dict | None = None,
     user_config: dict | None = None,
+    timeout_seconds: float | None = None,
 ) -> tuple[dict, dict]:
     """Call the LLM and return ``(result, meta)``.
 
@@ -75,8 +76,8 @@ def call_llm_with_meta(
     # longer timeout than the global default. The override is only used
     # when the caller did not supply their own ``timeout_seconds`` in
     # ``user_config``.
-    timeout_override: int | None = None
-    if agent_type == "concept_compare":
+    timeout_override: float | None = timeout_seconds
+    if timeout_override is None and agent_type == "concept_compare":
         timeout_override = getattr(
             settings, "LLM_CONCEPT_COMPARE_TIMEOUT_SECONDS", 120
         )
@@ -100,7 +101,10 @@ def call_llm_with_meta(
         except Exception as exc:  # noqa: BLE001 - demo must stay up
             user_reason = str(exc) or exc.__class__.__name__
             logger.warning("User LLM config failed, trying system provider: %s", exc)
-            if (settings.LLM_PROVIDER or "mock").lower() == "real":
+            # A quiz job has its own total budget and call counter.  Trying a
+            # second real provider inside one counted call would bypass both,
+            # so quiz generation falls directly to the deterministic mock.
+            if agent_type != "quiz_generate" and (settings.LLM_PROVIDER or "mock").lower() == "real":
                 try:
                     result = _real_response(prompt, agent_type, schema, None, timeout_override)
                     return result, {
@@ -1076,16 +1080,15 @@ def _real_response(
         max_tokens = user_config.get("max_tokens", settings.LLM_MAX_TOKENS)
         # Task 9: use the agent-specific timeout override only when the
         # user_config does not specify its own ``timeout_seconds``.
-        timeout = user_config.get(
-            "timeout_seconds", timeout_override or settings.LLM_TIMEOUT_SECONDS
-        )
+        configured_timeout = user_config.get("timeout_seconds", settings.LLM_TIMEOUT_SECONDS)
+        timeout = min(float(configured_timeout), float(timeout_override)) if timeout_override is not None else configured_timeout
     else:
         base_url = settings.LLM_BASE_URL
         model = settings.LLM_MODEL
         api_key = settings.LLM_API_KEY
         temperature = settings.LLM_TEMPERATURE
         max_tokens = settings.LLM_MAX_TOKENS
-        timeout = timeout_override or settings.LLM_TIMEOUT_SECONDS
+        timeout = min(float(settings.LLM_TIMEOUT_SECONDS), float(timeout_override)) if timeout_override is not None else settings.LLM_TIMEOUT_SECONDS
 
     # SEC-V3-01: request-time SSRF validation — re-resolve DNS and check
     # all resolved IPs before making the HTTP request.

@@ -53,6 +53,9 @@ MIGRATION_MODULES = [
     "022_v7_4_4_plan_task_identity",
     "023_v7_5_page_assets",
     "024_v7_5_2_page_catalog_recovery",
+    "025_document_reader_geometry",
+    "026_quiz_generation_jobs",
+    "027_quiz_job_timestamps",
 ]
 
 

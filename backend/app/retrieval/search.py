@@ -117,6 +117,46 @@ def update_fts_index(db: Session, chunk_ids: list[int] | None = None) -> None:
     db.commit()
 
 
+def rebuild_material_fts(db: Session, material_id: int) -> dict:
+    """Idempotently rebuild only one material's active FTS rows."""
+    _ensure_fts_table(db)
+    all_ids = [row[0] for row in db.query(MaterialChunk.id).filter(
+        MaterialChunk.material_id == material_id
+    ).all()]
+    rows = (
+        db.query(MaterialChunk)
+        .filter(
+            MaterialChunk.material_id == material_id,
+            MaterialChunk.is_active == 1,
+            MaterialChunk.is_indexable == 1,
+        )
+        .order_by(MaterialChunk.id)
+        .all()
+    )
+    before = 0
+    if all_ids:
+        placeholders = ",".join(str(int(chunk_id)) for chunk_id in all_ids)
+        before = int(db.execute(text(
+            f"SELECT COUNT(*) FROM material_chunks_fts WHERE chunk_id IN ({placeholders})"
+        )).scalar_one())
+        db.execute(text(f"DELETE FROM material_chunks_fts WHERE chunk_id IN ({placeholders})"))
+    if rows:
+        db.execute(
+            text("INSERT INTO material_chunks_fts(chunk_id, course_id, body, title) "
+                 "VALUES (:chunk_id, :course_id, :body, :title)"),
+            [{"chunk_id": row.id, "course_id": row.course_id,
+              "body": row.text or "", "title": row.title or ""} for row in rows],
+        )
+    db.commit()
+    return {
+        "material_id": material_id,
+        "before_count": before,
+        "indexed_count": len(rows),
+        "indexable_chunk_count": len(rows),
+        "changed": before != len(rows),
+    }
+
+
 def remove_from_fts_index(db: Session, chunk_ids: list[int]) -> None:
     """Remove specific chunks from the FTS index.
 
@@ -654,6 +694,7 @@ __all__ = [
     "merge_and_deduplicate",
     "rerank",
     "rebuild_fts_index",
+    "rebuild_material_fts",
     "update_fts_index",
     "remove_from_fts_index",
 ]

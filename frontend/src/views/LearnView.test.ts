@@ -224,4 +224,26 @@ describe('LearnView', () => {
     await flushPromises(); await flushPromises()
     expect(reextractImages).toHaveBeenCalledWith(1)
   })
+
+  it('shows FTS fallback as a non-blocking assistant hint', async () => {
+    const { listMaterials, getChunks, getMaterialPages, getMaterialReadiness } = await import('../api/material')
+    vi.mocked(listMaterials).mockResolvedValue({ data: { items: mockMaterials, total: 1 } } as any)
+    vi.mocked(getChunks).mockResolvedValue({ data: { items: [makeUsefulChunk(1)], total: 1, page: 1, page_size: 100 } } as any)
+    vi.mocked(getMaterialPages).mockResolvedValue({ data: { items: [] } } as any)
+    vi.mocked(getMaterialReadiness).mockResolvedValue({ data: {
+      usable: true,
+      reader_mode: 'structured_text',
+      blocking_reasons: [],
+      file_type: 'pdf',
+      missing_page_numbers: [],
+      reader: { usable: true, preferred_mode: 'structured_text', available_modes: ['structured_text'], blocking_reasons: [] },
+      assistant: { usable: true, degraded: true, retrieval_mode: 'keyword_fallback', reasons: ['fts_index_incomplete'] },
+    } } as any)
+
+    const wrapper = mount(LearnView, { global: { plugins: [createTestingPinia()] } })
+    await flushPromises(); await flushPromises(); await flushPromises()
+
+    expect(wrapper.text()).toContain('全文索引未完整，当前使用关键词回退；阅读不受影响')
+    expect(wrapper.find('[data-testid="material-readiness-blocked"]').exists()).toBe(false)
+  })
 })

@@ -6,6 +6,17 @@ interface ApiErrorResponse {
     data?: { message?: string; detail?: unknown }
   }
   message?: string
+  code?: string
+}
+
+export type ApiFailureCategory = 'timeout' | 'network' | 'api'
+
+export function classifyApiFailure(err: unknown): ApiFailureCategory {
+  const error = err as ApiErrorResponse
+  if (error?.response) return 'api'
+  return error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '')
+    ? 'timeout'
+    : 'network'
 }
 
 /**
@@ -32,8 +43,8 @@ export function parseApiError(err: unknown, fallback = '操作失败，请重试
     // outage. The report is saved to the local pending queue and replayed
     // after the backend comes back and the user is authenticated.
     const msg = e?.message || ''
-    if (msg.includes('timeout') || msg.toLowerCase().includes('timeout')) {
-      return '请求超时，后端响应时间过长，已保存到本地待上报日志，后端恢复并登录后补发'
+    if (e?.code === 'ECONNABORTED' || msg.toLowerCase().includes('timeout')) {
+      return '请求超时：后端已连接，但业务处理超过等待时限'
     }
     return '无法连接后端服务，已保存到本地待上报日志，后端恢复并登录后补发'
   }

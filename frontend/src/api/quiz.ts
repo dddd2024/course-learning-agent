@@ -109,6 +109,20 @@ export interface WeakPointListResult {
   items: WeakPoint[]
 }
 
+export type QuizGenerationStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+
+export interface QuizGenerationJob {
+  id: number
+  course_id: number
+  task_id: number | null
+  status: QuizGenerationStatus
+  progress_stage: 'preparing' | 'generating' | 'saving' | 'completed' | 'failed'
+  provider_calls: number
+  quiz_id: number | null
+  error_code: string | null
+  error_message: string | null
+}
+
 export function createQuiz(
   courseId: number,
   knowledgePointIds?: number[],
@@ -126,6 +140,23 @@ export function createQuiz(
     Object.assign(payload, constraints)
   }
   return request.post('/quizzes', payload)
+}
+
+export function createQuizGenerationJob(
+  courseId: number,
+  knowledgePointIds?: number[],
+  questionCount?: number,
+  constraints?: QuizCreateConstraints,
+): AxiosPromise<QuizGenerationJob> {
+  const payload: Record<string, unknown> = { course_id: courseId }
+  if (knowledgePointIds?.length) payload.knowledge_point_ids = knowledgePointIds
+  if (questionCount !== undefined) payload.question_count = questionCount
+  if (constraints) Object.assign(payload, constraints)
+  return request.post('/quizzes/generation-jobs', payload)
+}
+
+export function getQuizGenerationJob(jobId: number): AxiosPromise<QuizGenerationJob> {
+  return request.get(`/quizzes/generation-jobs/${jobId}`)
 }
 
 export function getQuizzes(

@@ -24,7 +24,7 @@ from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.models.user import User
 from app.schemas.chat import ChatRequest, ChatResponse
-from app.services.chat_service import run_chat_pipeline, validate_chat_request
+from app.services.chat_service import run_chat_pipeline, validate_chat_request, validate_selection_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -40,10 +40,12 @@ def chat(
     # Validate ownership synchronously so 404 is returned before any work.
     validate_chat_request(db, current_user, payload.course_id,
                           payload.conversation_id)
+    selection_context = payload.selection_context.model_dump() if payload.selection_context else None
+    validate_selection_context(db, current_user, payload.course_id, selection_context)
     final_data: dict | None = None
     for event in run_chat_pipeline(
         db, current_user, payload.course_id,
-        payload.conversation_id, payload.question,
+        payload.conversation_id, payload.question, selection_context,
     ):
         if event["event"] == "final":
             final_data = event["data"]
@@ -80,11 +82,13 @@ def chat_stream(
     # Once the SSE response begins, the status code can no longer change.
     validate_chat_request(db, current_user, payload.course_id,
                           payload.conversation_id)
+    selection_context = payload.selection_context.model_dump() if payload.selection_context else None
+    validate_selection_context(db, current_user, payload.course_id, selection_context)
 
     def event_generator():
         for event in run_chat_pipeline(
             db, current_user, payload.course_id,
-            payload.conversation_id, payload.question,
+            payload.conversation_id, payload.question, selection_context,
         ):
             event_type = event.get("event", "message")
             data = {k: v for k, v in event.items() if k != "event"}
