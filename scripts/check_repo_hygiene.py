@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
@@ -99,9 +98,9 @@ ALLOWED_BINARY_SUFFIXES = {
 MAX_TRACKED_FILE_BYTES = 10 * 1024 * 1024
 
 
-def _git_paths(root: Path, *args: str) -> list[str]:
+def _run_git(root: Path, *args: str) -> bytes:
     result = subprocess.run(
-        ["git", *args, "-z"],
+        ["git", *args],
         cwd=root,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -110,14 +109,30 @@ def _git_paths(root: Path, *args: str) -> list[str]:
     if result.returncode != 0:
         message = result.stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"git {' '.join(args)} failed: {message}")
-    return [item.decode("utf-8", errors="surrogateescape") for item in result.stdout.split(b"\0") if item]
+    return result.stdout
+
+
+def _git_paths(root: Path, *args: str) -> list[str]:
+    raw = _run_git(root, *args, "-z")
+    return [item.decode("utf-8", errors="surrogateescape") for item in raw.split(b"\0") if item]
+
+
+def _git_index(root: Path) -> dict[str, str]:
+    index: dict[str, str] = {}
+    for record in _run_git(root, "ls-files", "-s", "-z").split(b"\0"):
+        if not record:
+            continue
+        metadata, raw_path = record.split(b"\t", 1)
+        _mode, blob_sha, _stage = metadata.decode("ascii").split()
+        path = raw_path.decode("utf-8", errors="surrogateescape")
+        index[path] = blob_sha
+    return index
 
 
 def _path_rule_reasons(path: str) -> list[str]:
     pure = PurePosixPath(path)
     reasons: list[str] = []
-    components = set(pure.parts)
-    forbidden = sorted(components & FORBIDDEN_COMPONENTS)
+    forbidden = sorted(set(pure.parts) & FORBIDDEN_COMPONENTS)
     if forbidden:
         reasons.append(f"forbidden path component(s): {', '.join(forbidden)}")
 
@@ -138,17 +153,21 @@ def _path_rule_reasons(path: str) -> list[str]:
 
 def _looks_binary(path: Path) -> bool:
     with path.open("rb") as handle:
-        sample = handle.read(8192)
-    return b"\0" in sample
+        return b"\0" in handle.read(8192)
+
+
+def _violation(path: str, blob_sha: str, reasons: list[str]) -> dict[str, object]:
+    return {"path": path, "blob_sha": blob_sha, "reasons": reasons}
 
 
 def audit_repository(root: Path) -> dict:
-    tracked = sorted(_git_paths(root, "ls-files"))
+    index = _git_index(root)
+    tracked = sorted(index)
     tracked_but_ignored = sorted(_git_paths(root, "ls-files", "-ci", "--exclude-standard"))
     violations: list[dict[str, object]] = []
 
     for path in tracked_but_ignored:
-        violations.append({"path": path, "reasons": ["tracked file matches .gitignore"]})
+        violations.append(_violation(path, index[path], ["tracked file matches .gitignore"]))
 
     already_reported = set(tracked_but_ignored)
     for relative in tracked:
@@ -172,7 +191,7 @@ def audit_repository(root: Path) -> dict:
                 reasons.append(f"cannot inspect tracked file: {exc}")
 
         if reasons and relative not in already_reported:
-            violations.append({"path": relative, "reasons": reasons})
+            violations.append(_violation(relative, index[relative], reasons))
 
     violations.sort(key=lambda item: str(item["path"]))
     return {
