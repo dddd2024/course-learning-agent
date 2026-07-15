@@ -112,6 +112,10 @@ def _run_git(root: Path, *args: str) -> bytes:
     return result.stdout
 
 
+def _git_text(root: Path, *args: str) -> str:
+    return _run_git(root, *args).decode("utf-8", errors="replace").strip()
+
+
 def _git_paths(root: Path, *args: str) -> list[str]:
     raw = _run_git(root, *args, "-z")
     return [item.decode("utf-8", errors="surrogateescape") for item in raw.split(b"\0") if item]
@@ -197,6 +201,8 @@ def audit_repository(root: Path) -> dict:
     return {
         "schema_version": 1,
         "repository_root": str(root),
+        "head_sha": _git_text(root, "rev-parse", "HEAD"),
+        "tree_sha": _git_text(root, "rev-parse", "HEAD^{tree}"),
         "tracked_file_count": len(tracked),
         "tracked_but_ignored_count": len(tracked_but_ignored),
         "violation_count": len(violations),
