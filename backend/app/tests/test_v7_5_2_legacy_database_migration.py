@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 
-def _legacy_engine(tmp_path):
+def _legacy_engine(tmp_path, *, include_active_version_foreign_key: bool = True):
     """Build the historical shape used by deployed SQLAlchemy installations.
 
     In particular, ``id INTEGER NOT NULL, PRIMARY KEY (id)`` is intentionally
@@ -15,10 +15,15 @@ def _legacy_engine(tmp_path):
     legacy page assets that a production migration actually needs to preserve.
     """
     engine = create_engine(f"sqlite:///{tmp_path / 'legacy-v752.db'}")
+    active_version_foreign_key = (
+        ", FOREIGN KEY(active_version_id) REFERENCES material_versions(id)"
+        if include_active_version_foreign_key
+        else ""
+    )
     with engine.begin() as conn:
         conn.execute(text("CREATE TABLE users (id INTEGER PRIMARY KEY, username VARCHAR(50) NOT NULL, password_hash VARCHAR(255) NOT NULL, email VARCHAR(100))"))
         conn.execute(text("CREATE TABLE courses (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, name VARCHAR(100) NOT NULL, teacher VARCHAR(100), semester VARCHAR(50), description TEXT, color VARCHAR(20), FOREIGN KEY(user_id) REFERENCES users(id))"))
-        conn.execute(text("""
+        conn.execute(text(f"""
             CREATE TABLE materials (
                 id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
@@ -33,8 +38,7 @@ def _legacy_engine(tmp_path):
                 last_parse_error TEXT,
                 PRIMARY KEY (id),
                 FOREIGN KEY(user_id) REFERENCES users(id),
-                FOREIGN KEY(course_id) REFERENCES courses(id),
-                FOREIGN KEY(active_version_id) REFERENCES material_versions(id)
+                FOREIGN KEY(course_id) REFERENCES courses(id){active_version_foreign_key}
             )
         """))
         conn.execute(text("CREATE INDEX ix_materials_user_id ON materials(user_id)"))
@@ -112,6 +116,52 @@ def test_rebuild_failure_rolls_back_schema_rows_indexes_and_foreign_keys(tmp_pat
         assert conn.execute(text("SELECT COUNT(*) FROM materials WHERE id=7")).scalar_one() == 1
         assert conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='materials__v752_new'")).scalar() is None
         assert conn.execute(text("PRAGMA foreign_key_check")).fetchall() == []
+
+
+def test_legacy_schema_without_active_version_foreign_key_is_upgraded(tmp_path):
+    """Older deployed databases omitted the active-version constraint."""
+    engine = _legacy_engine(tmp_path, include_active_version_foreign_key=False)
+    migration = _migration()
+
+    migration.up(None, engine)
+
+    with engine.connect() as conn:
+        foreign_keys = {tuple(row[2:]) for row in conn.execute(text("PRAGMA foreign_key_list(materials)")).fetchall()}
+        assert ("users", "user_id", "id", "NO ACTION", "NO ACTION", "NONE") in foreign_keys
+        assert ("courses", "course_id", "id", "NO ACTION", "NO ACTION", "NONE") in foreign_keys
+        assert ("material_versions", "active_version_id", "id", "NO ACTION", "NO ACTION", "NONE") in foreign_keys
+        assert conn.execute(text("PRAGMA foreign_key_check")).fetchall() == []
+
+
+def test_rebuild_preserves_preexisting_unrelated_foreign_key_violations(tmp_path):
+    """Legacy orphan rows must not block an unrelated materials repair."""
+    engine = _legacy_engine(tmp_path, include_active_version_foreign_key=False)
+    migration = _migration()
+
+    with engine.connect() as conn:
+        conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        conn.execute(text(
+            "INSERT INTO material_versions(id, material_id, version, status) "
+            "VALUES (99, 999, 1, 'ready')"
+        ))
+        conn.commit()
+        conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+        before = {tuple(row) for row in conn.execute(text("PRAGMA foreign_key_check")).fetchall()}
+
+    migration.up(None, engine)
+
+    with engine.connect() as conn:
+        after = {tuple(row) for row in conn.execute(text("PRAGMA foreign_key_check")).fetchall()}
+    assert after == before
+
+
+def test_schema_repair_does_not_create_database_backup_files(tmp_path):
+    """The production migration function only repairs the supplied database."""
+    engine = _legacy_engine(tmp_path, include_active_version_foreign_key=False)
+
+    _migration().up(None, engine)
+
+    assert list(tmp_path.glob("*.backup-*")) == []
 
 
 def test_public_id_constraint_repair_regenerates_empty_and_duplicate_values_idempotently(tmp_path):
