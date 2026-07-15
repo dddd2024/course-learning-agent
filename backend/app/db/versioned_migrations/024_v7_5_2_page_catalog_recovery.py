@@ -142,8 +142,22 @@ def validate_materials_rebuild(conn: Connection, before: MaterialsSchemaSnapshot
         raise RuntimeError(f"materials row count changed: {before.row_count} -> {after.row_count}")
     if not after.has_autoincrement or not after.has_public_id or not after.public_id_not_null or not after.public_id_unique:
         raise RuntimeError("materials rebuild did not create AUTOINCREMENT/public_id")
-    if after.foreign_keys != before.foreign_keys:
-        raise RuntimeError("materials foreign keys changed during rebuild")
+    # ``PRAGMA foreign_key_list`` assigns a positional id to each constraint.
+    # Recreating the table can legitimately change those ids, and this
+    # migration intentionally adds the missing active-version constraint to
+    # older deployed databases.  Compare the semantic constraint definition
+    # instead, require every legacy relationship to survive, and allow only
+    # that single documented addition.
+    before_foreign_keys = {tuple(row[2:]) for row in before.foreign_keys}
+    after_foreign_keys = {tuple(row[2:]) for row in after.foreign_keys}
+    expected_addition = (
+        "material_versions", "active_version_id", "id",
+        "NO ACTION", "NO ACTION", "NONE",
+    )
+    if not before_foreign_keys.issubset(after_foreign_keys):
+        raise RuntimeError("materials foreign keys were lost during rebuild")
+    if after_foreign_keys - before_foreign_keys - {expected_addition}:
+        raise RuntimeError("materials rebuild added unexpected foreign keys")
 
 
 def _set_future_id_floor(conn: Connection) -> None:
@@ -154,9 +168,55 @@ def _set_future_id_floor(conn: Connection) -> None:
     conn.execute(text("INSERT INTO sqlite_sequence(name, seq) VALUES ('materials', :seq)"), {"seq": maximum})
 
 
+def _foreign_key_violation_identities(conn: Connection) -> set[tuple]:
+    """Return ``foreign_key_check`` failures keyed by stable FK semantics.
+
+    SQLite reports the positional foreign-key id in the fourth result column.
+    Rebuilding ``materials`` can reorder those ids, so use the referenced
+    constraint's child and parent columns instead.  An unknown id is an error:
+    it must not be silently treated as a historical violation.
+    """
+    definitions: dict[str, dict[int, tuple[str, tuple[str, ...], tuple[str, ...]]]] = {}
+    identities: set[tuple] = set()
+    for table, rowid, parent, fkid in conn.execute(text("PRAGMA foreign_key_check")).fetchall():
+        child_table = str(table)
+        if child_table not in definitions:
+            escaped_table = child_table.replace('"', '""')
+            by_id: dict[int, list[tuple]] = {}
+            for row in conn.execute(text(f'PRAGMA foreign_key_list("{escaped_table}")')).fetchall():
+                by_id.setdefault(int(row[0]), []).append(tuple(row))
+            definitions[child_table] = {}
+            for constraint_id, rows in by_id.items():
+                ordered = sorted(rows, key=lambda row: int(row[1]))
+                target_table = str(ordered[0][2])
+                if any(str(row[2]) != target_table for row in ordered):
+                    raise RuntimeError(f"foreign_key_list has inconsistent target tables: {child_table}:{constraint_id}")
+                definitions[child_table][constraint_id] = (
+                    target_table,
+                    tuple(str(row[3]) for row in ordered),
+                    tuple(str(row[4]) for row in ordered),
+                )
+        constraint = definitions[child_table].get(int(fkid))
+        if constraint is None:
+            raise RuntimeError(f"foreign_key_check referenced unknown foreign key: {child_table}:{fkid}")
+        target_table, from_columns, to_columns = constraint
+        if str(parent) != target_table:
+            raise RuntimeError(
+                f"foreign_key_check parent does not match foreign key definition: "
+                f"{child_table}:{fkid}:{parent} != {target_table}"
+            )
+        identities.add((child_table, rowid, target_table, from_columns, to_columns))
+    return identities
+
+
 def _rebuild_materials_for_autoincrement(engine: Engine) -> None:
     with engine.connect() as conn:
         before = inspect_materials_schema(conn)
+        # Deployed legacy databases can already contain unrelated orphaned
+        # references.  The rebuild must not introduce any new violations, but
+        # it must also not make an otherwise-safe schema repair impossible
+        # solely because those historical rows exist.
+        before_fk_violations = _foreign_key_violation_identities(conn)
         needs_rebuild = (
             not before.columns or not before.has_autoincrement or not before.has_public_id
             or not before.public_id_not_null or not before.public_id_unique
@@ -206,9 +266,13 @@ def _rebuild_materials_for_autoincrement(engine: Engine) -> None:
             if foreign_keys:
                 conn.exec_driver_sql("PRAGMA foreign_keys=ON")
                 conn.commit()
-        violations = conn.execute(text("PRAGMA foreign_key_check")).fetchall()
-        if violations:
-            raise RuntimeError(f"foreign_key_check failed: {violations}")
+        violations = _foreign_key_violation_identities(conn)
+        introduced_violations = violations - before_fk_violations
+        if introduced_violations:
+            raise RuntimeError(
+                f"materials rebuild introduced foreign-key violations: "
+                f"{sorted(introduced_violations)}"
+            )
 
 
 def _ensure_public_ids(engine: Engine) -> int:
