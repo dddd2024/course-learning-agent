@@ -121,6 +121,22 @@ async function answerQuiz(page: Page, pass: boolean) {
   await expect(page.getByText('得分：')).toBeVisible()
 }
 
+async function waitForQuizGeneration(page: Page, jobId: number): Promise<number> {
+  const terminal = await page.waitForResponse(async (response) => {
+    if (
+      !response.url().endsWith(`/api/v1/quizzes/generation-jobs/${jobId}`)
+      || response.request().method() !== 'GET'
+      || !response.ok()
+    ) return false
+    const body = await response.json().catch(() => null)
+    return body?.status === 'succeeded' || body?.status === 'failed'
+  }, { timeout: 60_000 })
+  const body = await terminal.json()
+  expect(body.status, body.error_message || 'quiz generation did not succeed').toBe('succeeded')
+  expect(Number(body.quiz_id)).toBeGreaterThan(0)
+  return Number(body.quiz_id)
+}
+
 async function createQuizThroughUi(page: Page, courseId: number, options: { pureMultiple?: boolean } = {}) {
   await page.goto(`/quizzes?course_id=${courseId}`)
   await page.getByRole('button', { name: '生成测验' }).click()
@@ -136,16 +152,17 @@ async function createQuizThroughUi(page: Page, courseId: number, options: { pure
     await dialog.getByText('判断题', { exact: true }).click()
     await dialog.getByText('简答题', { exact: true }).click()
   }
-  const generated = page.waitForResponse((response) =>
-    response.url().endsWith('/api/v1/quizzes')
+  const queued = page.waitForResponse((response) =>
+    response.url().endsWith('/api/v1/quizzes/generation-jobs')
     && response.request().method() === 'POST'
     && response.ok(),
   )
   await dialog.getByRole('button', { name: '生成', exact: true }).click()
-  const body = await (await generated).json()
-  expect(body.id).toBeGreaterThan(0)
+  const job = await (await queued).json()
+  expect(Number(job.id)).toBeGreaterThan(0)
+  const quizId = await waitForQuizGeneration(page, Number(job.id))
   await expect(page.locator('.question-nav .qnav-btn').first()).toBeVisible({ timeout: 60_000 })
-  return Number(body.id)
+  return quizId
 }
 
 test('V7.4.4-E2E-01: registration is independently browser-visible', async ({ page }, testInfo) => {
@@ -172,9 +189,11 @@ test('V7.4.4-E2E-03: four-type quiz contract, count, pass line, and result are v
   await registerThroughUi(page, 'quiz-contract')
   const course = await prepareCourse(page, 'quiz-contract')
   await createQuizThroughUi(page, course.id)
-  await expect(page.locator('.question-nav .qnav-btn')).toHaveCount(4)
-  for (const label of ['选择题', '多选题', '判断题', '简答题']) {
-    await expect(page.getByText(label, { exact: true })).toBeVisible()
+  const nav = page.locator('.question-nav .qnav-btn')
+  await expect(nav).toHaveCount(4)
+  for (const [index, label] of ['选择题', '多选题', '判断题', '简答题'].entries()) {
+    await nav.nth(index).click()
+    await expect(page.locator('.question-card').last().getByText(label, { exact: true })).toBeVisible()
   }
   await answerQuiz(page, true)
   await expect(page.getByText('测验通过', { exact: true })).toBeVisible()
@@ -197,12 +216,15 @@ test('V7.4.4-E2E-05: failed task quiz retries with a new quiz and then completes
   await registerThroughUi(page, 'retry')
   const course = await prepareCourse(page, 'retry')
   await createPlan(page, course.name)
-  const firstStarted = page.waitForResponse((response) =>
-    /\/plans\/tasks\/\d+\/start$/.test(response.url()) && response.request().method() === 'POST' && response.ok(),
+  const firstQueued = page.waitForResponse((response) =>
+    /\/plans\/tasks\/\d+\/quiz-generation-job$/.test(response.url())
+    && response.request().method() === 'POST'
+    && response.ok(),
   )
   await page.getByRole('button', { name: '生成测验' }).first().click()
-  const firstQuizId = Number((await (await firstStarted).json()).quiz_id)
-  expect(firstQuizId).toBeGreaterThan(0)
+  const firstJob = await (await firstQueued).json()
+  expect(Number(firstJob.id)).toBeGreaterThan(0)
+  const firstQuizId = await waitForQuizGeneration(page, Number(firstJob.id))
   await expect(page).toHaveURL(/\/quizzes/)
   await answerQuiz(page, false)
   await expect(page.getByText('测验未通过', { exact: true })).toBeVisible()

@@ -106,6 +106,22 @@ async function answerTaskQuiz(page: Page, pass: boolean) {
   await expect(page.getByText('得分：')).toBeVisible()
 }
 
+async function waitForQuizGeneration(page: Page, jobId: number): Promise<number> {
+  const terminal = await page.waitForResponse(async (response) => {
+    if (
+      !response.url().endsWith(`/api/v1/quizzes/generation-jobs/${jobId}`)
+      || response.request().method() !== 'GET'
+      || !response.ok()
+    ) return false
+    const body = await response.json().catch(() => null)
+    return body?.status === 'succeeded' || body?.status === 'failed'
+  }, { timeout: 60_000 })
+  const body = await terminal.json()
+  expect(body.status, body.error_message || 'quiz generation did not succeed').toBe('succeeded')
+  expect(Number(body.quiz_id)).toBeGreaterThan(0)
+  return Number(body.quiz_id)
+}
+
 test('V7.4.3-E2E-01: registration and dashboard are browser-visible', async ({ page }) => {
   await registerThroughUi(page, 'auth')
   await expect(page.getByRole('heading', { name: '仪表盘' })).toBeVisible()
@@ -172,14 +188,15 @@ test('V7.4.3-E2E-06: a failed task quiz creates a fresh retry which can pass', a
   const name = `V743-quiz-fail-${suffix}`
   await prepareCourse(page, 'quiz-fail')
   await createPlan(page, name)
-  const started = page.waitForResponse((response) =>
-    response.url().includes('/plans/tasks/') && response.url().endsWith('/start'),
+  const queued = page.waitForResponse((response) =>
+    /\/plans\/tasks\/\d+\/quiz-generation-job$/.test(response.url())
+    && response.request().method() === 'POST'
+    && response.ok(),
   )
   await page.locator('button:not(:disabled)', { hasText: '生成测验' }).first().click()
-  const startedResponse = await started
-  if (startedResponse.status() !== 200) {
-    throw new Error(`task start failed: ${JSON.stringify(await startedResponse.json())}`)
-  }
+  const job = await (await queued).json()
+  expect(Number(job.id)).toBeGreaterThan(0)
+  await waitForQuizGeneration(page, Number(job.id))
   await page.waitForURL(/\/quizzes/)
   await answerTaskQuiz(page, false)
   await page.goto('/plans')
