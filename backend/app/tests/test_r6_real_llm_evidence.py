@@ -10,6 +10,7 @@ import subprocess
 
 PROJECT_DIR = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = PROJECT_DIR / "scripts" / "verify_real_llm_evidence.py"
+ACCEPTANCE_SCRIPT_PATH = PROJECT_DIR / "scripts" / "verify_real_llm_acceptance.py"
 SHA = "a" * 40
 RUN_ID = "r6-fixture-a"
 PROVIDER = "openai-compatible"
@@ -30,6 +31,14 @@ R6_TESTED_SHA = "7b7401b74833fb5fe0e187b396135fdf1c82399d"
 
 def _load_verifier():
     spec = importlib.util.spec_from_file_location("verify_real_llm_evidence_r6", SCRIPT_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_acceptance_writer():
+    spec = importlib.util.spec_from_file_location("verify_real_llm_acceptance_r6", ACCEPTANCE_SCRIPT_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -235,3 +244,72 @@ def test_r6_bundles_use_lf_checkout_and_preserve_manifest_bytes(tmp_path: Path) 
             path = tampered / name
             path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
         assert verifier.verify_evidence_bundle(tampered, R6_TESTED_SHA) == "HASH_MISMATCH"
+
+
+def test_acceptance_writer_emits_deterministic_lf_bundle_bytes(tmp_path: Path) -> None:
+    """Generated evidence is hashed as-written, with no verifier normalization."""
+    writer = _load_acceptance_writer()
+    verifier = _load_verifier()
+    summary = {
+        "schema_version": 1,
+        "tested_code_sha": SHA,
+        "run_id": RUN_ID,
+        "provider": PROVIDER,
+        "base_url_host": BASE_URL_HOST,
+        "model": MODEL,
+        "all_passed": True,
+        "fallback_count": 0,
+        "mock_count": 0,
+        "degraded_count": 0,
+        "meta_missing_count": 0,
+        "repair_attempt_count": 0,
+        "repair_success_count": 0,
+        "llm_call_count": 5,
+        "all_meta_observed": True,
+        "scenario_count": 6,
+        "passed": 6,
+        "failed": 0,
+        "secret_scan": {"status": "passed", "matches": 0},
+    }
+    scenarios = [{"id": scenario_id, "status": "passed"} for scenario_id in SCENARIO_IDS]
+    runs = [
+        {
+            "run_type": run_type,
+            "status": "success",
+            "actual_provider": "user",
+            "actual_model": MODEL,
+            "meta_observed": True,
+            "fallback_used": False,
+            "repair_attempted": False,
+            "repair_success": False,
+            "llm_call_count": 1,
+        }
+        for run_type in RUN_TYPES
+    ]
+    values = {
+        "real-llm-acceptance.json": summary,
+        "scenario-results.json": scenarios,
+        "redacted-agent-runs.json": runs,
+        "environment-fingerprint.json": {"python": "3.11.9", "platform": "win32", "base_url_host": BASE_URL_HOST},
+        "request-summary.json": {"scenario_ids": SCENARIO_IDS, "failure": None},
+    }
+    for name, value in values.items():
+        writer._json_path(tmp_path / name, value)
+    writer._write_evidence_manifest(tmp_path, summary, runs)
+
+    for path in tmp_path.glob("*.json"):
+        raw = path.read_bytes()
+        assert b"\r\n" not in raw
+        assert raw.endswith(b"\n") and not raw.endswith(b"\n\n")
+        assert not raw.startswith(b"\xef\xbb\xbf")
+        raw.decode("utf-8")
+
+    manifest = json.loads((tmp_path / "evidence-manifest.json").read_text(encoding="utf-8"))
+    for name, recorded in manifest["files"].items():
+        raw = (tmp_path / name).read_bytes()
+        assert recorded == {"size_bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+    assert verifier.verify_evidence_bundle(tmp_path, SHA) is None
+
+    tampered = tmp_path / "scenario-results.json"
+    tampered.write_bytes(tampered.read_bytes().replace(b"\n", b"\r\n"))
+    assert verifier.verify_evidence_bundle(tmp_path, SHA) == "HASH_MISMATCH"
