@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "tag": "v1.0.0",
+  "name": "Course Learning Agent v1.0.0",
+  "status": "ready",
+  "draft": false,
+  "prerelease": false,
+  "notes_path": "docs/engineering/releases/v1.0.0.md",
+  "tag_message": "Course Learning Agent v1.0.0"
+}
