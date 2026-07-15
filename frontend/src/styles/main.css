@@ -1,32 +1,48 @@
 /* ===== Design Tokens ===== */
 :root {
-  /* Primary colors */
-  --color-primary: #2563eb;
-  --color-success: #2f8f3a;
-  --color-warning: #b54708;
-  --color-danger: #d92d20;
-  --color-info: #667085;
-  --color-purple: #9c27b0;
+  --ink: #18282f;
+  --ink-night: #091b23;
+  --ink-soft: #30434a;
+  --ink-muted: #627078;
+  --paper: #f3eee2;
+  --paper-raised: rgba(249, 246, 237, 0.88);
+  --paper-soft: rgba(239, 234, 221, 0.78);
+  --mineral-line: rgba(43, 61, 64, 0.16);
+  --indigo-ink: #294f70;
+  --celadon: #9cb9ad;
+  --celadon-strong: #688f81;
+  --cinnabar: #a34b3f;
+  --ease-ink: cubic-bezier(0.22, 1, 0.36, 1);
+  --font-display: 'STSong', 'Songti SC', 'Noto Serif SC', 'SimSun', serif;
+  --font-ui: 'PingFang SC', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+
+  /* Semantic colors */
+  --color-primary: var(--indigo-ink);
+  --color-success: #557e68;
+  --color-warning: #9d6e35;
+  --color-danger: var(--cinnabar);
+  --color-info: #657278;
+  --color-purple: #655979;
 
   /* Text colors */
-  --text-primary: #303133;
-  --text-regular: #475467;
-  --text-secondary: #667085;
-  --text-placeholder: #7b8494;
+  --text-primary: var(--ink);
+  --text-regular: #34464b;
+  --text-secondary: var(--ink-muted);
+  --text-placeholder: #89918e;
 
   /* Background colors */
-  --bg-page: #f0f2f5;
-  --bg-card: #ffffff;
-  --bg-hover: #f5f7fa;
+  --bg-page: var(--paper);
+  --bg-card: var(--paper-raised);
+  --bg-hover: rgba(41, 79, 112, 0.06);
 
   /* Border colors */
-  --border-base: #e6e6e6;
-  --border-light: #f0f0f0;
-  --border-lighter: #f5f7fa;
+  --border-base: var(--mineral-line);
+  --border-light: rgba(43, 61, 64, 0.11);
+  --border-lighter: rgba(43, 61, 64, 0.07);
 
   /* Shadows */
-  --shadow-card: 0 1px 4px rgba(0, 21, 41, 0.08);
-  --shadow-hover: 0 2px 12px rgba(0, 21, 41, 0.12);
+  --shadow-card: 0 12px 36px rgba(21, 35, 38, 0.07);
+  --shadow-hover: 0 18px 42px rgba(21, 35, 38, 0.11);
 
   /* Spacing */
   --spacing-xs: 4px;
@@ -36,28 +52,35 @@
   --spacing-xl: 24px;
 
   /* Border radius */
-  --radius-sm: 4px;
+  --radius-sm: 3px;
   --radius-md: 6px;
-  --radius-lg: 8px;
+  --radius-lg: 10px;
 
   /* Transitions */
-  --transition-fast: 0.15s ease;
-  --transition-normal: 0.25s ease;
+  --transition-fast: 0.16s ease;
+  --transition-normal: 0.3s var(--ease-ink);
 
   /* Keep Element Plus controls aligned with the accessible product palette. */
-  --el-color-primary: #2563eb;
-  --el-color-primary-light-3: #5f87ef;
-  --el-color-primary-light-5: #92adf5;
-  --el-color-primary-light-8: #dbe6fc;
-  --el-color-primary-light-9: #eff4ff;
-  --el-color-primary-dark-2: #1d4ed8;
-  --el-color-success: #2f8f3a;
-  --el-color-warning: #b54708;
-  --el-color-danger: #d92d20;
-  --el-text-color-primary: #1d2939;
-  --el-text-color-regular: #475467;
-  --el-text-color-secondary: #667085;
-  --el-text-color-placeholder: #7b8494;
+  --el-color-primary: #294f70;
+  --el-color-primary-light-3: #607f96;
+  --el-color-primary-light-5: #91a6b2;
+  --el-color-primary-light-8: #d7dddc;
+  --el-color-primary-light-9: #e9e9e3;
+  --el-color-primary-dark-2: #173a54;
+  --el-color-success: #557e68;
+  --el-color-warning: #9d6e35;
+  --el-color-danger: #a34b3f;
+  --el-text-color-primary: #18282f;
+  --el-text-color-regular: #34464b;
+  --el-text-color-secondary: #627078;
+  --el-text-color-placeholder: #89918e;
+  --el-border-color: rgba(43, 61, 64, 0.18);
+  --el-border-color-light: rgba(43, 61, 64, 0.12);
+  --el-border-color-lighter: rgba(43, 61, 64, 0.08);
+  --el-fill-color-blank: rgba(250, 248, 241, 0.9);
+  --el-bg-color: #f5f1e7;
+  --el-bg-color-overlay: #fbf8ef;
+  --el-border-radius-base: 5px;
 }
 
 * {
@@ -74,11 +97,10 @@ body,
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-family: var(--font-ui);
   font-size: 14px;
   color: var(--text-primary);
-  background-color: var(--bg-page);
+  background-color: var(--ink-night);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -92,7 +114,7 @@ a:hover {
 }
 
 :focus-visible {
-  outline: 3px solid rgba(37, 99, 235, 0.42);
+  outline: 3px solid rgba(41, 79, 112, 0.34);
   outline-offset: 2px;
 }
 
@@ -112,8 +134,31 @@ select {
   gap: var(--spacing-md);
 }
 
+.page,
+.page-container {
+  color: var(--ink);
+}
+
+.page > .toolbar:first-child,
+.page-container > .toolbar:first-child,
+.page-header {
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--mineral-line);
+}
+
+.title,
+.page-title,
+.welcome-title,
+h1,
+h2 {
+  font-family: var(--font-display);
+  letter-spacing: 0.035em;
+}
+
 .section-card {
-  background: var(--bg-card);
+  background: var(--paper-raised);
+  border: 1px solid var(--mineral-line);
+  backdrop-filter: blur(12px);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
   padding: var(--spacing-lg);
@@ -123,6 +168,124 @@ select {
   font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.el-card {
+  --el-card-bg-color: var(--paper-raised);
+  border-color: var(--mineral-line);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(12px);
+}
+
+.el-card.is-hover-shadow:hover,
+.el-card.is-always-shadow {
+  box-shadow: var(--shadow-hover);
+}
+
+.el-button {
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+}
+
+.el-button:hover {
+  transform: translateY(-1px);
+}
+
+.el-button--primary {
+  box-shadow: 0 8px 22px rgba(41, 79, 112, 0.2);
+}
+
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  background: rgba(251, 248, 239, 0.78);
+  box-shadow: 0 0 0 1px var(--mineral-line) inset;
+}
+
+.el-table {
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: rgba(39, 59, 63, 0.055);
+  --el-table-row-hover-bg-color: rgba(41, 79, 112, 0.055);
+  --el-table-border-color: var(--border-light);
+  background: transparent;
+}
+
+.el-dialog,
+.el-message-box {
+  background: #f7f2e7;
+  border: 1px solid var(--mineral-line);
+  box-shadow: 0 28px 80px rgba(9, 27, 35, 0.22);
+}
+
+.el-alert {
+  border: 1px solid rgba(157, 110, 53, 0.2);
+}
+
+.el-empty__description p {
+  color: var(--ink-muted);
+}
+
+/* Shared ink-and-paper treatment for legacy business surfaces. */
+.main .page {
+  background: rgba(248, 245, 236, 0.76) !important;
+  border: 1px solid var(--mineral-line);
+  border-radius: 8px !important;
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(12px);
+}
+
+.main .chat-page,
+.main .learn-page,
+.main .kg-page {
+  border: 1px solid var(--mineral-line);
+  border-radius: 8px;
+  background: rgba(247, 243, 233, 0.8) !important;
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+}
+
+.main .chat-header,
+.main .learn-header,
+.main .kg-toolbar,
+.main .page > .header {
+  background: rgba(248, 245, 236, 0.82) !important;
+  border-color: var(--mineral-line) !important;
+}
+
+.main .chat-sidebar,
+.main .chat-main,
+.main .toc-sidebar,
+.main .doc-reader,
+.main .ai-assistant {
+  background-color: rgba(250, 248, 241, 0.76) !important;
+  border-color: var(--mineral-line) !important;
+}
+
+.main .chat-sidebar {
+  background-color: rgba(232, 229, 217, 0.7) !important;
+}
+
+.main .message.assistant .message-bubble,
+.main .ai-msg.assistant,
+.main .citation-panel,
+.main .evidence-drawer {
+  background-color: rgba(234, 238, 229, 0.76) !important;
+  border-color: rgba(104, 143, 129, 0.24) !important;
+}
+
+.main .kg-canvas-wrap {
+  background-color: rgba(9, 27, 35, 0.93) !important;
+  background-image: url('../assets/ink-night-texture.webp');
+  background-size: cover;
+}
+
+.main .toolbar .title,
+.main .header .title,
+.main .learn-title {
+  color: var(--ink) !important;
 }
 
 .section-head {
@@ -143,7 +306,7 @@ select {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--text-placeholder);
+  background: rgba(41, 79, 112, 0.3);
   border-radius: 4px;
 }
 
@@ -155,6 +318,11 @@ select {
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.2s ease;
+}
+
+@keyframes ink-breathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 0.9; }
 }
 
 .fade-enter-from,

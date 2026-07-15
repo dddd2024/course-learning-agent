@@ -87,11 +87,11 @@ const crumbs = computed<Crumb[]>(() => {
   min-width: 0;
 }
 .app-breadcrumbs {
-  padding: 0 20px;
+  padding: 0;
   height: 36px;
   line-height: 36px;
-  background: #fff;
-  border-bottom: 1px solid #f0f0f0;
+  background: transparent;
+  border-bottom: 1px solid var(--border-light);
   overflow: hidden;
   white-space: nowrap;
 }
@@ -101,7 +101,7 @@ const crumbs = computed<Crumb[]>(() => {
 
 @media (max-width: 768px) {
   .app-breadcrumbs {
-    padding: 0 12px;
+    padding: 0;
     overflow-x: auto;
     scrollbar-width: none;
   }
