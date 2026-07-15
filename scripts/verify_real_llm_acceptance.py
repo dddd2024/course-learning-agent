@@ -59,7 +59,8 @@ def _pick_port() -> int:
 
 def _json_path(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    payload = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+    path.write_bytes(payload.encode("utf-8"))
 
 
 def _write_evidence_manifest(root: Path, summary: dict, audited_runs: list[dict]) -> None:
