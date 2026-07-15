@@ -1,0 +1,41 @@
+name: Repository Hygiene
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    name: Tracked File Hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout audited head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Audit tracked files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/check_repo_hygiene.py \
+            --json-out "${RUNNER_TEMP}/repository-hygiene.json"
+
+      - name: Upload hygiene report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repository-hygiene-result
+          path: ${{ runner.temp }}/repository-hygiene.json
+          if-no-files-found: error
