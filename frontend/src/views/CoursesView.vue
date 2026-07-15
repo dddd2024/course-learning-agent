@@ -314,9 +314,7 @@ onMounted(() => {
 
 <style scoped>
 .page {
-  background: #fff;
   padding: 24px;
-  border-radius: 4px;
 }
 
 .toolbar {
@@ -363,6 +361,12 @@ onMounted(() => {
   cursor: pointer;
   position: relative;
   overflow: hidden;
+  min-height: 220px;
+  color: var(--paper);
+  background: var(--ink-night);
+  background-image: url('../assets/ink-night-texture.webp');
+  background-size: cover;
+  border-color: rgba(225, 229, 218, 0.12);
 }
 
 .course-card:focus-visible {
@@ -375,18 +379,23 @@ onMounted(() => {
 }
 
 .card-color {
-  height: 6px;
+  height: 3px;
+  opacity: 0.72;
 }
 
 .card-body {
-  padding: 16px;
+  min-height: 214px;
+  display: flex;
+  flex-direction: column;
+  padding: 22px;
 }
 
 .card-name {
-  font-size: 16px;
+  font-family: var(--font-display);
+  font-size: 23px;
   font-weight: 600;
-  color: #303133;
-  margin-bottom: 8px;
+  color: var(--paper);
+  margin-bottom: 12px;
 }
 
 .card-meta {
@@ -394,13 +403,13 @@ onMounted(() => {
   flex-wrap: wrap;
   gap: 12px;
   font-size: 13px;
-  color: #606266;
+  color: rgba(240, 238, 226, 0.56);
   margin-bottom: 8px;
 }
 
 .card-desc {
   font-size: 13px;
-  color: #909399;
+  color: rgba(240, 238, 226, 0.62);
   margin-bottom: 12px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -411,6 +420,13 @@ onMounted(() => {
 .card-actions {
   display: flex;
   gap: 8px;
+  margin-top: auto;
+}
+
+.card-actions :deep(.el-button) {
+  color: var(--paper);
+  border-color: rgba(240, 238, 226, 0.26);
+  background: rgba(240, 238, 226, 0.05);
 }
 
 .pagination {

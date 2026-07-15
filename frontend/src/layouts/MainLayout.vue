@@ -3,8 +3,9 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
-import { Odometer, Reading, Tickets, Calendar, EditPen, Share, Document, Fold, Expand, User, Monitor } from '@element-plus/icons-vue'
+import { Odometer, Reading, Tickets, Calendar, EditPen, Share, Document, Fold, Expand, User, Monitor, ArrowDown, SwitchButton } from '@element-plus/icons-vue'
 import AppBreadcrumbs from '../components/common/AppBreadcrumbs.vue'
+import InkAmbient from '../components/common/InkAmbient.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -59,6 +60,11 @@ function handleResize() {
   isMobile.value = nextMobile
 }
 
+function handleUserCommand(command: string) {
+  if (command === 'profile') router.push('/profile')
+  if (command === 'logout') handleLogout()
+}
+
 onMounted(() => {
   handleResize()
   window.addEventListener('resize', handleResize)
@@ -100,9 +106,6 @@ watch(() => route.fullPath, () => {
         :default-active="activeMenu"
         :collapse="!isMobile && isCollapse"
         class="menu"
-        background-color="#001529"
-        text-color="#bfcbd9"
-        active-text-color="#69a9ff"
         @select="handleMenuSelect"
       >
         <li class="menu-section-label" v-if="isMobile || !isCollapse">学习</li>
@@ -168,15 +171,30 @@ watch(() => route.fullPath, () => {
           <div class="header-title" role="heading" aria-level="1">{{ pageTitle }}</div>
         </div>
         <div class="header-right">
-          <el-button text class="username" @click="router.push('/profile')">
-            {{ auth.username || '游客' }}
-          </el-button>
-          <el-button type="danger" plain size="small" @click="handleLogout">退出</el-button>
+          <span class="online-mark"><i /> 学习空间在线</span>
+          <el-dropdown trigger="click" @command="handleUserCommand">
+            <button type="button" class="user-menu" aria-label="打开用户菜单">
+              <span class="user-avatar">{{ (auth.username || '游').slice(0, 1).toUpperCase() }}</span>
+              <span class="username">{{ auth.username || '游客' }}</span>
+              <el-icon><ArrowDown /></el-icon>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="profile"><el-icon><User /></el-icon>个人中心</el-dropdown-item>
+                <el-dropdown-item command="logout" divided><el-icon><SwitchButton /></el-icon>退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </el-header>
       <el-main id="main-content" class="main" tabindex="-1">
+        <InkAmbient />
         <AppBreadcrumbs />
-        <router-view />
+        <router-view v-slot="{ Component }">
+          <transition name="ink-page" mode="out-in">
+            <component :is="Component" />
+          </transition>
+        </router-view>
       </el-main>
     </el-container>
   </el-container>
@@ -184,7 +202,8 @@ watch(() => route.fullPath, () => {
 
 <style scoped>
 .layout-container {
-  height: 100vh;
+  height: 100dvh;
+  background: var(--ink-night);
 }
 
 .skip-link {
@@ -205,10 +224,13 @@ watch(() => route.fullPath, () => {
 }
 
 .aside {
-  background-color: #001529;
+  background-color: var(--ink-night);
+  background-image: url('../assets/ink-night-texture.webp');
+  background-size: cover;
   overflow-y: auto;
   overflow-x: hidden;
-  transition: width 0.2s ease, transform 0.2s ease;
+  transition: width 0.28s var(--ease-ink), transform 0.28s var(--ease-ink);
+  border-right: 1px solid rgba(225, 229, 218, 0.12);
 }
 
 .logo {
@@ -217,17 +239,18 @@ watch(() => route.fullPath, () => {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: #fff;
+  color: var(--paper);
   font-size: 16px;
   font-weight: 600;
-  background-color: #002140;
+  background: rgba(8, 23, 30, 0.56);
+  border-bottom: 1px solid rgba(225, 229, 218, 0.12);
   overflow: hidden;
   white-space: nowrap;
 }
 
 .logo-icon {
   font-size: 24px;
-  color: #69a9ff;
+  color: var(--celadon);
 }
 
 .logo-text {
@@ -236,6 +259,7 @@ watch(() => route.fullPath, () => {
 
 .menu {
   border-right: none;
+  background: transparent;
 }
 
 .menu:not(.el-menu--collapse) {
@@ -250,7 +274,7 @@ watch(() => route.fullPath, () => {
   padding: 16px 20px 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #5b6b7e;
+  color: rgba(225, 229, 218, 0.43);
   text-transform: uppercase;
   letter-spacing: 1px;
   list-style: none;
@@ -261,9 +285,12 @@ watch(() => route.fullPath, () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: #fff;
-  border-bottom: 1px solid #e6e6e6;
-  box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
+  height: 60px;
+  background: rgba(245, 240, 228, 0.86);
+  border-bottom: 1px solid rgba(42, 54, 56, 0.13);
+  backdrop-filter: blur(14px);
+  box-shadow: none;
+  padding: 0 22px;
 }
 
 .header-left {
@@ -282,21 +309,22 @@ watch(() => route.fullPath, () => {
   background: transparent;
   font-size: 20px;
   cursor: pointer;
-  color: #606266;
+  color: var(--ink-muted);
   margin-right: 8px;
   transition: color 0.2s;
 }
 
 .collapse-btn:hover,
 .collapse-btn:focus-visible {
-  color: #2563eb;
-  background: #eff6ff;
+  color: var(--indigo-ink);
+  background: rgba(44, 71, 86, 0.08);
 }
 
 .header-title {
   font-size: 16px;
   font-weight: 600;
-  color: #303133;
+  color: var(--ink);
+  letter-spacing: 0.08em;
 }
 
 .header-right {
@@ -305,15 +333,97 @@ watch(() => route.fullPath, () => {
   gap: 12px;
 }
 
+.online-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.online-mark i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--celadon-strong);
+  box-shadow: 0 0 0 4px rgba(103, 143, 129, 0.12);
+}
+
+.user-menu {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.user-avatar {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--paper);
+  background: var(--indigo-ink);
+  font-family: var(--font-display);
+}
+
 .username {
-  color: #475467;
+  color: var(--ink);
   font-size: 14px;
 }
 
 .main {
-  background-color: #f0f2f5;
-  padding: 20px;
+  position: relative;
+  background-color: var(--paper);
+  background-image: url('../assets/ink-paper-mountains.webp');
+  background-size: cover;
+  background-position: center top;
+  padding: 0 24px 28px;
   overflow-y: auto;
+}
+
+.main > *:not(.ink-ambient) {
+  position: relative;
+  z-index: 1;
+}
+
+:deep(.el-menu-item) {
+  margin: 4px 10px;
+  border-radius: 4px;
+  color: rgba(236, 235, 225, 0.72);
+}
+
+:deep(.el-menu-item:hover) {
+  color: var(--paper);
+  background: rgba(228, 224, 207, 0.08);
+}
+
+:deep(.el-menu-item.is-active) {
+  color: var(--paper);
+  background: rgba(222, 216, 197, 0.14);
+  box-shadow: inset 3px 0 0 var(--celadon);
+}
+
+.ink-page-enter-active,
+.ink-page-leave-active {
+  transition: opacity 0.24s ease, transform 0.3s var(--ease-ink), filter 0.3s ease;
+}
+
+.ink-page-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+  filter: blur(3px);
+}
+
+.ink-page-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
 }
 
 @media (max-width: 768px) {
@@ -337,7 +447,7 @@ watch(() => route.fullPath, () => {
   }
   .main {
     margin-left: 0;
-    padding: 12px;
+    padding: 0 12px 20px;
   }
   .header-title {
     font-size: 16px;
@@ -348,6 +458,10 @@ watch(() => route.fullPath, () => {
   }
   .header-right {
     gap: 4px;
+  }
+  .online-mark,
+  .username {
+    display: none;
   }
   .username {
     max-width: 88px;
