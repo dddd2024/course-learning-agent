@@ -4,6 +4,8 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import shutil
+import subprocess
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[3]
@@ -22,6 +24,8 @@ SCENARIO_IDS = [
     "REAL-06-material-overview",
 ]
 RUN_TYPES = ["outline", "course_qa", "quiz", "planner", "material_overview"]
+R6_EVIDENCE_ROOT = PROJECT_DIR / "docs" / "engineering" / "evidence" / "r6"
+R6_TESTED_SHA = "7b7401b74833fb5fe0e187b396135fdf1c82399d"
 
 
 def _load_verifier():
@@ -202,3 +206,32 @@ def test_provider_model_and_count_forgery_fail(tmp_path: Path) -> None:
     _rewrite_json(summary_path, summary)
     _write_manifest(tmp_path)
     assert verifier.verify_evidence_bundle(tmp_path, SHA) == "STRICT_COUNTS_FAILED"
+
+
+def test_r6_bundles_use_lf_checkout_and_preserve_manifest_bytes(tmp_path: Path) -> None:
+    """R6 manifests intentionally verify raw bytes; CRLF must remain detectable."""
+    verifier = _load_verifier()
+    paths = [
+        R6_EVIDENCE_ROOT / run_id / "real-llm-acceptance.json"
+        for run_id in ("r6-c1-a", "r6-c1-b")
+    ]
+    attrs = subprocess.run(
+        ["git", "check-attr", "eol", "--", *(str(path.relative_to(PROJECT_DIR)) for path in paths)],
+        cwd=PROJECT_DIR,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    assert attrs and all(line.endswith(": lf") for line in attrs)
+
+    for run_id in ("r6-c1-a", "r6-c1-b"):
+        root = R6_EVIDENCE_ROOT / run_id
+        assert verifier.verify_evidence_bundle(root, R6_TESTED_SHA) is None
+
+        tampered = tmp_path / run_id
+        shutil.copytree(root, tampered)
+        manifest = json.loads((tampered / "evidence-manifest.json").read_text(encoding="utf-8"))
+        for name in manifest["files"]:
+            path = tampered / name
+            path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+        assert verifier.verify_evidence_bundle(tampered, R6_TESTED_SHA) == "HASH_MISMATCH"
